@@ -329,7 +329,7 @@ export function isLegalUrl(url: string) {
         return false;
     }
 
-    if (url.startsWith('http://localhost:3002') || url.startsWith('localhost:3002')) {
+    if (url.startsWith('http://localhost:5173') || url.startsWith('localhost:5173')) {
         return true;
     }
 
@@ -345,7 +345,7 @@ export function isLegalUrl(url: string) {
                 if (topLevelDomain && topLevelDomainSet.has(topLevelDomain)) {
                     return true;
                 };
-            } catch (error) {
+            } catch {
                 return false;
             }
         }
@@ -366,6 +366,19 @@ function isEmail(url: string) {
 
 export function normalizeUrl(urlStr: string) {
     return hasProtocol(urlStr) ? urlStr : isEmail(urlStr) ? `mailto://${urlStr}` : `https://${urlStr}`;
+}
+
+export function isSafeUrl(url: string): boolean {
+    if (!url || typeof url !== 'string') {
+        return false;
+    }
+    try {
+        const base = typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost';
+        const parsed = new URL(url, base);
+        return ['http:', 'https:', 'mailto:'].includes(parsed.protocol);
+    } catch {
+        return false;
+    }
 }
 
 /**

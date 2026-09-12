@@ -33,10 +33,9 @@ import type { IAuthzIoService } from './type';
 import { ObjectScope, UnitRole } from '@univerjs/protocol';
 import { Inject } from '../../common/di';
 import { UniverInstanceType } from '../../common/unit';
-import { generateRandomId } from '../../shared/tools';
+import { generateRandomId } from '../../shared/random-id';
 import { IResourceManagerService } from '../resource-manager/type';
 import { createDefaultUser, isDevRole } from '../user-manager/const';
-
 import { UserManagerService } from '../user-manager/user-manager.service';
 
 /**
@@ -101,7 +100,12 @@ export class AuthzIoLocalService implements IAuthzIoService {
                 return JSON.parse(json);
             },
             pluginName: 'SHEET_AuthzIoMockService_PLUGIN',
-            businesses: [UniverInstanceType.UNIVER_SHEET, UniverInstanceType.UNIVER_DOC, UniverInstanceType.UNIVER_SLIDE],
+            businesses: [
+                UniverInstanceType.UNIVER_SHEET,
+                UniverInstanceType.UNIVER_DOC,
+                UniverInstanceType.UNIVER_SLIDE,
+                UniverInstanceType.UNIVER_BOARD,
+            ],
             onLoad: (_unitId, resource) => {
                 for (const key in resource) {
                     this._permissionMap.set(key, resource[key]);
@@ -123,7 +127,7 @@ export class AuthzIoLocalService implements IAuthzIoService {
             unitID: rangeObject?.unitID || '',
             name: rangeObject?.name || '',
             strategies: [
-                // 默认策略：Owner 和 Editor 拥有所有权限
+                // Default strategy: Owner and Editor have all permissions
                 { action: 6, role: UnitRole.Owner },
                 { action: 16, role: UnitRole.Owner },
                 { action: 17, role: UnitRole.Owner },
@@ -215,7 +219,7 @@ export class AuthzIoLocalService implements IAuthzIoService {
             const item = {
                 objectID,
                 unitID: config.unitID,
-                objectType: rule?.objectType || (3 as UnitObject), // 默认 SelectRange = 3
+                objectType: rule?.objectType || (3 as UnitObject), // Default SelectRange = 3
                 name: rule?.name || '',
                 shareOn: false,
                 shareRole: UnitRole.Owner,
@@ -334,7 +338,7 @@ export class AuthzIoLocalService implements IAuthzIoService {
         return undefined;
     }
 
-    async putCollaborators(config: IPutCollaboratorsRequest): Promise<void> {
+    async putCollaborators(_config: IPutCollaboratorsRequest): Promise<void> {
         return undefined;
     }
 

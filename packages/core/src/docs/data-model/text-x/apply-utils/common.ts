@@ -17,10 +17,14 @@
 import type { Nullable } from '../../../../shared/types';
 import type {
     ICustomBlock,
+    ICustomColumnGroup,
     ICustomDecoration,
     ICustomRange,
     ICustomTable,
+    IDocumentBlockRange,
     IDocumentBody,
+    IDocxExportExcludedRange,
+    IDocxRawBlock,
     IParagraph,
     ISectionBreak,
     ITextRun,
@@ -28,7 +32,20 @@ import type {
 import { shallowEqual } from '../../../../common/equal';
 import { horizontalLineSegmentsSubtraction, sortRulesFactory, Tools } from '../../../../shared';
 import { isSameStyleTextRun } from '../../../../shared/compare';
+import { cloneParagraphWithId } from '../../../paragraph-id';
+import { cloneSectionBreakWithId } from '../../../section-break-id';
+import { DataStreamTreeTokenType } from '../../types';
+import { PRESERVE_INSERTED_PARAGRAPH_IDS } from '../action-types';
+import {
+    shiftExclusiveRangeOnDelete,
+    shiftExclusiveRangeOnInsert,
+    shiftInclusiveRangeOnDelete,
+    shiftInclusiveRangeOnInsert,
+} from '../build-utils/range-interval';
 import { getBodySlice } from '../utils';
+
+// Internal TextX undo marker: restored delete bodies keep their captured paragraph ids.
+export const RESTORE_INSERTED_PARAGRAPH_IDS = '__textXRestoreParagraphIds';
 
 export function normalizeTextRuns(textRuns: ITextRun[], reserveEmptyTextRun = false): ITextRun[] {
     const results: ITextRun[] = [];
@@ -166,14 +183,25 @@ export function insertParagraphs(
     body: IDocumentBody,
     insertBody: IDocumentBody,
     textLength: number,
-    currentIndex: number
+    currentIndex: number,
+    preserveMissingParagraphIds = false,
+    originalDataStream = body.dataStream
 ) {
-    const { paragraphs } = body;
-    if (paragraphs == null) {
+    if (!body.paragraphs && !insertBody.paragraphs?.length) {
         return;
     }
 
+    body.paragraphs ??= [];
+    const { paragraphs } = body;
+
     const { paragraphs: insertParagraphs } = insertBody;
+    normalizeInsertedParagraphIdsForDocument(paragraphs, insertParagraphs, currentIndex, {
+        freshenSplitParagraph: true,
+        preserveMissingParagraphIds,
+        preserveExplicitSplitParagraphIds: Boolean((insertBody as unknown as Record<string, unknown>)[RESTORE_INSERTED_PARAGRAPH_IDS]),
+        preserveExplicitParagraphIds: Boolean((insertBody as unknown as Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS]),
+        dataStream: originalDataStream,
+    });
 
     const paragraphIndexList = [];
     let firstInsertParagraphNextIndex = -1;
@@ -212,17 +240,168 @@ export function insertParagraphs(
     }
 }
 
+export function normalizeInsertedParagraphIdsForDocument(
+    paragraphs: IParagraph[] | undefined,
+    insertParagraphs: IParagraph[] | undefined,
+    currentIndex: number,
+    options: {
+        freshenSplitParagraph: boolean;
+        preserveExplicitSplitParagraphIds?: boolean;
+        preserveExplicitParagraphIds?: boolean;
+        preserveMissingParagraphIds?: boolean;
+        reservedParagraphIds?: Set<string>;
+        dataStream?: string;
+    }
+) {
+    if (!paragraphs || !insertParagraphs?.length) {
+        return;
+    }
+
+    const splitParagraph = getParagraphSplitByInsert(paragraphs, currentIndex, options.dataStream);
+    const firstSplitInsertIndex = splitParagraph ? getFirstInsertedParagraphIndex(insertParagraphs) : -1;
+    const splitParagraphId = splitParagraph?.paragraphId;
+    const firstInsertedParagraphId = firstSplitInsertIndex === -1 ? undefined : insertParagraphs[firstSplitInsertIndex].paragraphId;
+    const shouldPreserveExplicitSplitParagraphId = (options.preserveExplicitSplitParagraphIds || options.preserveExplicitParagraphIds) && firstInsertedParagraphId != null && firstInsertedParagraphId !== splitParagraphId;
+    const existingParagraphIds = collectParagraphIds(paragraphs);
+    const preservedInsertedParagraphIds = new Set<string>();
+
+    if (splitParagraphId) {
+        existingParagraphIds.delete(splitParagraphId);
+    }
+
+    for (const paragraphId of options.reservedParagraphIds ?? []) {
+        existingParagraphIds.add(paragraphId);
+    }
+
+    let splitRemainderParagraph: IParagraph | undefined;
+
+    if (splitParagraphId && firstSplitInsertIndex !== -1 && !shouldPreserveExplicitSplitParagraphId) {
+        const firstInsertParagraph = insertParagraphs[firstSplitInsertIndex];
+        splitRemainderParagraph = firstInsertedParagraphId != null && firstInsertedParagraphId !== splitParagraphId
+            ? cloneInsertedParagraphWithId(firstInsertParagraph, existingParagraphIds, options.preserveMissingParagraphIds ?? false)
+            : cloneParagraphWithId(firstInsertParagraph, existingParagraphIds, false);
+
+        if (options.freshenSplitParagraph && splitRemainderParagraph.paragraphId) {
+            splitParagraph.paragraphId = splitRemainderParagraph.paragraphId;
+        }
+    }
+
+    for (let i = 0, len = insertParagraphs.length; i < len; i++) {
+        const explicitParagraphId = insertParagraphs[i].paragraphId;
+        if (options.preserveExplicitParagraphIds && explicitParagraphId && !preservedInsertedParagraphIds.has(explicitParagraphId)) {
+            // The corresponding old paragraph is deleted later in the same TextX
+            // operation. A temporary id collision is therefore intentional.
+            insertParagraphs[i] = { ...insertParagraphs[i] };
+            preservedInsertedParagraphIds.add(explicitParagraphId);
+            continue;
+        }
+
+        if (i !== firstSplitInsertIndex || splitParagraphId == null || shouldPreserveExplicitSplitParagraphId) {
+            insertParagraphs[i] = cloneInsertedParagraphWithId(insertParagraphs[i], existingParagraphIds, options.preserveMissingParagraphIds ?? false);
+            continue;
+        }
+
+        insertParagraphs[i] = options.freshenSplitParagraph || firstInsertedParagraphId == null || firstInsertedParagraphId === splitParagraphId
+            ? cloneParagraphWithId({
+                ...insertParagraphs[i],
+                paragraphId: splitParagraphId,
+            }, existingParagraphIds)
+            : splitRemainderParagraph!;
+    }
+
+    for (const insertParagraph of insertParagraphs) {
+        if (insertParagraph.paragraphId) {
+            options.reservedParagraphIds?.add(insertParagraph.paragraphId);
+        }
+    }
+}
+
+function collectParagraphIds(paragraphs: IParagraph[] | undefined): Set<string> {
+    const paragraphIds = new Set<string>();
+
+    for (const paragraph of paragraphs ?? []) {
+        if (paragraph.paragraphId) {
+            paragraphIds.add(paragraph.paragraphId);
+        }
+    }
+
+    return paragraphIds;
+}
+
+function cloneInsertedParagraphWithId(
+    insertParagraph: IParagraph,
+    existingParagraphIds: Set<string>,
+    preserveMissingParagraphIds: boolean
+): IParagraph {
+    if (preserveMissingParagraphIds && insertParagraph.paragraphId == null) {
+        return Tools.deepClone(insertParagraph);
+    }
+
+    return cloneParagraphWithId(insertParagraph, existingParagraphIds);
+}
+
+const PARAGRAPH_CONTAINER_TOKENS = new Set<string>([
+    DataStreamTreeTokenType.SECTION_BREAK,
+    DataStreamTreeTokenType.TABLE_START,
+    DataStreamTreeTokenType.TABLE_ROW_START,
+    DataStreamTreeTokenType.TABLE_CELL_START,
+    DataStreamTreeTokenType.TABLE_CELL_END,
+    DataStreamTreeTokenType.TABLE_ROW_END,
+    DataStreamTreeTokenType.TABLE_END,
+    DataStreamTreeTokenType.COLUMN_GROUP_START,
+    DataStreamTreeTokenType.COLUMN_START,
+    DataStreamTreeTokenType.COLUMN_END,
+    DataStreamTreeTokenType.COLUMN_GROUP_END,
+    DataStreamTreeTokenType.BLOCK_START,
+    DataStreamTreeTokenType.BLOCK_END,
+]);
+
+function getParagraphSplitByInsert(paragraphs: IParagraph[], currentIndex: number, dataStream?: string): IParagraph | undefined {
+    const sortedParagraphs = [...paragraphs].sort((left, right) => left.startIndex - right.startIndex);
+
+    for (let i = 0; i < sortedParagraphs.length; i++) {
+        const paragraph = sortedParagraphs[i];
+        let paragraphStart = i > 0 ? sortedParagraphs[i - 1].startIndex + 1 : 0;
+        while (paragraphStart < paragraph.startIndex) {
+            const token = dataStream?.[paragraphStart];
+            if (!token || !PARAGRAPH_CONTAINER_TOKENS.has(token)) {
+                break;
+            }
+            paragraphStart++;
+        }
+
+        if (currentIndex > paragraphStart && currentIndex < paragraph.startIndex) {
+            return paragraph;
+        }
+    }
+}
+
+function getFirstInsertedParagraphIndex(insertParagraphs: IParagraph[]): number {
+    let index = 0;
+
+    for (let i = 1; i < insertParagraphs.length; i++) {
+        if (insertParagraphs[i].startIndex < insertParagraphs[index].startIndex) {
+            index = i;
+        }
+    }
+
+    return index;
+}
+
 export function insertSectionBreaks(
     body: IDocumentBody,
     insertBody: IDocumentBody,
     textLength: number,
     currentIndex: number
 ) {
-    const { sectionBreaks } = body;
-
-    if (sectionBreaks == null) {
+    if (!body.sectionBreaks && !insertBody.sectionBreaks?.length) {
         return;
     }
+
+    body.sectionBreaks ??= [];
+    const { sectionBreaks } = body;
+    const insertSectionBreaks = insertBody.sectionBreaks;
+    normalizeInsertedSectionIdsForDocument(sectionBreaks, insertSectionBreaks);
 
     for (let i = 0, len = sectionBreaks.length; i < len; i++) {
         const sectionBreak = sectionBreaks[i];
@@ -239,7 +418,6 @@ export function insertSectionBreaks(
         }
     }
 
-    const insertSectionBreaks = insertBody.sectionBreaks;
     if (insertSectionBreaks) {
         for (let i = 0, len = insertSectionBreaks.length; i < len; i++) {
             const sectionBreak = insertSectionBreaks[i];
@@ -251,13 +429,39 @@ export function insertSectionBreaks(
     }
 }
 
-export function insertCustomBlocks(
+export function normalizeInsertedSectionIdsForDocument(
+    sectionBreaks: ISectionBreak[] | undefined,
+    insertSectionBreaks: ISectionBreak[] | undefined,
+    reservedSectionIds: Set<string> = new Set()
+): void {
+    if (!insertSectionBreaks?.length) {
+        return;
+    }
+
+    const existingSectionIds = new Set(sectionBreaks?.map((sectionBreak) => sectionBreak.sectionId) ?? []);
+    for (const sectionId of reservedSectionIds) {
+        existingSectionIds.add(sectionId);
+    }
+
+    for (let i = 0; i < insertSectionBreaks.length; i++) {
+        insertSectionBreaks[i] = cloneSectionBreakWithId(insertSectionBreaks[i], existingSectionIds);
+        reservedSectionIds.add(insertSectionBreaks[i].sectionId);
+    }
+}
+
+type CustomBlockField = 'customBlocks' | 'docxRawCustomBlocks';
+
+function insertCustomBlockMetadata(
     body: IDocumentBody,
     insertBody: IDocumentBody,
     textLength: number,
-    currentIndex: number
+    currentIndex: number,
+    field: CustomBlockField
 ) {
-    const { customBlocks = [] } = body;
+    if (body[field] == null && insertBody[field] == null) {
+        return;
+    }
+    const customBlocks = body[field] ?? [];
 
     for (let i = 0, len = customBlocks.length; i < len; i++) {
         const customBlock = customBlocks[i];
@@ -267,7 +471,7 @@ export function insertCustomBlocks(
         }
     }
 
-    const insertCustomBlocks = insertBody.customBlocks;
+    const insertCustomBlocks = insertBody[field];
     if (insertCustomBlocks) {
         for (let i = 0, len = insertCustomBlocks.length; i < len; i++) {
             const customBlock = insertCustomBlocks[i];
@@ -278,28 +482,105 @@ export function insertCustomBlocks(
         customBlocks.sort(sortRulesFactory('startIndex'));
     }
 
-    if (customBlocks.length && !body.customBlocks) {
-        body.customBlocks = customBlocks;
+    if (customBlocks.length && !body[field]) {
+        body[field] = customBlocks;
     }
 }
 
-export function insertTables(body: IDocumentBody, insertBody: IDocumentBody, textLength: number, currentIndex: number) {
-    const { tables } = body;
+export function insertCustomBlocks(
+    body: IDocumentBody,
+    insertBody: IDocumentBody,
+    textLength: number,
+    currentIndex: number
+) {
+    insertCustomBlockMetadata(body, insertBody, textLength, currentIndex, 'customBlocks');
+}
 
-    if (tables == null) {
+export function insertDocxRawCustomBlocks(
+    body: IDocumentBody,
+    insertBody: IDocumentBody,
+    textLength: number,
+    currentIndex: number
+) {
+    insertCustomBlockMetadata(body, insertBody, textLength, currentIndex, 'docxRawCustomBlocks');
+}
+
+export function insertDocxRawBlocks(
+    body: IDocumentBody,
+    insertBody: IDocumentBody,
+    textLength: number,
+    currentIndex: number
+): void {
+    if (body.docxRawBlocks == null && insertBody.docxRawBlocks == null) {
         return;
     }
 
+    const rawBlocks = body.docxRawBlocks ?? [];
+    rawBlocks.forEach((rawBlock) => {
+        if (rawBlock.startIndex >= currentIndex) {
+            rawBlock.startIndex += textLength;
+        }
+    });
+    rawBlocks.push(...(insertBody.docxRawBlocks ?? []).map((rawBlock) => ({
+        ...rawBlock,
+        startIndex: rawBlock.startIndex + currentIndex,
+    })));
+    rawBlocks.sort(sortRulesFactory('startIndex'));
+    body.docxRawBlocks = rawBlocks;
+}
+
+function mergeDocxExportExcludedRanges(ranges: IDocxExportExcludedRange[]): IDocxExportExcludedRange[] {
+    const sorted = [...ranges].sort((left, right) => left.start - right.start || left.end - right.end);
+    const merged: IDocxExportExcludedRange[] = [];
+    for (const range of sorted) {
+        const previous = merged[merged.length - 1];
+        if (previous && range.start <= previous.end) {
+            previous.end = Math.max(previous.end, range.end);
+        } else if (range.end > range.start) {
+            merged.push({ ...range });
+        }
+    }
+    return merged;
+}
+
+export function insertDocxExportExcludedRanges(
+    body: IDocumentBody,
+    insertBody: IDocumentBody,
+    textLength: number,
+    currentIndex: number
+): void {
+    if (body.docxExportExcludedRanges == null && insertBody.docxExportExcludedRanges == null) {
+        return;
+    }
+
+    const shifted = (body.docxExportExcludedRanges ?? []).map((range) => {
+        const result = shiftExclusiveRangeOnInsert(
+            { startIndex: range.start, endIndex: range.end },
+            currentIndex,
+            textLength
+        );
+        return { start: result.startIndex, end: result.endIndex };
+    });
+    const inserted = (insertBody.docxExportExcludedRanges ?? []).map((range) => ({
+        start: range.start + currentIndex,
+        end: range.end + currentIndex,
+    }));
+    body.docxExportExcludedRanges = mergeDocxExportExcludedRanges([...shifted, ...inserted]);
+}
+
+export function insertTables(body: IDocumentBody, insertBody: IDocumentBody, textLength: number, currentIndex: number) {
+    if (!body.tables && !insertBody.tables?.length) {
+        return;
+    }
+
+    if (!body.tables) {
+        body.tables = [];
+    }
+
+    const { tables } = body;
     for (let i = 0, len = tables.length; i < len; i++) {
         const table = tables[i];
-        const { startIndex, endIndex } = table;
-
-        if (startIndex > currentIndex) {
-            table.startIndex += textLength;
-            table.endIndex += textLength;
-        } else if (endIndex > currentIndex) {
-            table.endIndex += textLength;
-        }
+        Object.assign(table, shiftExclusiveRangeOnInsert(table, currentIndex, textLength));
     }
 
     const insertTables = insertBody.tables;
@@ -312,6 +593,62 @@ export function insertTables(body: IDocumentBody, insertBody: IDocumentBody, tex
 
         tables.push(...insertTables);
         tables.sort(sortRulesFactory('startIndex'));
+    }
+}
+
+export function insertColumnGroups(body: IDocumentBody, insertBody: IDocumentBody, textLength: number, currentIndex: number) {
+    if (!body.columnGroups && !insertBody.columnGroups?.length) {
+        return;
+    }
+
+    if (!body.columnGroups) {
+        body.columnGroups = [];
+    }
+
+    const { columnGroups } = body;
+    for (let i = 0, len = columnGroups.length; i < len; i++) {
+        const columnGroup = columnGroups[i];
+        Object.assign(columnGroup, shiftInclusiveRangeOnInsert(columnGroup, currentIndex, textLength));
+    }
+
+    const insertColumnGroups = insertBody.columnGroups;
+    if (insertColumnGroups) {
+        for (let i = 0, len = insertColumnGroups.length; i < len; i++) {
+            const columnGroup = insertColumnGroups[i];
+            columnGroup.startIndex += currentIndex;
+            columnGroup.endIndex += currentIndex;
+        }
+
+        columnGroups.push(...insertColumnGroups);
+        columnGroups.sort(sortRulesFactory('startIndex'));
+    }
+}
+
+export function insertBlockRanges(body: IDocumentBody, insertBody: IDocumentBody, textLength: number, currentIndex: number) {
+    if (!body.blockRanges && !insertBody.blockRanges?.length) {
+        return;
+    }
+
+    if (!body.blockRanges) {
+        body.blockRanges = [];
+    }
+
+    const { blockRanges } = body;
+    for (let i = 0, len = blockRanges.length; i < len; i++) {
+        const blockRange = blockRanges[i];
+        Object.assign(blockRange, shiftInclusiveRangeOnInsert(blockRange, currentIndex, textLength));
+    }
+
+    const insertBlockRanges = insertBody.blockRanges;
+    if (insertBlockRanges) {
+        for (let i = 0, len = insertBlockRanges.length; i < len; i++) {
+            const blockRange = insertBlockRanges[i];
+            blockRange.startIndex += currentIndex;
+            blockRange.endIndex += currentIndex;
+        }
+
+        blockRanges.push(...insertBlockRanges);
+        blockRanges.sort(sortRulesFactory('startIndex'));
     }
 }
 
@@ -398,14 +735,12 @@ export function splitCustomRangesByIndex(customRanges: ICustomRange[], currentIn
 
     if (matchedCustomRange) {
         customRanges.splice(matchedCustomRangeIndex, 1, {
-            rangeId: matchedCustomRange.rangeId,
-            rangeType: matchedCustomRange.rangeType,
+            ...matchedCustomRange,
             startIndex: matchedCustomRange.startIndex,
             endIndex: currentIndex - 1,
             properties: { ...matchedCustomRange.properties },
         }, {
-            rangeId: matchedCustomRange.rangeId,
-            rangeType: matchedCustomRange.rangeType,
+            ...matchedCustomRange,
             startIndex: currentIndex,
             endIndex: matchedCustomRange.endIndex,
             properties: { ...matchedCustomRange.properties },
@@ -504,13 +839,13 @@ interface IIndexRange {
 }
 
 function mergeRanges<T extends IIndexRange>(lineSegments: T[]): T[] {
-    lineSegments.sort((a, b) => a.startIndex - b.startIndex); // 按照起始值排序
+    lineSegments.sort((a, b) => a.startIndex - b.startIndex); // Sort by start value
 
     const mergedSegments: T[] = [];
     let currentSegment = lineSegments[0];
 
     for (let i = 1; i < lineSegments.length; i++) {
-        if (currentSegment.endIndex + 1 >= lineSegments[i].startIndex) { // 判断是否连续
+        if (currentSegment.endIndex + 1 >= lineSegments[i].startIndex) { // Check if continuous
             currentSegment.endIndex = Math.max(currentSegment.endIndex, lineSegments[i].endIndex);
         } else {
             mergedSegments.push(currentSegment);
@@ -755,77 +1090,120 @@ export function deleteSectionBreaks(body: IDocumentBody, textLength: number, cur
     return removeSectionBreaks;
 }
 
-export function deleteCustomBlocks(body: IDocumentBody, textLength: number, currentIndex: number) {
-    const { customBlocks = [] } = body;
+function deleteCustomBlockMetadata(
+    body: IDocumentBody,
+    textLength: number,
+    currentIndex: number,
+    field: CustomBlockField
+) {
+    const customBlocks = body[field];
+    if (customBlocks == null) {
+        return;
+    }
     const startIndex = currentIndex;
 
     const endIndex = currentIndex + textLength - 1;
     const removeCustomBlocks: ICustomBlock[] = [];
-    if (customBlocks) {
-        const newCustomBlocks = [];
-        for (let i = 0, len = customBlocks.length; i < len; i++) {
-            const customBlock = customBlocks[i];
-            const { startIndex: index } = customBlock;
-            if (index >= startIndex && index <= endIndex) {
-                removeCustomBlocks.push({
-                    ...customBlock,
-                    startIndex: index - currentIndex,
-                });
-                continue;
-            } else if (index > endIndex) {
-                customBlock.startIndex -= textLength;
-            }
-
-            newCustomBlocks.push(customBlock);
+    const newCustomBlocks = [];
+    for (let i = 0, len = customBlocks.length; i < len; i++) {
+        const customBlock = customBlocks[i];
+        const { startIndex: index } = customBlock;
+        if (index >= startIndex && index <= endIndex) {
+            removeCustomBlocks.push({
+                ...customBlock,
+                startIndex: index - currentIndex,
+            });
+            continue;
+        } else if (index > endIndex) {
+            customBlock.startIndex -= textLength;
         }
-        body.customBlocks = newCustomBlocks;
-    }
 
-    if (customBlocks.length && !body.customBlocks) {
-        body.customBlocks = customBlocks;
+        newCustomBlocks.push(customBlock);
+    }
+    body[field] = newCustomBlocks;
+
+    if (customBlocks.length && !body[field]) {
+        body[field] = customBlocks;
     }
     return removeCustomBlocks;
 }
 
+export function deleteCustomBlocks(body: IDocumentBody, textLength: number, currentIndex: number) {
+    body.customBlocks ??= [];
+    return deleteCustomBlockMetadata(body, textLength, currentIndex, 'customBlocks');
+}
+
+export function deleteDocxRawCustomBlocks(body: IDocumentBody, textLength: number, currentIndex: number) {
+    return deleteCustomBlockMetadata(body, textLength, currentIndex, 'docxRawCustomBlocks');
+}
+
+export function deleteDocxRawBlocks(body: IDocumentBody, textLength: number, currentIndex: number) {
+    if (body.docxRawBlocks == null) {
+        return;
+    }
+
+    const deleteEnd = currentIndex + textLength;
+    const removed: IDocxRawBlock[] = [];
+    const remaining: IDocxRawBlock[] = [];
+    for (const rawBlock of body.docxRawBlocks) {
+        if (rawBlock.startIndex >= currentIndex && rawBlock.startIndex < deleteEnd) {
+            removed.push({ ...rawBlock, startIndex: rawBlock.startIndex - currentIndex });
+        } else {
+            remaining.push(rawBlock.startIndex >= deleteEnd
+                ? { ...rawBlock, startIndex: rawBlock.startIndex - textLength }
+                : rawBlock);
+        }
+    }
+    body.docxRawBlocks = remaining;
+    return removed;
+}
+
+export function deleteDocxExportExcludedRanges(body: IDocumentBody, textLength: number, currentIndex: number) {
+    if (body.docxExportExcludedRanges == null) {
+        return;
+    }
+
+    const deleteEnd = currentIndex + textLength;
+    const removed: IDocxExportExcludedRange[] = [];
+    const remaining: IDocxExportExcludedRange[] = [];
+    for (const range of body.docxExportExcludedRanges) {
+        const overlapStart = Math.max(range.start, currentIndex);
+        const overlapEnd = Math.min(range.end, deleteEnd);
+        if (overlapEnd > overlapStart) {
+            removed.push({ start: overlapStart - currentIndex, end: overlapEnd - currentIndex });
+        }
+
+        const shifted = shiftExclusiveRangeOnDelete(
+            { startIndex: range.start, endIndex: range.end },
+            currentIndex,
+            textLength
+        );
+        if (shifted) {
+            remaining.push({ start: shifted.startIndex, end: shifted.endIndex });
+        }
+    }
+    body.docxExportExcludedRanges = mergeDocxExportExcludedRanges(remaining);
+    return removed;
+}
+
 export function deleteTables(body: IDocumentBody, textLength: number, currentIndex: number) {
     const { tables } = body;
-
-    const startIndex = currentIndex;
-
-    const endIndex = currentIndex + textLength - 1;
     const removeTables: ICustomTable[] = [];
 
     if (tables) {
         const newTables = [];
         for (let i = 0, len = tables.length; i < len; i++) {
             const table = tables[i];
-            const { startIndex: st, endIndex: ed } = table;
-
-            if (startIndex <= st && endIndex >= ed) {
+            const transformed = shiftExclusiveRangeOnDelete(table, currentIndex, textLength);
+            if (!transformed) {
                 removeTables.push({
                     ...table,
-                    startIndex: st - currentIndex,
-                    endIndex: ed - currentIndex,
+                    startIndex: table.startIndex - currentIndex,
+                    endIndex: table.endIndex - currentIndex,
                 });
                 continue;
-            } else if (st <= startIndex && ed >= endIndex) {
-                const segments = horizontalLineSegmentsSubtraction(st, ed, startIndex, endIndex);
-
-                if (segments.length === 0) {
-                    continue;
-                }
-
-                table.startIndex = segments[0];
-                table.endIndex = segments[1];
-
-                // FIXME: @JOCS, why startIndex will equal to endIndex here?
-                if (table.startIndex === table.endIndex) {
-                    continue;
-                }
-            } else if (endIndex < st) {
-                table.startIndex -= textLength;
-                table.endIndex -= textLength;
             }
+            Object.assign(table, transformed);
             newTables.push(table);
         }
         body.tables = newTables;
@@ -834,11 +1212,34 @@ export function deleteTables(body: IDocumentBody, textLength: number, currentInd
     return removeTables;
 }
 
+export function deleteColumnGroups(body: IDocumentBody, textLength: number, currentIndex: number) {
+    const { columnGroups } = body;
+    const removeColumnGroups: ICustomColumnGroup[] = [];
+
+    if (columnGroups) {
+        const newColumnGroups = [];
+        for (let i = 0, len = columnGroups.length; i < len; i++) {
+            const columnGroup = columnGroups[i];
+            const transformed = shiftInclusiveRangeOnDelete(columnGroup, currentIndex, textLength);
+            if (!transformed) {
+                removeColumnGroups.push({
+                    ...columnGroup,
+                    startIndex: columnGroup.startIndex - currentIndex,
+                    endIndex: columnGroup.endIndex - currentIndex,
+                });
+                continue;
+            }
+            Object.assign(columnGroup, transformed);
+            newColumnGroups.push(columnGroup);
+        }
+        body.columnGroups = newColumnGroups;
+    }
+
+    return removeColumnGroups;
+}
+
 export function deleteCustomRanges(body: IDocumentBody, textLength: number, currentIndex: number) {
     const { customRanges } = body;
-
-    const startIndex = currentIndex;
-    const endIndex = currentIndex + textLength - 1;
     // TODO: @JOCS, removeCustomRanges is not used, should we remove it?
     const removeCustomRanges: ICustomRange[] = [];
 
@@ -846,24 +1247,12 @@ export function deleteCustomRanges(body: IDocumentBody, textLength: number, curr
         const newCustomRanges = [];
         for (let i = 0, len = customRanges.length; i < len; i++) {
             const customRange = customRanges[i];
-            const { startIndex: st, endIndex: ed } = customRange;
-            // delete decoration
-            if (st >= startIndex && ed <= endIndex) {
+            const transformed = shiftInclusiveRangeOnDelete(customRange, currentIndex, textLength);
+            if (!transformed) {
                 removeCustomRanges.push(customRange);
                 continue;
-            } else if (Math.max(startIndex, st) <= Math.min(endIndex, ed)) {
-                const segments = horizontalLineSegmentsSubtraction(st, ed, startIndex, endIndex);
-
-                if (segments.length === 0) {
-                    continue;
-                }
-
-                customRange.startIndex = segments[0];
-                customRange.endIndex = segments[1];
-            } else if (endIndex < st) {
-                customRange.startIndex -= textLength;
-                customRange.endIndex -= textLength;
             }
+            Object.assign(customRange, transformed);
             newCustomRanges.push(customRange);
         }
 
@@ -871,6 +1260,29 @@ export function deleteCustomRanges(body: IDocumentBody, textLength: number, curr
     }
 
     return removeCustomRanges;
+}
+
+export function deleteBlockRanges(body: IDocumentBody, textLength: number, currentIndex: number) {
+    const { blockRanges } = body;
+    const removeBlockRanges: IDocumentBlockRange[] = [];
+
+    if (blockRanges) {
+        const newBlockRanges = [];
+        for (let i = 0, len = blockRanges.length; i < len; i++) {
+            const blockRange = blockRanges[i];
+            const transformed = shiftInclusiveRangeOnDelete(blockRange, currentIndex, textLength);
+            if (!transformed) {
+                removeBlockRanges.push(blockRange);
+                continue;
+            }
+            Object.assign(blockRange, transformed);
+            newBlockRanges.push(blockRange);
+        }
+
+        body.blockRanges = newBlockRanges;
+    }
+
+    return removeBlockRanges;
 }
 
 export function deleteCustomDecorations(body: IDocumentBody, textLength: number, currentIndex: number, needOffset = true) {

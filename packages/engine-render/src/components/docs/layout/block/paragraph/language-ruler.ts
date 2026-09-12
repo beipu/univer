@@ -15,13 +15,19 @@
  */
 
 import type { IParagraph } from '@univerjs/core';
-
 import type { ISectionBreakConfig } from '../../../../../basics/interfaces';
 import type { DataStreamTreeNode } from '../../../view-model/data-stream-tree-node';
 import type { DocumentViewModel } from '../../../view-model/document-view-model';
-import { getFirstGrapheme, hasArabic, hasSpace, hasTibetan, startWithEmoji } from '../../../../../basics/tools';
+import {
+    getFirstGrapheme,
+    hasArabic,
+    hasSpace,
+    hasThai,
+    hasTibetan,
+    startWithEmoji,
+} from '../../../../../basics/tools';
 import { createSkeletonLetterGlyph, createSkeletonWordGlyph } from '../../model/glyph';
-import { getFontCreateConfig } from '../../tools';
+import { getCustomRangeGlyphMetrics, getFontCreateConfig } from '../../tools';
 
 // Handle English word, English punctuation, number characters.
 // https://en.wikipedia.org/wiki/CJK_characters
@@ -38,7 +44,8 @@ export function otherHandler(
     let src = charArray;
 
     while (src.length) {
-        const char = src.match(/^[\s\S]/gu)?.[0];
+        // Keep ordinary ASCII cheap, but never expose a caret stop inside a combining sequence.
+        const char = src.match(/^\p{ASCII}(?![\p{Mark}\u200D])/u)?.[0] ?? getFirstGrapheme(src);
 
         if (char == null) {
             break;
@@ -49,7 +56,7 @@ export function otherHandler(
         }
 
         const config = getFontCreateConfig(index + step, viewModel, paragraphNode, sectionBreakConfig, paragraph);
-        const glyph = createSkeletonLetterGlyph(char, config);
+        const glyph = createSkeletonLetterGlyph(char, config, getCustomRangeGlyphMetrics(index + step, viewModel, paragraphNode, config));
 
         glyphGroup.push(glyph);
 
@@ -72,7 +79,7 @@ export function ArabicHandler(
     sectionBreakConfig: ISectionBreakConfig,
     paragraph: IParagraph
 ) {
-    // 组合阿拉伯语的词组
+    // Combine Arabic phrases
     const config = getFontCreateConfig(index, viewModel, paragraphNode, sectionBreakConfig, paragraph);
     const glyph = [];
     let step = 0;
@@ -80,7 +87,7 @@ export function ArabicHandler(
     for (let i = 0; i < charArray.length; i++) {
         const newChar = charArray[i];
         if (hasArabic(newChar)) {
-            glyph.unshift(newChar);
+            glyph.push(newChar);
             step++;
         } else {
             break;
@@ -118,13 +125,41 @@ export function TibetanHandler(
     sectionBreakConfig: ISectionBreakConfig,
     paragraph: IParagraph
 ) {
-    // 组合藏语词组
+    // Combine Tibetan phrases
     const config = getFontCreateConfig(index, viewModel, paragraphNode, sectionBreakConfig, paragraph);
     const glyph = [];
     let step = 0;
     for (let i = 0; i < charArray.length; i++) {
         const newChar = charArray[i];
         if (hasTibetan(newChar)) {
+            glyph.push(newChar);
+            step++;
+        } else {
+            break;
+        }
+    }
+
+    return {
+        step,
+        glyphGroup: [createSkeletonWordGlyph(glyph.join(''), config)],
+    };
+}
+
+export function ThaiHandler(
+    index: number,
+    charArray: string,
+    viewModel: DocumentViewModel,
+    paragraphNode: DataStreamTreeNode,
+    sectionBreakConfig: ISectionBreakConfig,
+    paragraph: IParagraph
+) {
+    // Combine Thai phrases so complex text layout works correctly.
+    const config = getFontCreateConfig(index, viewModel, paragraphNode, sectionBreakConfig, paragraph);
+    const glyph = [];
+    let step = 0;
+    for (let i = 0; i < charArray.length; i++) {
+        const newChar = charArray[i];
+        if (hasThai(newChar)) {
             glyph.push(newChar);
             step++;
         } else {

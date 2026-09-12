@@ -41,7 +41,7 @@ export class FTheadCommentItem {
 
     /**
      * Create a new FTheadCommentItem
-     * @param {IThreadComment|undefined} comment The comment
+     * @param {IThreadComment|undefined} [comment] The comment
      * @returns {FTheadCommentItem} A new instance of FTheadCommentItem
      * @example
      * ```ts
@@ -161,7 +161,8 @@ export class FTheadCommentBuilder extends FTheadCommentItem {
      *
      * // Add the comment to the cell A1
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const cell = fWorksheet.getRange('A1');
      * const result = await cell.addCommentAsync(commentBuilder);
      * console.log(result);
@@ -191,7 +192,8 @@ export class FTheadCommentBuilder extends FTheadCommentItem {
      *
      * // Add the comment to the cell A1
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const cell = fWorksheet.getRange('A1');
      * const result = await cell.addCommentAsync(commentBuilder);
      * console.log(result);
@@ -217,7 +219,8 @@ export class FTheadCommentBuilder extends FTheadCommentItem {
      *
      * // Add the comment to the cell A1
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const cell = fWorksheet.getRange('A1');
      * const result = await cell.addCommentAsync(commentBuilder);
      * console.log(result);
@@ -243,7 +246,8 @@ export class FTheadCommentBuilder extends FTheadCommentItem {
      *
      * // Add the comment to the cell A1
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const cell = fWorksheet.getRange('A1');
      * const result = await cell.addCommentAsync(commentBuilder);
      * console.log(result);
@@ -269,7 +273,8 @@ export class FTheadCommentBuilder extends FTheadCommentItem {
      *
      * // Add the comment to the cell A1
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const cell = fWorksheet.getRange('A1');
      * const result = await cell.addCommentAsync(commentBuilder);
      * console.log(result);
@@ -332,7 +337,8 @@ export class FThreadComment {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      * comments.forEach((comment) => {
      *   console.log(comment.getIsRoot());
@@ -349,7 +355,8 @@ export class FThreadComment {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      * comments.forEach((comment) => {
      *   console.log(comment.getCommentData());
@@ -363,11 +370,12 @@ export class FThreadComment {
 
     /**
      * Get the replies of the comment
-     * @returns {FThreadComment[]} the replies of the comment
+     * @returns {FThreadComment[] | undefined} The loaded replies, or `undefined` when the thread or its replies are unavailable.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      * comments.forEach((comment) => {
      *   if (comment.getIsRoot()) {
@@ -392,7 +400,8 @@ export class FThreadComment {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      * comments.forEach((comment) => {
      *   console.log(comment.getRange().getA1Notation());
@@ -413,19 +422,13 @@ export class FThreadComment {
     }
 
     /**
-     * @deprecated use `getRichText` as instead
-     */
-    getContent(): IDocumentBody {
-        return this._thread.text;
-    }
-
-    /**
      * Get the rich text of the comment
      * @returns {RichTextValue} The rich text of the comment
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      * comments.forEach((comment) => {
      *   console.log(comment.getRichText());
@@ -443,7 +446,8 @@ export class FThreadComment {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      *
      * // Delete the first comment
@@ -463,27 +467,14 @@ export class FThreadComment {
     }
 
     /**
-     * @deprecated use `deleteAsync` as instead.
-     */
-    delete(): Promise<boolean> {
-        return this.deleteAsync();
-    }
-
-    /**
-     * @deprecated use `updateAsync` as instead
-     */
-    async update(content: IDocumentBody): Promise<boolean> {
-        return this.updateAsync(content);
-    }
-
-    /**
      * Update the comment content
      * @param {IDocumentBody | RichTextValue} content The new content of the comment
      * @returns {Promise<boolean>} Whether the comment is updated successfully
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a new comment
      * const richText = univerAPI.newRichText().insertText('hello univer');
@@ -523,20 +514,14 @@ export class FThreadComment {
     }
 
     /**
-     * @deprecated use `resolveAsync` as instead
-     */
-    resolve(resolved?: boolean): Promise<boolean> {
-        return this.resolveAsync(resolved);
-    }
-
-    /**
      * Resolve the comment
-     * @param {boolean} resolved Whether the comment is resolved
+     * @param {boolean} [resolved] Whether the comment is resolved
      * @returns {Promise<boolean>} Set the comment to resolved or not operation result
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a new comment
      * const richText = univerAPI.newRichText().insertText('hello univer');
@@ -573,7 +558,8 @@ export class FThreadComment {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a new comment
      * const richText = univerAPI.newRichText().insertText('hello univer');

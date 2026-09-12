@@ -15,18 +15,32 @@
  */
 
 import type { Injector, IRange, Workbook, Worksheet } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import type { IPermissionPanelRule } from '../../services/permission/sheet-permission-panel.model';
 import { IUniverInstanceService, LocaleService, RANGE_TYPE, Rectangle, UniverInstanceType } from '@univerjs/core';
-import { EditStateEnum, RangeProtectionRuleModel, SheetsSelectionsService, UnitObject, ViewStateEnum, WorksheetProtectionRuleModel } from '@univerjs/sheets';
+import { UnitObject } from '@univerjs/protocol';
+import {
+    EditStateEnum,
+    RangeProtectionRuleModel,
+    SheetsSelectionsService,
+    ViewStateEnum,
+    WorksheetProtectionRuleModel,
+} from '@univerjs/sheets';
 
-export const checkRangeValid = (injector: Injector, permissionRanges: IRange[], permissionId: string, unitId: string, subUnitId: string) => {
+export const checkRangeValid = (
+    injector: Injector,
+    permissionRanges: IRange[],
+    permissionId: string,
+    unitId: string,
+    subUnitId: string
+) => {
     const localeService = injector.get(LocaleService);
     const worksheetRuleModel = injector.get(WorksheetProtectionRuleModel);
     const rangeProtectionRuleModel = injector.get(RangeProtectionRuleModel);
 
     let rangeErrorString = '';
     if (permissionRanges.length === 0) {
-        rangeErrorString = localeService.t('permission.panel.emptyRangeError');
+        rangeErrorString = localeService.t<LocaleKey>('sheets-ui.permission.panel.emptyRangeError');
     } else if (permissionRanges.length > 1) {
         let hasLap = false;
         for (let i = 0; i < permissionRanges.length; i++) {
@@ -41,13 +55,13 @@ export const checkRangeValid = (injector: Injector, permissionRanges: IRange[], 
             }
         }
         if (hasLap) {
-            rangeErrorString = localeService.t('permission.panel.rangeOverlapError');
+            rangeErrorString = localeService.t<LocaleKey>('sheets-ui.permission.panel.rangeOverlapError');
         }
     }
     if (!rangeErrorString) {
         const worksheetRule = worksheetRuleModel.getRule(unitId, subUnitId);
         if (worksheetRule && !permissionId) {
-            rangeErrorString = localeService.t('permission.panel.rangeOverlapOverPermissionError');
+            rangeErrorString = localeService.t<LocaleKey>('sheets-ui.permission.panel.rangeOverlapOverPermissionError');
             return rangeErrorString;
         }
         const lapRule = rangeProtectionRuleModel.getSubunitRuleList(unitId, subUnitId).filter((rule) => {
@@ -61,7 +75,7 @@ export const checkRangeValid = (injector: Injector, permissionRanges: IRange[], 
             return permissionRanges.some((r) => Rectangle.intersects(range, r));
         });
         if (lapRange) {
-            rangeErrorString = localeService.t('permission.panel.rangeOverlapOverPermissionError');
+            rangeErrorString = localeService.t<LocaleKey>('sheets-ui.permission.panel.rangeOverlapOverPermissionError');
         }
     }
     return rangeErrorString === '' ? undefined : rangeErrorString;
@@ -83,7 +97,7 @@ export const checkRangesIsWholeSheet = (ranges: IRange[], sheet: Worksheet) => {
 export const generateDefaultRule = (injector: Injector, fromSheetBar: boolean) => {
     const univerInstanceService = injector.get(IUniverInstanceService);
     const selectionManagerService = injector.get(SheetsSelectionsService);
-    const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+    const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
     const worksheet = workbook.getActiveSheet();
 
     let unitType = UnitObject.SelectRange;
@@ -115,7 +129,7 @@ export const generateDefaultRule = (injector: Injector, fromSheetBar: boolean) =
 
 export const generateRuleByUnitType = (injector: Injector, rule: IPermissionPanelRule) => {
     const univerInstanceService = injector.get(IUniverInstanceService);
-    const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+    const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
     const worksheet = workbook.getActiveSheet();
     const { unitType } = rule;
 

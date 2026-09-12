@@ -36,22 +36,35 @@ export class DumbCanvasColorService implements ICanvasColorService {
  * This service inverts a color for dark mode. This service is exposed
  */
 export class CanvasColorService extends Disposable implements ICanvasColorService {
-    private readonly _cache = new Map<string, string>();
+    private readonly _darkModeCache = new Map<string, string>();
+    private readonly _resolvedThemeColors = new Map<string, string>();
     private _invertAlgo = invertColorByMatrix;
 
     constructor(
         @Inject(ThemeService) private readonly _themeService: ThemeService
     ) {
         super();
+
+        this.disposeWithMe(this._themeService.currentTheme$.subscribe((theme) => {
+            this._cacheThemeColors(theme);
+            this._darkModeCache.clear();
+        }));
     }
 
-    getRenderColor(color: string): string {
+    getRenderColor(inputColor: string): string {
+        const color = this._resolvedThemeColors.get(inputColor) ?? inputColor;
+
         if (!this._themeService.darkMode) {
             return color;
         }
 
-        if (this._cache.has(color)) {
-            return this._cache.get(color)!;
+        if (this._darkModeCache.has(color)) {
+            return this._darkModeCache.get(color)!;
+        }
+
+        if (color.trim().toLowerCase() === 'transparent') {
+            this._darkModeCache.set(color, 'transparent');
+            return 'transparent';
         }
 
         let cachedColor = '';
@@ -63,10 +76,8 @@ export class CanvasColorService extends Disposable implements ICanvasColorServic
             if (color.length === 5) {
                 const alpha = color.charAt(4);
                 cachedColor += alpha + alpha;
-            }
-
-            // For 8-digit hex (e.g., #RRGGBB[AA]), the alpha is the last two characters
-            else if (color.length === 9) {
+            } else if (color.length === 9) {
+                // For 8-digit hex (e.g., #RRGGBB[AA]), the alpha is the last two characters
                 const alpha = color.substring(7, 9);
                 cachedColor += alpha;
             }
@@ -78,9 +89,6 @@ export class CanvasColorService extends Disposable implements ICanvasColorServic
             const stripped = color.slice(4, -1).split(',');
             const invertedColor = this._invertAlgo(stripped.map(Number) as RGBColorType);
             cachedColor = `rgb(${invertedColor[0]},${invertedColor[1]},${invertedColor[2]})`;
-        } else if (this._themeService.isValidThemeColor(color)) {
-            // If the color is a theme token, we can get the color from the theme service
-            return this._themeService.getColorFromTheme(color);
         } else if (new ColorKit(color).isValid) {
             // Support X11 color names
             const { r, g, b, a } = new ColorKit(color).toRgb();
@@ -90,8 +98,20 @@ export class CanvasColorService extends Disposable implements ICanvasColorServic
             throw new Error(`[CanvasColorService]: illegal color "${color}"`);
         }
 
-        this._cache.set(color, cachedColor);
+        this._darkModeCache.set(color, cachedColor);
         return cachedColor;
+    }
+
+    private _cacheThemeColors(theme: ReturnType<ThemeService['getCurrentTheme']>): void {
+        this._resolvedThemeColors.clear();
+
+        for (const [paletteName, palette] of Object.entries(theme)) {
+            for (const [tokenName, color] of Object.entries(palette)) {
+                if (typeof color === 'string') {
+                    this._resolvedThemeColors.set(`${paletteName}.${tokenName}`, color);
+                }
+            }
+        }
     }
 }
 

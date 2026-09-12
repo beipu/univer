@@ -18,15 +18,29 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'Fermer le badge',
+            close: 'Fermer',
+            menu: 'Menu',
+            previous: 'Précédent',
+            next: 'Suivant',
+            imageGallery: 'Galerie d’images',
+            image: 'Image {0} sur {1}',
+            zoomIn: 'Zoom avant',
+            zoomOut: 'Zoom arrière',
+            resetZoom: 'Réinitialiser le zoom',
+            increment: 'Augmenter',
+            decrement: 'Diminuer',
+        },
         Confirm: {
             cancel: 'annuler',
-            confirm: 'ok',
+            confirm: 'OK',
         },
         CascaderList: {
             empty: 'Aucun',
         },
         Calendar: {
-            year: '',
+            year: 'Année',
             weekDays: ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'],
             months: [
                 'Janvier',
@@ -42,14 +56,17 @@ const locale: typeof enUS = {
                 'Novembre',
                 'Décembre',
             ],
-        },
-        Select: {
-            empty: 'Aucun',
+            ariaLabels: {
+                previousMonth: 'Mois précédent',
+                nextMonth: 'Mois suivant',
+                selectYear: 'Sélectionner l\'année',
+                selectMonth: 'Sélectionner le mois',
+            },
         },
         ColorPicker: {
             more: 'Plus de couleurs',
             cancel: 'annuler',
-            confirm: 'ok',
+            confirm: 'OK',
         },
         GradientColorPicker: {
             linear: 'Linéaire',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: 'Diamant',
             offset: 'Décalage',
             angle: 'Angle',
-            flip: 'Retourner',
             delete: 'Supprimer',
+            transparency: 'Transparence',
         },
     },
 };

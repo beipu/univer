@@ -15,18 +15,21 @@
  */
 
 import type { ITextRange, ITextRangeParam } from '../../../../sheets/typedef';
-import type { IDocumentBody } from '../../../../types/interfaces';
+import type { IDocumentBody, IDocumentData, IDrawingParam } from '../../../../types/interfaces';
 import type { DocumentDataModel } from '../../document-data-model';
 import type { JSONXActions } from '../../json-x/json-x';
+import { createParagraphId } from '../../../paragraph-id';
 import { JSONX } from '../../json-x/json-x';
+import { DataStreamTreeTokenType } from '../../types';
 import { TextXActionType } from '../action-types';
 import { TextX } from '../text-x';
+import { getRichTextEditPath } from '../utils';
 import { deleteSelectionTextX } from './text-x-utils';
 
 export interface IAddDrawingParam {
     selection: ITextRangeParam;
     documentDataModel: DocumentDataModel;
-    drawings: any[];
+    drawings: IDrawingParam[];
 }
 
 export function getCustomBlockIdsInSelections(body: IDocumentBody, selections: ITextRange[]): string[] {
@@ -52,96 +55,99 @@ export function getCustomBlockIdsInSelections(body: IDocumentBody, selections: I
     return customBlockIds;
 }
 
-export function getRichTextEditPath(docDataModel: DocumentDataModel, segmentId = '') {
-    if (!segmentId) {
-        return ['body'];
+export function removeDrawingReferences(
+    documentData: Pick<IDocumentData, 'body' | 'drawings' | 'drawingsOrder' | 'notes'>,
+    selections: ITextRange[],
+    body: IDocumentBody | undefined = documentData.body,
+    segmentId = ''
+): JSONXActions[] {
+    if (!body) {
+        return [];
     }
 
-    const { headers, footers } = docDataModel.getSnapshot();
+    const footnote = documentData.notes?.[segmentId];
+    const source = footnote ?? documentData;
+    const prefix = footnote ? ['notes', segmentId] : [];
+    const drawings = source.drawings ?? {};
+    const drawingOrder = source.drawingsOrder ?? [];
+    const blockIds = [...new Set(getCustomBlockIdsInSelections(body, selections))]
+        .sort((left, right) => drawingOrder.indexOf(right) - drawingOrder.indexOf(left));
+    const jsonX = JSONX.getInstance();
+    const actions: JSONXActions[] = [];
 
-    if (headers == null && footers == null) {
-        throw new Error('Document data model must have headers or footers when update by segment id');
+    for (const blockId of blockIds) {
+        const drawing = drawings[blockId];
+        if (drawing != null) {
+            const removeDrawingAction = jsonX.removeOp([...prefix, 'drawings', blockId], drawing);
+            if (removeDrawingAction) {
+                actions.push(removeDrawingAction);
+            }
+        }
+
+        const drawingIndex = drawingOrder.indexOf(blockId);
+        if (drawingIndex >= 0) {
+            const removeDrawingOrderAction = jsonX.removeOp([...prefix, 'drawingsOrder', drawingIndex], blockId);
+            if (removeDrawingOrderAction) {
+                actions.push(removeDrawingOrderAction);
+            }
+        }
     }
 
-    if (headers?.[segmentId] != null) {
-        return ['headers', segmentId, 'body'];
-    } else if (footers?.[segmentId] != null) {
-        return ['footers', segmentId, 'body'];
-    } else {
-        throw new Error('Segment id not found in headers or footers');
-    }
+    return actions;
 }
 
-// eslint-disable-next-line max-lines-per-function
 export const addDrawing = (param: IAddDrawingParam) => {
     const { selection, documentDataModel, drawings } = param;
     const { collapsed, startOffset, segmentId } = selection;
     const textX = new TextX();
     const jsonX = JSONX.getInstance();
     const rawActions: JSONXActions = [];
-    const body = documentDataModel.getSelfOrHeaderFooterModel(segmentId).getBody();
+    const body = documentDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody();
 
     if (!body) {
         return false;
     }
 
-    const drawingOrderLength = documentDataModel.getSnapshot().drawingsOrder?.length ?? 0;
-    let removeDrawingLen = 0;
+    const snapshot = documentDataModel.getSnapshot();
+    const footnote = snapshot.notes?.[segmentId ?? ''];
+    const source = footnote ?? snapshot;
+    const prefix = footnote ? ['notes', segmentId!] : [];
+    const drawingOrder = source.drawingsOrder ?? [];
+    let insertDrawingIndex = drawingOrder.length;
+    if (source.drawings == null) {
+        rawActions.push(jsonX.insertOp([...prefix, 'drawings'], {})!);
+    }
+    if (source.drawingsOrder == null) {
+        rawActions.push(jsonX.insertOp([...prefix, 'drawingsOrder'], [])!);
+    }
+    const insertOffset = collapsed ? normalizeDrawingInsertOffset(body, startOffset ?? 0) : (startOffset ?? 0);
 
-        // Step 1: Insert placeholder `\b` in dataStream and add drawing to customBlocks.
+    // Step 1: Insert placeholder `\b` in dataStream and add drawing to customBlocks.
     if (collapsed) {
-        if (startOffset > 0) {
+        if (insertOffset > 0) {
             textX.push({
                 t: TextXActionType.RETAIN,
-                len: startOffset,
+                len: insertOffset,
             });
         }
     } else {
         const dos = deleteSelectionTextX([selection], body, 0, null, false);
         textX.push(...dos);
 
-        const removedCustomBlockIds = getCustomBlockIdsInSelections(body, [selection]);
-        const drawings = documentDataModel.getDrawings() ?? {};
-        const drawingOrder = documentDataModel.getDrawingsOrder() ?? [];
-        const sortedRemovedCustomBlockIds = removedCustomBlockIds.sort((a, b) => {
-            if (drawingOrder.indexOf(a) > drawingOrder.indexOf(b)) {
-                return -1;
-            } else if (drawingOrder.indexOf(a) < drawingOrder.indexOf(b)) {
-                return 1;
-            }
-
-            return 0;
-        });
-
-        if (sortedRemovedCustomBlockIds.length > 0) {
-            for (const blockId of sortedRemovedCustomBlockIds) {
-                const drawing = drawings[blockId];
-                const drawingIndex = drawingOrder.indexOf(blockId);
-                if (drawing == null || drawingIndex < 0) {
-                    continue;
-                }
-
-                const removeDrawingAction = jsonX.removeOp(['drawings', blockId], drawing);
-                const removeDrawingOrderAction = jsonX.removeOp(['drawingsOrder', drawingIndex], blockId);
-
-                rawActions.push(removeDrawingAction!);
-                rawActions.push(removeDrawingOrderAction!);
-
-                removeDrawingLen++;
+        const removedIds = new Set(getCustomBlockIdsInSelections(body, [selection]));
+        insertDrawingIndex -= drawingOrder.filter((id) => removedIds.has(id)).length;
+        for (const action of removeDrawingReferences(snapshot, [selection], body, segmentId)) {
+            if (action) {
+                rawActions.push(action);
             }
         }
     }
 
+    const insertBody = buildDrawingInsertBody(body, drawings, insertOffset);
     textX.push({
         t: TextXActionType.INSERT,
-        body: {
-            dataStream: '\b'.repeat(drawings.length),
-            customBlocks: drawings.map((drawing, i) => ({
-                startIndex: i,
-                blockId: drawing.drawingId,
-            })),
-        },
-        len: drawings.length,
+        body: insertBody,
+        len: insertBody.dataStream.length,
     });
 
     const path = getRichTextEditPath(documentDataModel, segmentId);
@@ -149,11 +155,11 @@ export const addDrawing = (param: IAddDrawingParam) => {
 
     rawActions.push(placeHolderAction!);
 
-        // Step 2: add drawing to drawings and drawingsOrder fields.
+    // Step 2: add drawing to drawings and drawingsOrder fields.
     for (const drawing of drawings) {
         const { drawingId } = drawing;
-        const addDrawingAction = jsonX.insertOp(['drawings', drawingId], drawing);
-        const addDrawingOrderAction = jsonX.insertOp(['drawingsOrder', drawingOrderLength - removeDrawingLen], drawingId);
+        const addDrawingAction = jsonX.insertOp([...prefix, 'drawings', drawingId], drawing);
+        const addDrawingOrderAction = jsonX.insertOp([...prefix, 'drawingsOrder', insertDrawingIndex++], drawingId);
 
         rawActions.push(addDrawingAction!);
         rawActions.push(addDrawingOrderAction!);
@@ -163,3 +169,55 @@ export const addDrawing = (param: IAddDrawingParam) => {
         return JSONX.compose(acc, cur as JSONXActions);
     }, null as JSONXActions);
 };
+
+function normalizeDrawingInsertOffset(body: IDocumentBody, offset: number): number {
+    const { dataStream } = body;
+    if (offset === 0 && dataStream[0] === DataStreamTreeTokenType.PARAGRAPH) {
+        return 1;
+    }
+
+    if (
+        dataStream[offset] === DataStreamTreeTokenType.SECTION_BREAK &&
+        dataStream[offset - 1] === DataStreamTreeTokenType.PARAGRAPH &&
+        isInsideTableCell(dataStream, offset)
+    ) {
+        return offset - 1;
+    }
+
+    return offset;
+}
+
+function isInsideTableCell(dataStream: string, offset: number): boolean {
+    let cellDepth = 0;
+    for (let index = 0; index < offset; index++) {
+        if (dataStream[index] === DataStreamTreeTokenType.TABLE_CELL_START) {
+            cellDepth++;
+        } else if (dataStream[index] === DataStreamTreeTokenType.TABLE_CELL_END) {
+            cellDepth = Math.max(0, cellDepth - 1);
+        }
+    }
+
+    return cellDepth > 0;
+}
+
+function buildDrawingInsertBody(body: IDocumentBody, drawings: IDrawingParam[], insertOffset: number): IDocumentBody {
+    const placeholders = DataStreamTreeTokenType.CUSTOM_BLOCK.repeat(drawings.length);
+    const needsTrailingParagraph = body.dataStream[insertOffset] === DataStreamTreeTokenType.SECTION_BREAK || body.dataStream[insertOffset] === undefined;
+    const dataStream = needsTrailingParagraph ? `${placeholders}${DataStreamTreeTokenType.PARAGRAPH}` : placeholders;
+
+    return {
+        dataStream,
+        customBlocks: drawings.map((drawing, i) => ({
+            startIndex: i,
+            blockId: drawing.drawingId,
+        })),
+        ...(needsTrailingParagraph
+            ? {
+                paragraphs: [{
+                    startIndex: placeholders.length,
+                    paragraphId: createParagraphId(new Set(body.paragraphs?.map((paragraph) => paragraph.paragraphId))),
+                }],
+            }
+            : {}),
+    };
+}

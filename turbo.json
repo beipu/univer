@@ -5,13 +5,13 @@
         },
 
         "coverage": {
-            "cache": false
+            "outputs": ["coverage/**"],
+            "env": ["CI"]
         },
 
         "build": {
+            "outputs": ["lib/**"]
         },
-
-        "build:e2e": {},
 
         "typecheck": {}
     }

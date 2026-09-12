@@ -17,81 +17,25 @@
 import type { IRenderContext, IRenderModule, Spreadsheet } from '@univerjs/engine-render';
 import type { MenuConfig } from '@univerjs/ui';
 import type { IUniverSheetsUIConfig } from '../../config/config';
-import { Disposable, IConfigService, Inject, Injector, IPermissionService } from '@univerjs/core';
+import { Disposable, IConfigService, Inject, IPermissionService } from '@univerjs/core';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { CheckMarkIcon, DeleteIcon, LockIcon, ProtectIcon, WriteIcon } from '@univerjs/icons';
 import { RangeProtectionRuleModel, WorksheetProtectionRuleModel } from '@univerjs/sheets';
-import { ComponentManager } from '@univerjs/ui';
 import { merge, throttleTime } from 'rxjs';
 import { convertToShadowStrategy, SHEETS_UI_PLUGIN_CONFIG_KEY } from '../../config/config';
-import {
-    permissionCheckIconKey,
-    permissionDeleteIconKey,
-    permissionEditIconKey,
-    permissionLockIconKey,
-    permissionMenuIconKey,
-    UNIVER_SHEET_PERMISSION_DIALOG,
-    UNIVER_SHEET_PERMISSION_PANEL,
-    UNIVER_SHEET_PERMISSION_USER_DIALOG,
-    UNIVER_SHEET_PERMISSION_USER_PART,
-} from '../../consts/permission';
 import { SheetSkeletonManagerService } from '../../services/sheet-skeleton-manager.service';
-import { SheetPermissionDialog, SheetPermissionPanel, SheetPermissionUserDialog } from '../../views/permission';
-import { AlertDialog } from '../../views/permission/error-msg-dialog';
-import { UNIVER_SHEET_PERMISSION_ALERT_DIALOG } from '../../views/permission/error-msg-dialog/interface';
-import { RANGE_PROTECTION_CAN_NOT_VIEW_RENDER_EXTENSION_KEY, RANGE_PROTECTION_CAN_VIEW_RENDER_EXTENSION_KEY, RangeProtectionCanNotViewRenderExtension, RangeProtectionCanViewRenderExtension } from '../../views/permission/extensions/range-protection.render';
-import { worksheetProtectionKey, WorksheetProtectionRenderExtension } from '../../views/permission/extensions/worksheet-permission.render';
+import {
+    RANGE_PROTECTION_CAN_NOT_VIEW_RENDER_EXTENSION_KEY,
+    RANGE_PROTECTION_CAN_VIEW_RENDER_EXTENSION_KEY,
+    RangeProtectionCanNotViewRenderExtension,
+    RangeProtectionCanViewRenderExtension,
+} from '../../views/permission/extensions/range-protection.render';
+import {
+    worksheetProtectionKey,
+    WorksheetProtectionRenderExtension,
+} from '../../views/permission/extensions/worksheet-permission.render';
 
 export interface IUniverSheetsPermissionMenuConfig {
     menu: MenuConfig;
-}
-
-export class SheetPermissionRenderManagerController extends Disposable {
-    constructor(
-        @Inject(Injector) private _injector: Injector,
-        @Inject(ComponentManager) private _componentManager: ComponentManager
-    ) {
-        super();
-        this._init();
-    }
-
-    private _init(): void {
-        this._initComponents();
-        this._initUiPartComponents();
-    }
-
-    private _initComponents(): void {
-        ([
-            [permissionMenuIconKey, ProtectIcon],
-            [permissionDeleteIconKey, DeleteIcon],
-            [permissionEditIconKey, WriteIcon],
-            [permissionCheckIconKey, CheckMarkIcon],
-            [permissionLockIconKey, LockIcon],
-            [UNIVER_SHEET_PERMISSION_PANEL, SheetPermissionPanel],
-            [UNIVER_SHEET_PERMISSION_USER_DIALOG, SheetPermissionUserDialog],
-            [UNIVER_SHEET_PERMISSION_DIALOG, SheetPermissionDialog],
-            [UNIVER_SHEET_PERMISSION_ALERT_DIALOG, AlertDialog],
-        ] as const).forEach(([key, comp]) => {
-            this.disposeWithMe(this._componentManager.register(
-                key,
-                comp
-            ));
-        });
-    }
-
-    private _initUiPartComponents(): void {
-        const configService = this._injector.get(IConfigService);
-        const config = configService.getConfig<IUniverSheetsUIConfig>(SHEETS_UI_PLUGIN_CONFIG_KEY);
-
-        if (config?.protectedRangeUserSelector) {
-            const { component, framework } = config.protectedRangeUserSelector;
-            this.disposeWithMe(
-                this._componentManager.register(UNIVER_SHEET_PERMISSION_USER_PART, component, {
-                    framework,
-                })
-            );
-        }
-    }
 }
 
 export class SheetPermissionRenderController extends Disposable implements IRenderModule {
@@ -185,7 +129,7 @@ export class WorksheetProtectionRenderController extends Disposable implements I
 
     private _initRender() {
         const renderId = this._context.unitId;
-        const render = renderId && this._renderManagerService.getRenderById(renderId);
+        const render = renderId && this._renderManagerService.getRenderUnitById(renderId);
         const spreadsheetRender = render && render.mainComponent as Spreadsheet;
         if (spreadsheetRender) {
             if (!spreadsheetRender.getExtensionByKey(worksheetProtectionKey)) {

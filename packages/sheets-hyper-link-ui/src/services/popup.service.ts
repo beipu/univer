@@ -14,16 +14,27 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, ICustomRange, IDisposable, INeedCheckDisposable, ITextRange, Nullable, Workbook } from '@univerjs/core';
+import type { ICustomRange, IDisposable, INeedCheckDisposable, ITextRange, Nullable, Workbook } from '@univerjs/core';
 import type { IBoundRectNoAngle } from '@univerjs/engine-render';
 import type { ISheetLocationBase } from '@univerjs/sheets';
 import type { ICanvasPopup } from '@univerjs/sheets-ui';
-import { BuildTextUtils, CustomRangeType, Disposable, DOCS_NORMAL_EDITOR_UNIT_ID_KEY, DOCS_ZEN_EDITOR_UNIT_ID_KEY, Inject, Injector, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import type { Observable } from 'rxjs';
+import {
+    BuildTextUtils,
+    createIdentifier,
+    CustomRangeType,
+    Disposable,
+    DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
+    Inject,
+    Injector,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSelectionManagerService } from '@univerjs/docs';
-import { calcDocRangePositions, DocCanvasPopManagerService } from '@univerjs/docs-ui';
+import { calcDocRangePositions } from '@univerjs/docs-ui';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { getCustomRangePosition, getEditingCustomRangePosition, IEditorBridgeService, SheetCanvasPopManagerService } from '@univerjs/sheets-ui';
-import { IZenZoneService } from '@univerjs/ui';
+import { IDialogService } from '@univerjs/ui';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { HyperLinkEditSourceType } from '../types/enums/edit-source';
 import { CellLinkEdit } from '../views/CellLinkEdit';
@@ -42,7 +53,7 @@ export interface IHyperLinkPopup {
     showAll?: boolean;
 }
 
-interface IHyperLinkEditing {
+export interface IHyperLinkEditing {
     unitId: string;
     subUnitId: string;
     row: number;
@@ -50,6 +61,22 @@ interface IHyperLinkEditing {
     customRangeId?: string;
     type: HyperLinkEditSourceType;
 }
+
+export interface ISheetsHyperLinkPopupService {
+    readonly currentPopup: IHyperLinkPopup | null;
+    readonly currentPopup$: Observable<IHyperLinkPopup | null>;
+    readonly currentEditing: (IHyperLinkEditing & { customRange?: ICustomRange; label?: string }) | null;
+    readonly currentEditing$: Observable<(IHyperLinkEditing & { customRange?: ICustomRange; label?: string }) | null>;
+    setIsKeepVisible(value: boolean): void;
+    getIsKeepVisible(): boolean;
+    showPopup(location: IHyperLinkPopupOptions): void;
+    hideCurrentPopup(type?: HyperLinkEditSourceType, force?: boolean): void;
+    startAddEditing(link: IHyperLinkEditing): void;
+    startEditing(link: Required<IHyperLinkEditing>): void;
+    endEditing(type?: HyperLinkEditSourceType): void;
+}
+
+export const ISheetsHyperLinkPopupService = createIdentifier<ISheetsHyperLinkPopupService>('sheets-hyper-link-ui.popup.service');
 
 const isEqualLink = (a: IHyperLinkPopupOptions, b: Omit<IHyperLinkPopup, 'disposable' | 'editPermission'>) => {
     return (
@@ -62,7 +89,7 @@ const isEqualLink = (a: IHyperLinkPopupOptions, b: Omit<IHyperLinkPopup, 'dispos
     );
 };
 
-interface IHyperLinkPopupOptions extends ISheetLocationBase {
+export interface IHyperLinkPopupOptions extends ISheetLocationBase {
     editPermission?: boolean;
     copyPermission?: boolean;
     customRange?: Nullable<ICustomRange>;
@@ -71,13 +98,13 @@ interface IHyperLinkPopupOptions extends ISheetLocationBase {
     type: HyperLinkEditSourceType;
 }
 
-export class SheetsHyperLinkPopupService extends Disposable {
-    private _currentPopup: IHyperLinkPopup | null = null;
-    private _currentPopup$ = new Subject<IHyperLinkPopup | null>();
+export class SheetsHyperLinkPopupService extends Disposable implements ISheetsHyperLinkPopupService {
+    protected _currentPopup: IHyperLinkPopup | null = null;
+    protected _currentPopup$ = new Subject<IHyperLinkPopup | null>();
     currentPopup$ = this._currentPopup$.asObservable();
-    private _currentEditingPopup: Nullable<IDisposable> = null;
+    protected _currentEditingPopup: Nullable<IDisposable> = null;
 
-    private _currentEditing$ = new BehaviorSubject<(IHyperLinkEditing & { customRange?: ICustomRange; label?: string }) | null>(null);
+    protected _currentEditing$ = new BehaviorSubject<(IHyperLinkEditing & { customRange?: ICustomRange; label?: string }) | null>(null);
     currentEditing$ = this._currentEditing$.asObservable();
 
     private _isKeepVisible: boolean = false;
@@ -91,13 +118,13 @@ export class SheetsHyperLinkPopupService extends Disposable {
     }
 
     constructor(
-        @Inject(SheetCanvasPopManagerService) private readonly _sheetCanvasPopManagerService: SheetCanvasPopManagerService,
-        @Inject(Injector) private readonly _injector: Injector,
-        @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
+        @Inject(SheetCanvasPopManagerService) protected readonly _sheetCanvasPopManagerService: SheetCanvasPopManagerService,
+        @Inject(Injector) protected readonly _injector: Injector,
+        @IUniverInstanceService protected readonly _univerInstanceService: IUniverInstanceService,
         @IEditorBridgeService private readonly _editorBridgeService: IEditorBridgeService,
-        @Inject(DocSelectionManagerService) private readonly _textSelectionManagerService: DocSelectionManagerService,
-        @Inject(DocCanvasPopManagerService) private readonly _docCanvasPopManagerService: DocCanvasPopManagerService,
-        @IZenZoneService private readonly _zenZoneService: IZenZoneService
+        @Inject(DocSelectionManagerService) protected readonly _textSelectionManagerService: DocSelectionManagerService,
+        @IRenderManagerService protected readonly _renderManagerService: IRenderManagerService,
+        @IDialogService protected readonly _dialogService: IDialogService
     ) {
         super();
 
@@ -118,16 +145,12 @@ export class SheetsHyperLinkPopupService extends Disposable {
         return this._isKeepVisible;
     }
 
-    // eslint-disable-next-line max-lines-per-function
     showPopup(location: IHyperLinkPopupOptions) {
         if (this._currentPopup && isEqualLink(location, this._currentPopup)) {
             return;
         }
 
         this.hideCurrentPopup(undefined, true);
-        if (location.type !== HyperLinkEditSourceType.ZEN_EDITOR && this._zenZoneService.visible) {
-            return;
-        }
         const currentEditing = this._currentEditing$.getValue();
         if (currentEditing && isEqualLink(location, currentEditing)) {
             return;
@@ -152,19 +175,6 @@ export class SheetsHyperLinkPopupService extends Disposable {
             disposable = customRangeRect && this._sheetCanvasPopManagerService.attachPopupToAbsolutePosition(
                 customRangeRect,
                 popup
-            );
-        } else if (location.type === HyperLinkEditSourceType.ZEN_EDITOR) {
-            if (!customRange) {
-                return;
-            }
-            disposable = this._docCanvasPopManagerService.attachPopupToRange(
-                {
-                    startOffset: customRange.startIndex,
-                    endOffset: customRange.endIndex + 1,
-                    collapsed: false,
-                },
-                popup,
-                DOCS_ZEN_EDITOR_UNIT_ID_KEY
             );
         } else {
             if (location.showAll) {
@@ -222,7 +232,7 @@ export class SheetsHyperLinkPopupService extends Disposable {
         this._currentEditing$.complete();
     }
 
-    private _getEditingRange(): Nullable<ITextRange & { label: string }> {
+    protected _getEditingRange(): Nullable<ITextRange & { label: string }> {
         const visible = this._editorBridgeService.isVisible().visible;
         const state = this._editorBridgeService.getEditCellState();
         if (visible && state) {
@@ -274,26 +284,7 @@ export class SheetsHyperLinkPopupService extends Disposable {
 
     startAddEditing(link: IHyperLinkEditing) {
         const { unitId, subUnitId, type } = link;
-        if (type === HyperLinkEditSourceType.ZEN_EDITOR) {
-            const document: Nullable<DocumentDataModel> = this._univerInstanceService.getUnit(DOCS_ZEN_EDITOR_UNIT_ID_KEY, UniverInstanceType.UNIVER_DOC);
-            if (!document) {
-                return;
-            }
-            const range = this._textSelectionManagerService.getActiveTextRange();
-            if (!range) {
-                return;
-            }
-            this._currentEditingPopup = this._docCanvasPopManagerService.attachPopupToRange(
-                range,
-                this._editPopup,
-                DOCS_ZEN_EDITOR_UNIT_ID_KEY
-            );
-            const label = document.getBody()?.dataStream.slice(range.startOffset, range.endOffset);
-            this._currentEditing$.next({
-                ...link,
-                label,
-            });
-        } else if (type === HyperLinkEditSourceType.EDITING) {
+        if (type === HyperLinkEditSourceType.EDITING) {
             const range = this._getEditingRange();
 
             if (!range) {
@@ -301,7 +292,7 @@ export class SheetsHyperLinkPopupService extends Disposable {
             }
 
             this._textSelectionManagerService.replaceDocRanges([{ ...range }], { unitId: DOCS_NORMAL_EDITOR_UNIT_ID_KEY, subUnitId: DOCS_NORMAL_EDITOR_UNIT_ID_KEY });
-            const currentRender = this._injector.get(IRenderManagerService).getRenderById(DOCS_NORMAL_EDITOR_UNIT_ID_KEY);
+            const currentRender = this._renderManagerService.getRenderUnitById(DOCS_NORMAL_EDITOR_UNIT_ID_KEY);
             if (!currentRender) {
                 return;
             }
@@ -321,6 +312,10 @@ export class SheetsHyperLinkPopupService extends Disposable {
                 label: range?.label ?? '',
             });
         } else {
+            const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
+            const worksheet = workbook?.getSheetBySheetId(subUnitId);
+            const cell = worksheet?.getCellRaw(link.row, link.col);
+            const label = cell?.p ? BuildTextUtils.transform.getPlainText(cell.p.body?.dataStream ?? '') : (cell?.v ?? '').toString();
             this._currentEditingPopup = this._sheetCanvasPopManagerService.attachPopupToCell(
                 link.row,
                 link.col,
@@ -328,17 +323,13 @@ export class SheetsHyperLinkPopupService extends Disposable {
                 unitId,
                 subUnitId
             );
-            const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
-            const worksheet = workbook?.getSheetBySheetId(subUnitId);
-            const cell = worksheet?.getCellRaw(link.row, link.col);
             this._currentEditing$.next({
                 ...link,
-                label: cell?.p ? BuildTextUtils.transform.getPlainText(cell.p.body?.dataStream ?? '') : (cell?.v ?? '').toString(),
+                label,
             });
         }
     }
 
-    // eslint-disable-next-line complexity, max-lines-per-function
     startEditing(link: Required<IHyperLinkEditing>) {
         this._currentEditingPopup?.dispose();
         this.hideCurrentPopup(undefined, true);
@@ -346,36 +337,14 @@ export class SheetsHyperLinkPopupService extends Disposable {
         const { unitId, subUnitId } = link;
         let customRange;
         let label;
-        if (link.type === HyperLinkEditSourceType.ZEN_EDITOR) {
-            const document: Nullable<DocumentDataModel> = this._univerInstanceService.getUnit(DOCS_ZEN_EDITOR_UNIT_ID_KEY, UniverInstanceType.UNIVER_DOC);
-            customRange = document?.getBody()?.customRanges?.find((range) => range.rangeId === link.customRangeId);
-            label = customRange ? document?.getBody()?.dataStream.slice(customRange.startIndex, customRange.endIndex + 1) : '';
-            if (!customRange || !label) {
-                return;
-            }
-            this._textSelectionManagerService.replaceTextRanges([
-                {
-                    startOffset: customRange.startIndex,
-                    endOffset: customRange.endIndex + 1,
-                },
-            ]);
-            this._currentEditingPopup = this._docCanvasPopManagerService.attachPopupToRange(
-                {
-                    startOffset: customRange.startIndex,
-                    endOffset: customRange.endIndex,
-                    collapsed: false,
-                },
-                this._editPopup,
-                DOCS_ZEN_EDITOR_UNIT_ID_KEY
-            );
-        } else if (link.type === HyperLinkEditSourceType.EDITING) {
+        if (link.type === HyperLinkEditSourceType.EDITING) {
             const customRangeInfo = getEditingCustomRangePosition(this._injector, link.unitId, link.subUnitId, link.row, link.col, link.customRangeId);
             if (!customRangeInfo || !customRangeInfo.rects?.length) {
                 return;
             }
             customRange = customRangeInfo.customRange;
             label = customRangeInfo.label;
-            this._textSelectionManagerService.replaceTextRanges([
+            this._textSelectionManagerService.replaceDocRanges([
                 {
                     startOffset: customRange.startIndex,
                     endOffset: customRange.endIndex + 1,
@@ -421,11 +390,12 @@ export class SheetsHyperLinkPopupService extends Disposable {
                 );
             }
         }
-        this._currentEditing$.next({
+        const editing = {
             ...link,
             customRange,
             label,
-        });
+        };
+        this._currentEditing$.next(editing);
     }
 
     endEditing(type?: HyperLinkEditSourceType) {

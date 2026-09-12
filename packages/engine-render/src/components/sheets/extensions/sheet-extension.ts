@@ -16,7 +16,6 @@
 
 import type { IRange } from '@univerjs/core';
 import type { SpreadsheetSkeleton } from '../sheet.render-skeleton';
-
 import { Rectangle } from '@univerjs/core';
 import { ComponentExtension } from '../../extension';
 
@@ -31,6 +30,14 @@ export const SHEET_EXTENSION_PREFIX = 'sheet-ext-';
 
 export class SheetExtension extends ComponentExtension<SpreadsheetSkeleton, SHEET_EXTENSION_TYPE, IRange[]> {
     override type = SHEET_EXTENSION_TYPE.GRID;
+
+    /**
+     * Return an isolated instance when this extension is safe to render in a print scene.
+     * Editor-only extensions remain excluded by default.
+     */
+    copyForPrinting(): SheetExtension | null {
+        return null;
+    }
 
     isRenderDiffRangesByCell(rangeP: IRange, diffRanges?: IRange[]) {
         if (diffRanges == null || diffRanges.length === 0) {

@@ -15,8 +15,8 @@
  */
 
 import type { EventState, IPosition, IRange, Nullable } from '@univerjs/core';
+import type { Subscription } from 'rxjs';
 import type { BaseObject } from './base-object';
-
 import type { IWheelEvent } from './basics/i-events';
 import type { IBoundRectNoAngle, IViewportInfo } from './basics/vector2';
 import type { UniverRenderingContext } from './context';
@@ -25,7 +25,7 @@ import type { ScrollBar } from './shape/scroll-bar';
 import { EventSubject, Tools } from '@univerjs/core';
 import { Subject } from 'rxjs';
 import { RENDER_CLASS_TYPE } from './basics/const';
-import { fixLineWidthByScale, toPx } from './basics/tools';
+import { fixLineWidthByScale, hasScrollableOverflow, toPx } from './basics/tools';
 import { Transform } from './basics/transform';
 import { Vector2 } from './basics/vector2';
 import { subtractViewportRange } from './basics/viewport-subtract';
@@ -84,6 +84,13 @@ export interface IScrollObserverParam {
     limitX?: number;
     limitY?: number;
     isTrigger?: boolean;
+    isBarDragging?: boolean;
+    isBarDragEnd?: boolean;
+}
+
+interface IScrollByBarOptions {
+    isBarDragging?: boolean;
+    isBarDragEnd?: boolean;
 }
 
 interface IScrollBarPosition {
@@ -108,9 +115,11 @@ export interface IViewportReSizeParam {
 }
 
 const MOUSE_WHEEL_SPEED_SMOOTHING_FACTOR = 3;
+const WHEEL_CROSS_AXIS_LOCK_RATIO = 2;
 
 export class Viewport {
     private _viewportKey: string = '';
+    private _transformChangeSubscription?: Subscription;
 
     /**
      * scrollX means scroll x value for scrollbar in viewMain
@@ -258,9 +267,9 @@ export class Viewport {
         this._isWheelPreventDefaultY = props?.isWheelPreventDefaultY || false;
 
         this.resetCanvasSizeAndUpdateScroll();
-        this.getBounding();
+        this.calcViewportInfo();
 
-        this.scene.getEngine()?.onTransformChange$.subscribeEvent(() => {
+        this._transformChangeSubscription = this.scene.getEngine()?.onTransformChange$.subscribeEvent(() => {
             this.markForceDirty(true);
         });
         this.markForceDirty(true);
@@ -448,6 +457,12 @@ export class Viewport {
 
     get canvas() { return this._cacheCanvas; }
 
+    swapCacheCanvas(cacheCanvas: UniverCanvas) {
+        const previousCacheCanvas = this._cacheCanvas;
+        this._cacheCanvas = cacheCanvas;
+        return previousCacheCanvas;
+    }
+
     enable() {
         this._active = true;
     }
@@ -549,10 +564,10 @@ export class Viewport {
      * @param delta
      * @returns isLimited
      */
-    scrollByBarDeltaValue(delta: Partial<IScrollBarPosition>, isTrigger = true) {
+    scrollByBarDeltaValue(delta: Partial<IScrollBarPosition>, isTrigger = true, options?: IScrollByBarOptions) {
         const x = this.scrollX + (delta.x || 0);
         const y = this.scrollY + (delta.y || 0);
-        return this._scrollToBarPosCore({ x, y }, isTrigger);
+        return this._scrollToBarPosCore({ x, y }, isTrigger, options);
     }
 
     /**
@@ -623,7 +638,7 @@ export class Viewport {
         if (this._scrollBar) {
             const { scaleX, scaleY } = this.scene;
             if (this._scrollBar.ratioScrollX !== 0) {
-                x /= this._scrollBar.ratioScrollX; // 转换为内容区实际滚动距离
+                x /= this._scrollBar.ratioScrollX; // Convert to actual scroll distance in content area
                 x /= scaleX;
             } else if (this.viewportScrollX !== undefined) {
                 x = this.viewportScrollX;
@@ -738,7 +753,12 @@ export class Viewport {
      * @param objects
      * @param isMaxLayer
      */
-    render(parentCtx?: UniverRenderingContext, objects: BaseObject[] = [], isMaxLayer = false): void {
+    render(
+        parentCtx?: UniverRenderingContext,
+        objects: BaseObject[] = [],
+        isMaxLayer = false,
+        viewportInfo?: IViewportInfo
+    ): void {
         if (!this.shouldIntoRender()) {
             return;
         }
@@ -764,7 +784,7 @@ export class Viewport {
 
         // set scrolling state for mainCtx,
         mainCtx.transform(tm[0], tm[1], tm[2], tm[3], tm[4], tm[5]);
-        const viewPortInfo = this.calcViewportInfo();
+        const viewPortInfo = viewportInfo ?? this.calcViewportInfo();
 
         for (let i = 0, length = objects.length; i < length; i++) {
             objects[i].render(mainCtx, viewPortInfo);
@@ -858,7 +878,7 @@ export class Viewport {
         const yFrom: number = this.top;
         const yTo: number = ((height || 0) + this.top);
 
-        // this.getRelativeVector 加上了 scroll 后的坐标
+        // this.getRelativeVector adds coordinates after scroll
         const topLeft = this.transformVector2SceneCoord(Vector2.FromArray([xFrom, yFrom]));
         const bottomRight = this.transformVector2SceneCoord(Vector2.FromArray([xTo, yTo]));
 
@@ -931,14 +951,6 @@ export class Viewport {
     }
 
     /**
-     * Get viewport info
-     * @deprecated use `calcViewportInfo`
-     */
-    getBounding() {
-        return this.calcViewportInfo();
-    }
-
-    /**
      * convert vector to scene coordinate, include row & col
      * @param vec
      * @returns Vector2
@@ -974,14 +986,26 @@ export class Viewport {
         let offsetY = 0;
         const allWidth = this._scene.width;
         const viewWidth = this.width || 1;
-        offsetX = (viewWidth / allWidth) * evt.deltaX;
+        const scaleX = Math.abs(this._scene.scaleX) || 1;
+        const scaleY = Math.abs(this._scene.scaleY) || 1;
+        const rawOffsetX = evt.deltaX / scaleX;
+        const rawOffsetY = evt.deltaY / scaleY;
+        offsetX = (viewWidth / allWidth) * rawOffsetX;
 
         const allHeight = this._scene.height;
         const viewHeight = this.height || 1;
         if (evt.shiftKey) {
-            offsetX = (viewHeight / allHeight) * evt.deltaY * MOUSE_WHEEL_SPEED_SMOOTHING_FACTOR;
+            offsetX = ((viewHeight / allHeight) * evt.deltaY * MOUSE_WHEEL_SPEED_SMOOTHING_FACTOR) / scaleX;
         } else {
-            offsetY = (viewHeight / allHeight) * evt.deltaY;
+            offsetY = (viewHeight / allHeight) * rawOffsetY;
+
+            const absOffsetX = Math.abs(rawOffsetX);
+            const absOffsetY = Math.abs(rawOffsetY);
+            if (absOffsetY >= absOffsetX * WHEEL_CROSS_AXIS_LOCK_RATIO) {
+                offsetX = 0;
+            } else if (absOffsetX >= absOffsetY * WHEEL_CROSS_AXIS_LOCK_RATIO) {
+                offsetY = 0;
+            }
         }
 
         const isLimitedStore = this.scrollByBarDeltaValue({
@@ -1050,6 +1074,8 @@ export class Viewport {
     }
 
     dispose() {
+        this._transformChangeSubscription?.unsubscribe();
+        this._transformChangeSubscription = undefined;
         this.onMouseWheel$.complete();
         this.onScrollAfter$.complete();
         // this.onScrollBefore$.complete();
@@ -1072,10 +1098,10 @@ export class Viewport {
         scrollX = scrollX ?? this.scrollX;
         scrollY = scrollY ?? this.scrollY;
         const { height, width } = this._calcViewPortSize();
-        if (this._sceneWCurrVpAfterScale <= width) {
+        if (!hasScrollableOverflow(this._sceneWCurrVpAfterScale, width)) {
             scrollX = 0;
         }
-        if (this._sceneHCurrVpAfterScale <= height) {
+        if (!hasScrollableOverflow(this._sceneHCurrVpAfterScale, height)) {
             scrollY = 0;
         }
 
@@ -1274,7 +1300,7 @@ export class Viewport {
      * @param rawScrollXY Partial<IViewportScrollPosition>
      * @param isTrigger
      */
-    private _scrollToBarPosCore(rawScrollXY: Partial<IScrollBarPosition>, isTrigger: boolean = true) {
+    private _scrollToBarPosCore(rawScrollXY: Partial<IScrollBarPosition>, isTrigger: boolean = true, options?: IScrollByBarOptions) {
         if (this._scrollBar == null) {
             return;
         }
@@ -1302,6 +1328,8 @@ export class Viewport {
             limitX: this._scrollBar?.limitX,
             limitY: this._scrollBar?.limitY,
             isTrigger,
+            isBarDragging: options?.isBarDragging,
+            isBarDragEnd: options?.isBarDragEnd,
         };
         this._scrollBar?.makeDirty(true);
         this.onScrollAfter$.emitEvent(scrollSubParam);
@@ -1317,6 +1345,8 @@ export class Viewport {
             limitX: this._scrollBar?.limitX,
             limitY: this._scrollBar?.limitY,
             isTrigger,
+            isBarDragging: options?.isBarDragging,
+            isBarDragEnd: options?.isBarDragEnd,
         });
         return afterLimit;
     }
@@ -1458,15 +1488,26 @@ export class Viewport {
         if (!prevBound) {
             return [currBound];
         }
+        if (
+            prevBound.right <= currBound.left ||
+            currBound.right <= prevBound.left ||
+            prevBound.bottom <= currBound.top ||
+            currBound.bottom <= prevBound.top
+        ) {
+            return [currBound];
+        }
+
         const additionalAreas: IBoundRectNoAngle[] = [];
 
+        // Extend each exposed strip only toward the retained cache content. Expanding the
+        // strip on its other edges repaints pixels that are already valid in the cache.
         // curr has an extra part on the left compared to prev.
         if (currBound.left < prevBound.left) {
             additionalAreas.push({
                 top: currBound.top,
                 bottom: currBound.bottom,
                 left: currBound.left,
-                right: prevBound.left,
+                right: Math.min(currBound.right, prevBound.left + this.bufferEdgeX),
             });
         }
 
@@ -1475,7 +1516,7 @@ export class Viewport {
             additionalAreas.push({
                 top: currBound.top,
                 bottom: currBound.bottom,
-                left: prevBound.right,
+                left: Math.max(currBound.left, prevBound.right - this.bufferEdgeX),
                 right: currBound.right,
             });
         }
@@ -1483,7 +1524,7 @@ export class Viewport {
         if (currBound.top < prevBound.top) {
             additionalAreas.push({
                 top: currBound.top,
-                bottom: prevBound.top,
+                bottom: Math.min(currBound.bottom, prevBound.top + this.bufferEdgeY),
                 left: Math.max(prevBound.left, currBound.left),
                 right: Math.min(prevBound.right, currBound.right),
             });
@@ -1491,21 +1532,12 @@ export class Viewport {
 
         if (currBound.bottom > prevBound.bottom) {
             additionalAreas.push({
-                top: prevBound.bottom,
+                top: Math.max(currBound.top, prevBound.bottom - this.bufferEdgeY),
                 bottom: currBound.bottom,
                 left: Math.max(prevBound.left, currBound.left),
                 right: Math.min(prevBound.right, currBound.right),
             });
         }
-        const expandX = this.bufferEdgeX;
-        const expandY = this.bufferEdgeY;
-        for (const bound of additionalAreas) {
-            bound.left = bound.left - expandX;
-            bound.right = bound.right + expandX;
-            bound.top = bound.top - expandY;
-            bound.bottom = bound.bottom + expandY;
-        }
-
         return additionalAreas;
     }
 
@@ -1519,6 +1551,31 @@ export class Viewport {
         } else if (parent.classType === RENDER_CLASS_TYPE.ENGINE) {
             this._scrollBar.render(ctx);
         }
+    }
+
+    renderScrollbarOnly(ctx: UniverRenderingContext, pixelRatio: number) {
+        const scrollBar = this._scrollBar;
+        if (!scrollBar) {
+            return;
+        }
+
+        const width = this.width ?? 0;
+        const height = this.height ?? 0;
+        ctx.save();
+        ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        if (scrollBar.enableVertical) {
+            ctx.clearRect(this.left + width - scrollBar.totalSize, this.top, scrollBar.totalSize, height);
+        }
+        if (scrollBar.enableHorizontal) {
+            ctx.clearRect(this.left, this.top + height - scrollBar.totalSize, width, scrollBar.totalSize);
+        }
+        ctx.restore();
+
+        ctx.save();
+        const scrollbarTM = this.getScrollBarTransForm().getMatrix();
+        ctx.transform(scrollbarTM[0], scrollbarTM[1], scrollbarTM[2], scrollbarTM[3], scrollbarTM[4], scrollbarTM[5]);
+        this._drawScrollbar(ctx);
+        ctx.restore();
     }
 
     setViewportSize(props?: IViewProps) {

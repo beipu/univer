@@ -14,8 +14,24 @@
  * limitations under the License.
  */
 
-import type { ICellData, IDisposable, IObjectMatrixPrimitiveType, IRange, Nullable, Workbook, Worksheet } from '@univerjs/core';
-import type { IFindComplete, IFindMatch, IFindMoveParams, IFindQuery, IFindReplaceProvider, IReplaceAllResult } from '@univerjs/find-replace';
+import type {
+    ICellData,
+    IDisposable,
+    IObjectMatrixPrimitiveType,
+    IRange,
+    Nullable,
+    UnitModel,
+    Workbook,
+    Worksheet,
+} from '@univerjs/core';
+import type {
+    IFindComplete,
+    IFindMatch,
+    IFindMoveParams,
+    IFindQuery,
+    IFindReplaceProvider,
+    IReplaceAllResult,
+} from '@univerjs/find-replace';
 import type {
     ISelectionWithStyle,
     ISelectRangeCommandParams,
@@ -41,6 +57,7 @@ import {
     Injector,
     IUniverInstanceService,
     ObjectMatrix,
+    regexp,
     replaceInDocumentBody,
     rotate,
     ThemeService,
@@ -48,7 +65,14 @@ import {
     UniverInstanceType,
 } from '@univerjs/core';
 import { IRenderManagerService, RENDER_RAW_FORMULA_KEY } from '@univerjs/engine-render';
-import { FindBy, FindDirection, FindModel, FindReplaceController, FindScope, IFindReplaceService } from '@univerjs/find-replace';
+import {
+    CloseFindDialogOperation,
+    FindBy,
+    FindDirection,
+    FindModel,
+    FindScope,
+    IFindReplaceService,
+} from '@univerjs/find-replace';
 import {
     SelectRangeCommand,
     SetRangeValuesCommand,
@@ -75,7 +99,6 @@ export class SheetsFindReplaceController extends Disposable implements IDisposab
 
     constructor(
         @Inject(Injector) private readonly _injector: Injector,
-        @Inject(FindReplaceController) private readonly _findReplaceController: FindReplaceController,
         @IContextService private readonly _contextService: IContextService,
         @IFindReplaceService private readonly _findReplaceService: IFindReplaceService,
         @ICommandService private readonly _commandService: ICommandService
@@ -89,7 +112,7 @@ export class SheetsFindReplaceController extends Disposable implements IDisposab
     override dispose(): void {
         super.dispose();
 
-        this._findReplaceController.closePanel();
+        this._findReplaceService.terminate();
         this._provider.dispose();
     }
 
@@ -102,7 +125,9 @@ export class SheetsFindReplaceController extends Disposable implements IDisposab
         // The find replace panel should be closed when sheet cell editor is activated, or the formula editor is focused.
         this.disposeWithMe(this._contextService.subscribeContextValue$(EDITOR_ACTIVATED)
             .pipe(filter((v) => !!v))
-            .subscribe(() => this._findReplaceController.closePanel()));
+            .subscribe(() => {
+                this._commandService.executeCommand(CloseFindDialogOperation.id).catch(() => undefined);
+            }));
     }
 
     private _initCommands(): void {
@@ -512,7 +537,7 @@ export class SheetFindModel extends FindModel {
         }
 
         const unitId = this._workbook.getUnitId();
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         if (currentRender == null) {
             return;
         }
@@ -597,16 +622,31 @@ export class SheetFindModel extends FindModel {
         return getSheetObject(this._univerInstanceService, this._renderManagerService);
     }
 
-    private _focusMatch(match: ISheetCellMatch): void {
-        const subUnitId = match.range.subUnitId;
+    private async _focusMatch(match: ISheetCellMatch) {
+        const { subUnitId, range } = match.range;
+
         if (subUnitId !== this._workbook.getActiveSheet()?.getSheetId()) {
-            this._commandService.executeCommand(SetWorksheetActivateCommand.id, { unitId: this._workbook.getUnitId(), subUnitId } as ISetWorksheetActivateCommandParams, { fromFindReplace: true });
+            const unitId = this._workbook.getUnitId();
+            await this._commandService.executeCommand<ISetWorksheetActivateCommandParams>(
+                SetWorksheetActivateCommand.id,
+                {
+                    unitId,
+                    subUnitId,
+                },
+                {
+                    fromFindReplace: true,
+                }
+            );
         }
 
-        this._commandService.executeCommand(
+        this._commandService.executeCommand<IScrollToCellCommandParams>(
             ScrollToCellCommand.id,
-            { range: match.range.range } as IScrollToCellCommandParams,
-            { fromFindReplace: true }
+            {
+                range,
+            },
+            {
+                fromFindReplace: true,
+            }
         );
     }
 
@@ -649,9 +689,8 @@ export class SheetFindModel extends FindModel {
             }
 
             if (!noFocus) this._focusMatch(match);
-            if (this._workbook.getActiveSheet()?.getSheetId() === match.range.subUnitId) {
-                this._updateCurrentHighlightShape(this._activeHighlightIndex);
-            }
+
+            this._updateCurrentHighlightShape(this._activeHighlightIndex);
 
             return match;
         }
@@ -683,9 +722,8 @@ export class SheetFindModel extends FindModel {
             }
 
             if (!noFocus) this._focusMatch(match);
-            if (this._workbook.getActiveSheet()?.getSheetId() === match.range.subUnitId) {
-                this._updateCurrentHighlightShape(this._activeHighlightIndex);
-            }
+
+            this._updateCurrentHighlightShape(this._activeHighlightIndex);
 
             return match;
         }
@@ -815,7 +853,7 @@ export class SheetFindModel extends FindModel {
             }
 
             const isSame = isSamePosition(range, matchRange);
-            return stayIfOnMatch ? isSame : !isSame;
+            return stayIfOnMatch || !isSame;
         });
 
         if (index === -1) {
@@ -939,7 +977,7 @@ export class SheetFindModel extends FindModel {
                 return null;
             }
 
-            const newContent = currentContent!.f!.replace(new RegExp(escapeRegExp(findString), replaceFlag), replaceString);
+            const newContent = currentContent!.f!.replace(regexp.createLiteralRegExp(findString, replaceFlag), replaceString);
             return { f: newContent, v: null };
         }
 
@@ -952,13 +990,9 @@ export class SheetFindModel extends FindModel {
         }
 
         // replace plain text string
-        const newContent = currentContent.v!.toString().replace(new RegExp(escapeRegExp(findString), replaceFlag), replaceString!);
+        const newContent = currentContent.v!.toString().replace(regexp.createLiteralRegExp(findString, replaceFlag), replaceString!);
         return { v: newContent };
     }
-}
-
-function escapeRegExp(text: string) {
-    return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
 }
 
 /**
@@ -966,6 +1000,15 @@ function escapeRegExp(text: string) {
  * It also adds the search results to the search view by highlighting them.
  */
 class SheetsFindReplaceProvider extends Disposable implements IFindReplaceProvider {
+    readonly capabilities = {
+        caseSensitive: true,
+        matchesTheWholeWord: false,
+        matchesTheWholeCell: true,
+        findDirection: true,
+        findScope: true,
+        findBy: true,
+    };
+
     /**
      * Hold all find results in this kind of univer business instances (Workbooks).
      */
@@ -979,6 +1022,10 @@ class SheetsFindReplaceProvider extends Disposable implements IFindReplaceProvid
         super();
     }
 
+    isSupported(unit: UnitModel): boolean {
+        return unit.type === UniverInstanceType.UNIVER_SHEET;
+    }
+
     async find(query: IFindQuery): Promise<SheetFindModel[]> {
         this._terminate();
 
@@ -986,7 +1033,7 @@ class SheetsFindReplaceProvider extends Disposable implements IFindReplaceProvid
         if (!workbook) return [];
 
         const parsedQuery = this._preprocessQuery(query);
-        const skeletonManagerService = this._renderManagerService.getRenderById(workbook.getUnitId())!.with(SheetSkeletonManagerService);
+        const skeletonManagerService = this._renderManagerService.getRenderUnitById(workbook.getUnitId())!.with(SheetSkeletonManagerService);
         const sheetFind = this._injector.createInstance(SheetFindModel, workbook, skeletonManagerService);
         this._findModelsByUnitId.set(workbook.getUnitId(), sheetFind);
         sheetFind.start(parsedQuery);

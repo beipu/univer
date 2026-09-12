@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { clsx } from '@univerjs/design';
+import { cva } from '@univerjs/design';
 
 export interface IBaseToolbarButtonProps {
     children?: React.ReactNode;
@@ -55,10 +55,30 @@ export const toolbarButtonClassName = `
 univer-box-border univer-flex univer-h-6 univer-min-w-6 univer-cursor-pointer univer-items-center
 univer-justify-center univer-rounded univer-border-none univer-bg-transparent univer-p-0
 univer-text-gray-900 univer-outline-none univer-transition-colors univer-animate-in univer-fade-in
-dark:!univer-text-white dark:hover:!univer-bg-gray-700 dark:disabled:!univer-text-gray-600
+dark:!univer-text-gray-0 dark:hover:!univer-bg-gray-700 dark:disabled:!univer-text-gray-600
 disabled:univer-cursor-not-allowed disabled:univer-text-gray-300 disabled:hover:univer-bg-transparent
 hover:univer-bg-gray-100 whitespace-nowrap univer-w-max
 `;
+
+export const toolbarButtonVariants = cva(toolbarButtonClassName, {
+    variants: {
+        noIcon: {
+            true: 'univer-px-2',
+            false: '',
+        },
+        active: {
+            true: `
+              !univer-bg-gray-200
+              dark:!univer-bg-gray-500
+            `,
+            false: '',
+        },
+    },
+    defaultVariants: {
+        noIcon: false,
+        active: false,
+    },
+});
 
 /**
  * Button Component
@@ -95,10 +115,7 @@ export function ToolbarButton(props: IBaseToolbarButtonProps) {
     return (
         <button
             type="button"
-            className={clsx(toolbarButtonClassName, className, {
-                'univer-px-2': noIcon,
-                '!univer-bg-gray-200 dark:!univer-bg-gray-500': active,
-            })}
+            className={toolbarButtonVariants({ noIcon, active, className })}
             style={style}
             disabled={disabled}
             onClick={handleClick}

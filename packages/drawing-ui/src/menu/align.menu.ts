@@ -16,6 +16,7 @@
 
 import type { IAccessor, IDrawingParam } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { IDrawingManagerService } from '@univerjs/drawing';
 import { MenuItemType } from '@univerjs/ui';
 import { Observable } from 'rxjs';
@@ -61,84 +62,84 @@ const getMenuStateByDrawingFocusChangedObservable$ = (accessor: IAccessor): Obse
 };
 
 export const DRAWING_ALIGN_CONTEXT_MENU_ID = 'contextMenu.drawing-align';
-export function DrawingAlignContextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function DrawingAlignContextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: DRAWING_ALIGN_CONTEXT_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'HorizontallyIcon',
-        title: 'image-panel.align.title',
+        title: 'drawing-ui.image-panel.align.title',
         hidden$: getMenuStateByDrawingFocusChangedObservable$(accessor),
     };
 }
 
-export function SetDrawingAlignLeftMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignLeftMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignLeftOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'LeftJustifyingIcon',
-        title: 'image-panel.align.left',
+        title: 'drawing-ui.image-panel.align.left',
     };
 }
 
-export function SetDrawingAlignCenterMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignCenterMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignCenterOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'HorizontallyIcon',
-        title: 'image-panel.align.center',
+        title: 'drawing-ui.image-panel.align.center',
     };
 }
 
-export function SetDrawingAlignRightMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignRightMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignRightOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'RightJustifyingIcon',
-        title: 'image-panel.align.right',
+        title: 'drawing-ui.image-panel.align.right',
     };
 }
 
-export function SetDrawingAlignTopMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignTopMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignTopOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'AlignTopIcon',
-        title: 'image-panel.align.top',
+        title: 'drawing-ui.image-panel.align.top',
     };
 }
 
-export function SetDrawingAlignMiddleMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignMiddleMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignMiddleOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'VerticalCenterIcon',
-        title: 'image-panel.align.middle',
+        title: 'drawing-ui.image-panel.align.middle',
     };
 }
 
-export function SetDrawingAlignBottomMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignBottomMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignBottomOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'AlignBottomIcon',
-        title: 'image-panel.align.bottom',
+        title: 'drawing-ui.image-panel.align.bottom',
     };
 }
 
-export function SetDrawingAlignHorizonMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignHorizonMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignHorizonOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'HorizontallyIcon',
-        title: 'image-panel.align.horizon',
+        title: 'drawing-ui.image-panel.align.horizon',
     };
 }
 
-export function SetDrawingAlignVerticalMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingAlignVerticalMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingAlignVerticalOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'VerticalCenterIcon',
-        title: 'image-panel.align.vertical',
+        title: 'drawing-ui.image-panel.align.vertical',
     };
 }

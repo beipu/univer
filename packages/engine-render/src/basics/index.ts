@@ -16,6 +16,7 @@
 
 export * from '../components/docs/layout/shaping-engine/font-cache';
 export * from './cell-data';
+export { cjk } from './cjk-regexp';
 export * from './const';
 export * from './document-node-tools';
 export * from './draw';
@@ -30,4 +31,7 @@ export * from './scroll-xy';
 export * from './text-rotation';
 export * from './tools';
 export * from './transform';
+export type { ITransformerConfig } from './transformer-config';
+export { DEFAULT_TRANSFORMER_CONFIG } from './transformer-config';
 export * from './vector2';
+export * from './zoom';

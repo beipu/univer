@@ -15,15 +15,33 @@
  */
 
 import type { MenuSchemaType } from '@univerjs/ui';
-import { RibbonDataGroup } from '@univerjs/ui';
+import { RibbonDataGroup, RibbonInsertGroup } from '@univerjs/ui';
+import { AddDataBarConditionalRuleCommand } from '../commands/commands/add-data-bar-cf.command';
+import { AddIconSetConditionalRuleCommand } from '../commands/commands/add-icon-set-cf.command';
 import { OpenConditionalFormattingOperator } from '../commands/operations/open-conditional-formatting-panel';
 import { FactoryManageConditionalFormattingRule } from './manage-rule';
+import { quickDataBarMenuFactory, quickIconSetMenuFactory } from './quick-insert.menu';
 
-export const menuSchema: MenuSchemaType = {
+export const conditionalFormattingRuleMenuSchema: MenuSchemaType = {
     [RibbonDataGroup.RULES]: {
         [OpenConditionalFormattingOperator.id]: {
             order: 1,
+            gridLayout: { row: 2, column: 1, showLabel: true },
             menuItemFactory: FactoryManageConditionalFormattingRule,
         },
     },
+};
+
+export const menuSchema: MenuSchemaType = {
+    [RibbonInsertGroup.CELL]: {
+        [AddDataBarConditionalRuleCommand.id]: {
+            order: 3,
+            menuItemFactory: quickDataBarMenuFactory,
+        },
+        [AddIconSetConditionalRuleCommand.id]: {
+            order: 4,
+            menuItemFactory: quickIconSetMenuFactory,
+        },
+    },
+    ...conditionalFormattingRuleMenuSchema,
 };

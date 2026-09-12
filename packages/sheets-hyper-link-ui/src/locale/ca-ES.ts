@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Edita l\'enllaç',
             addTitle: 'Insereix enllaç',
             label: 'Etiqueta',
             type: 'Tipus',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'Insereix enllaç',
         },
+        permission: {
+            hyperLinkErr: 'No teniu permís per inserir un enllaç.',
+        },
         message: {
             noSheet: 'El full de destinació ha estat eliminat',
             refError: 'Interval no vàlid',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'Enllaç copiat al porta-retalls',
         },
         popup: {
+            title: 'Enllaç',
+            open: 'Obre l\'enllaç',
             copy: 'Copia l\'enllaç',
             edit: 'Edita l\'enllaç',
             cancel: 'Cancel·la l\'enllaç',

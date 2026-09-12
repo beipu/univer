@@ -28,12 +28,13 @@ import { FDataValidation } from './f-data-validation';
 export interface IFRangeSheetsDataValidationMixin {
     /**
      * Set a data validation rule to current range. if rule is null, clear data validation rule.
-     * @param {Nullable<FDataValidation>} rule data validation rule, build by `FUniver.newDataValidation`
+     * @param {Nullable<FDataValidation>} rule data validation rule, built by `univerAPI.newDataValidation()`
      * @returns current range
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a data validation rule that requires a number between 1 and 10 for the range A1:B10
      * const fRange = fWorksheet.getRange('A1:B10');
@@ -56,7 +57,8 @@ export interface IFRangeSheetsDataValidationMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a data validation rule that requires a number equal to 20 for the range A1:B10
      * const fRange = fWorksheet.getRange('A1:B10');
@@ -84,7 +86,8 @@ export interface IFRangeSheetsDataValidationMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a data validation rule that requires a number equal to 20 for the range A1:B10
      * const fRange1 = fWorksheet.getRange('A1:B10');
@@ -114,7 +117,8 @@ export interface IFRangeSheetsDataValidationMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set some values in the range A1:B10
      * const fRange = fWorksheet.getRange('A1:B10');
@@ -149,11 +153,12 @@ export interface IFRangeSheetsDataValidationMixin {
     getValidatorStatus(): Promise<DataValidationStatus[][]>;
     /**
      * Get data validation errors for a specific range in current worksheet.
-     * @returns A promise that resolves to an array of validation errors in the specified range.
+     * @returns {Promise<IDataValidationError[]>} A promise that resolves to an array of validation errors in the specified range.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B10');
      * const errors = await fRange.getDataValidationErrorAsync();
      *
@@ -300,6 +305,5 @@ export class FRangeSheetsDataValidationMixin extends FRange implements IFRangeSh
 
 FRange.extend(FRangeSheetsDataValidationMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FRange extends IFRangeSheetsDataValidationMixin { }
 }

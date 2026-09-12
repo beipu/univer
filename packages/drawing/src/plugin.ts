@@ -16,14 +16,14 @@
 
 import type { Dependency } from '@univerjs/core';
 import type { IUniverDrawingConfig } from './config/config';
-import { ICommandService, IConfigService, Inject, Injector, IURLImageService, merge, mergeOverrideWithDependencies, Plugin } from '@univerjs/core';
+import { ICommandService, IConfigService, IImageIoService, Inject, Injector, IURLImageService, merge, mergeOverrideWithDependencies, Plugin } from '@univerjs/core';
 import pkg from '../package.json';
+import { setDrawingImageAllowSize } from './basics/config';
 import { SetDrawingSelectedOperation } from './commands/operations/set-drawing-selected.operation';
 import { defaultPluginConfig, DRAWING_PLUGIN_CONFIG_KEY } from './config/config';
 import { DrawingManagerService } from './services/drawing-manager-impl.service';
 import { IDrawingManagerService } from './services/drawing-manager.service';
 import { ImageIoService } from './services/image-io-impl.service';
-import { IImageIoService } from './services/image-io.service';
 import { URLImageService } from './services/url-image.service';
 
 export class UniverDrawingPlugin extends Plugin {
@@ -46,6 +46,10 @@ export class UniverDrawingPlugin extends Plugin {
             this._config
         );
         this._configService.setConfig(DRAWING_PLUGIN_CONFIG_KEY, rest);
+
+        if (rest.allowImageSize !== undefined) {
+            setDrawingImageAllowSize(rest.allowImageSize);
+        }
     }
 
     override onStarting(): void {

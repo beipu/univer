@@ -35,15 +35,14 @@ import {
     Inject,
     Injector,
     RANGE_TYPE,
-    Rectangle,
     ThemeService,
     toDisposable,
 } from '@univerjs/core';
 import { ScrollTimer, ScrollTimerType, SHEET_VIEWPORT_KEY, Vector2 } from '@univerjs/engine-render';
-import { attachSelectionWithCoord, convertSelectionDataToRange, REF_SELECTIONS_ENABLED, SelectionMoveType, SetSelectionsOperation, SheetsSelectionsService } from '@univerjs/sheets';
+import { attachSelectionWithCoord, convertSelectionDataToRange, REF_SELECTIONS_ENABLED, SelectionMoveType, SELECTIONS_ENABLED, SetSelectionsOperation, SheetsSelectionsService } from '@univerjs/sheets';
 import { IShortcutService } from '@univerjs/ui';
 import { distinctUntilChanged, merge, startWith } from 'rxjs';
-import { MOBILE_EXPANDING_SELECTION, MOBILE_PINCH_ZOOMING } from '../../consts/mobile-context';
+import { MOBILE_EXPANDING_SELECTION, MOBILE_PINCH_ZOOMING, MOBILE_TRIGGER_CONTEXT_MENU } from '../../consts/mobile-context';
 import { getCoordByOffset, getSheetObject } from '../../controllers/utils/component-tools';
 import { isThisColSelected, isThisRowSelected } from '../../controllers/utils/selections-tools';
 import { SheetScrollManagerService } from '../scroll-manager.service';
@@ -60,8 +59,16 @@ enum ExpandingControl {
     BOTTOM = 'bottom',
 }
 
-export function shouldKeepCurrentSelectionOnMobileLongPress(currentSelections: IRange[], targetRange: IRange): boolean {
-    return currentSelections.some((selection) => Rectangle.contains(selection, targetRange));
+export function shouldHandleMobileNormalSelectionPointerDown(refSelectionsEnabled: boolean, pinchZooming: boolean): boolean {
+    return !refSelectionsEnabled && !pinchZooming;
+}
+
+export function shouldHandleMobileNormalSelectionPointerUp(
+    refSelectionsEnabled: boolean,
+    pinchZooming: boolean,
+    contextMenuTriggered: boolean
+): boolean {
+    return !refSelectionsEnabled && !pinchZooming && !contextMenuTriggered;
 }
 
 export class MobileSheetsSelectionRenderService extends BaseSelectionRenderService implements IRenderModule {
@@ -103,6 +110,7 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
     private _init() {
         const sheetObject = this._getSheetObject();
 
+        this._contextService.setContextValue(SELECTIONS_ENABLED, true);
         this._initEventListeners(sheetObject);
         this._initSelectionChangeListener();
         // this._initThemeChangeListener();
@@ -198,6 +206,7 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
         this.disposeWithMe(spreadsheetLeftTopPlaceholder?.onPointerDown$.subscribeEvent((_evt: IPointerEvent | IMouseEvent, state: EventState) => {
             if (this._normalSelectionDisabled()) return;
 
+            scene.getTransformer()?.clearSelectedObjects();
             this._reset(); // remove all other selections
 
             const skeleton = this._sheetSkeletonManagerService.getCurrentParam()!.skeleton;
@@ -228,17 +237,25 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
             this._selectionMoveEnd$.next(this.getSelectionDataWithStyle());
         };
         const spreadsheetPointerDownSub = spreadsheet?.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent, state) => {
-            // Don't start long press timer during pinch zoom
-            if (this._contextService.getContextValue(MOBILE_PINCH_ZOOMING)) return;
+            if (!shouldHandleMobileNormalSelectionPointerDown(
+                this._normalSelectionDisabled(),
+                this._contextService.getContextValue(MOBILE_PINCH_ZOOMING)
+            )) {
+                return;
+            }
             pointerDownPos.x = evt.offsetX;
             pointerDownPos.y = evt.offsetY;
 
             state.stopPropagation();
         });
         const spreadsheetPointerUpSub = spreadsheet?.onPointerUp$.subscribeEvent((evt: IPointerEvent | IMouseEvent, state) => {
-            if (this._normalSelectionDisabled()) return;
-            // Don't create selection during pinch zoom
-            if (this._contextService.getContextValue(MOBILE_PINCH_ZOOMING)) return;
+            if (!shouldHandleMobileNormalSelectionPointerUp(
+                this._normalSelectionDisabled(),
+                this._contextService.getContextValue(MOBILE_PINCH_ZOOMING),
+                this._contextService.getContextValue(MOBILE_TRIGGER_CONTEXT_MENU)
+            )) {
+                return;
+            }
 
             const edge = 10;
             if (Math.abs(evt.offsetX - pointerDownPos.x) > edge ||
@@ -263,7 +280,8 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
                 if (disabled) {
                     this._renderDisposable?.dispose();
                     this._renderDisposable = null;
-                    this._reset();
+                    // The mobile in-cell editor is hidden, so this control is the only visible marker
+                    // for the cell being edited while formula reference controls are rendered separately.
                 } else {
                     this._renderDisposable = toDisposable(
                         this.selectionMoveEnd$.subscribe((params) => this._updateSelections(params, SelectionMoveType.MOVE_END))
@@ -331,6 +349,8 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
         // const { rangeWithCoord: cursorCellRange, primaryWithCoord: primaryCursorCellRange } = cursorCellRangeInfo;
         const selectCell = this._skeleton.getCellByOffset(offsetX, offsetY, scaleX, scaleY, scrollXY);
         if (!selectCell) return;
+
+        scene.getTransformer()?.clearSelectedObjects();
         switch (rangeType) {
             case RANGE_TYPE.NORMAL:
                 break;
@@ -382,20 +402,28 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
      * Not same as PC version,
      * new selection control for mobile do one more thing: bind event for two control points.
      * @param scene
-     * @param rangeType
+     * @param skeleton
+     * @param selection
      */
     override newSelectionControl(scene: Scene, skeleton: SpreadsheetSkeleton, selection: ISelectionWithStyle): MobileSelectionControl {
         const selectionControls = this.getSelectionControls();
-        const { rowHeaderWidth, columnHeaderHeight } = skeleton;
+        const {
+            rowHeaderWidth,
+            rowHeaderWidthAndMarginLeft,
+            columnHeaderHeight,
+            columnHeaderHeightAndMarginTop,
+        } = skeleton;
         const rangeType = selection.range.rangeType;
         const control = new MobileSelectionControl(scene, selectionControls.length, this._themeService, {
             highlightHeader: this._highlightHeader,
             rowHeaderWidth,
             columnHeaderHeight,
+            rowHeaderOffsetX: Math.max(0, rowHeaderWidthAndMarginLeft - rowHeaderWidth),
+            columnHeaderOffsetY: Math.max(0, columnHeaderHeightAndMarginTop - columnHeaderHeight),
             rangeType,
         });
         const selectionWithCoord = attachSelectionWithCoord(selection, skeleton);
-        control.updateRangeBySelectionWithCoord(selectionWithCoord);
+        control.updateRangeBySelectionWithCoord(selectionWithCoord, skeleton);
         this._selectionControls.push(control);
 
         const { expandingModeForTopLeft, expandingModeForBottomRight } = (() => {
@@ -428,23 +456,23 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
             }
         })();
 
-        control.fillControlTopLeft!.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent) => {
+        control.expandControlTopLeft!.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent) => {
             this._expandingSelection = true;
             this._contextService.setContextValue(MOBILE_EXPANDING_SELECTION, true);
             this.expandingControlMode = expandingModeForTopLeft;
             this._selectionMoveStart$.next(this.getSelectionDataWithStyle());
-            this._fillControlPointerDownHandler(
+            this._expandControlPointerDownHandler(
                 evt,
                 rangeType,
                 this._activeViewport!
             );
         });
-        control.fillControlBottomRight!.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent) => {
+        control.expandControlBottomRight!.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent) => {
             this._expandingSelection = true;
             this._contextService.setContextValue(MOBILE_EXPANDING_SELECTION, true);
             this.expandingControlMode = expandingModeForBottomRight;
             this._selectionMoveStart$.next(this.getSelectionDataWithStyle());
-            this._fillControlPointerDownHandler(
+            this._expandControlPointerDownHandler(
                 evt,
                 rangeType,
                 this._activeViewport!
@@ -478,7 +506,7 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
         return this._selectionControls;
     }
 
-    private _fillControlPointerDownHandler(
+    private _expandControlPointerDownHandler(
         evt: IPointerEvent | IMouseEvent,
         rangeType: RANGE_TYPE = RANGE_TYPE.NORMAL,
         viewport?: Viewport,
@@ -587,8 +615,8 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
         activeSelectionControl: MobileSelectionControl,
         rangeType: RANGE_TYPE,
         scrollTimerType: ScrollTimerType = ScrollTimerType.ALL,
-        moveStartPosX: number,
-        moveStartPosY: number
+        _moveStartPosX: number,
+        _moveStartPosY: number
     ): void {
         this._scrollTimer = ScrollTimer.create(this._scene, scrollTimerType);
         this._scrollTimer.startScroll(viewportMain?.left ?? 0, viewportMain?.top ?? 0, viewportMain);
@@ -716,7 +744,7 @@ export class MobileSheetsSelectionRenderService extends BaseSelectionRenderServi
         if (!newSelectionRange) {
             return false;
         }
-        const newSelection: ISelectionWithStyle = { range: newSelectionRange, style: null, primary: null };
+        const newSelection: ISelectionWithStyle = { range: newSelectionRange, style: null, primary: undefined };
         const newSelectionRangeWithCoord = attachSelectionWithCoord(newSelection, skeleton);
 
         const rangeChanged =

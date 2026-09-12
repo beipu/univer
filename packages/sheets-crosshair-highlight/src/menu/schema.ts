@@ -15,11 +15,18 @@
  */
 
 import type { MenuSchemaType } from '@univerjs/ui';
-import { ContextMenuGroup, ContextMenuPosition } from '@univerjs/ui';
+import { ContextMenuGroup, ContextMenuPosition, RibbonViewGroup } from '@univerjs/ui';
 import { ToggleCrosshairHighlightOperation } from '../commands/operations/operation';
 import { CrosshairHighlightMenuItemFactory } from './crosshair.menu';
 
 export const menuSchema: MenuSchemaType = {
+    [RibbonViewGroup.VISIBILITY]: {
+        [ToggleCrosshairHighlightOperation.id]: {
+            order: 1,
+            gridLayout: { row: 2, column: 1, showLabel: true },
+            menuItemFactory: CrosshairHighlightMenuItemFactory,
+        },
+    },
     [ContextMenuPosition.FOOTER_MENU]: {
         [ContextMenuGroup.OTHERS]: {
             [ToggleCrosshairHighlightOperation.id]: {

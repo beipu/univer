@@ -15,11 +15,11 @@
  */
 
 import type { IOpenHyperLinkEditPanelOperationParams } from '../popup.operations';
-import { DOCS_ZEN_EDITOR_UNIT_ID_KEY, ICommandService, IUniverInstanceService } from '@univerjs/core';
+import { ICommandService, IUniverInstanceService } from '@univerjs/core';
 import { SheetsSelectionsService } from '@univerjs/sheets';
 import { IEditorBridgeService } from '@univerjs/sheets-ui';
 import { describe, expect, it, vi } from 'vitest';
-import { SheetsHyperLinkPopupService } from '../../../services/popup.service';
+import { ISheetsHyperLinkPopupService } from '../../../services/popup.service';
 import { HyperLinkEditSourceType } from '../../../types/enums/edit-source';
 import {
     CloseHyperLinkPopupOperation,
@@ -61,12 +61,9 @@ function createWorkbook(worksheet: ReturnType<typeof createWorksheet>) {
 
 function createUniverInstanceService(options?: {
     workbook?: ReturnType<typeof createWorkbook> | null;
-    focusedUnitId?: string;
 }) {
     return {
         getCurrentUnitOfType: () => options?.workbook ?? null,
-        getCurrentUnitForType: () => options?.workbook ?? null,
-        getFocusedUnit: () => options?.focusedUnitId ? { getUnitId: () => options.focusedUnitId } : null,
     };
 }
 
@@ -75,7 +72,7 @@ describe('hyper-link popup operations', () => {
         const startAddEditing = vi.fn();
         const startEditing = vi.fn();
         const popupService = { startAddEditing, startEditing };
-        const accessor = createAccessor([[SheetsHyperLinkPopupService, popupService]]);
+        const accessor = createAccessor([[ISheetsHyperLinkPopupService, popupService]]);
         const startAddParams: IOpenHyperLinkEditPanelOperationParams = {
             unitId: 'u1',
             subUnitId: 's1',
@@ -99,7 +96,7 @@ describe('hyper-link popup operations', () => {
 
     it('closes the popup edit session', () => {
         const endEditing = vi.fn();
-        const accessor = createAccessor([[SheetsHyperLinkPopupService, { endEditing }]]);
+        const accessor = createAccessor([[ISheetsHyperLinkPopupService, { endEditing }]]);
 
         expect(CloseHyperLinkPopupOperation.handler(accessor)).toBe(true);
         expect(endEditing).toHaveBeenCalledTimes(1);
@@ -110,8 +107,8 @@ describe('hyper-link popup operations', () => {
         const worksheet = createWorksheet();
         const workbook = createWorkbook(worksheet);
 
-        const createInsertAccessor = (visible: boolean, focusedUnitId?: string, hasSelection = true, activeWorkbook: ReturnType<typeof createWorkbook> | null = workbook) => createAccessor([
-            [IUniverInstanceService, createUniverInstanceService({ workbook: activeWorkbook, focusedUnitId })],
+        const createInsertAccessor = (visible: boolean, hasSelection = true, activeWorkbook: ReturnType<typeof createWorkbook> | null = workbook) => createAccessor([
+            [IUniverInstanceService, createUniverInstanceService({ workbook: activeWorkbook })],
             [ICommandService, { executeCommand }],
             [SheetsSelectionsService, { getCurrentLastSelection: () => (hasSelection ? { range: { startRow: 3, startColumn: 4 } } : null) }],
             [IEditorBridgeService, { isVisible: () => ({ visible }) }],
@@ -119,15 +116,13 @@ describe('hyper-link popup operations', () => {
 
         expect(InsertHyperLinkOperation.handler(createInsertAccessor(false))).toBe(true);
         expect(InsertHyperLinkOperation.handler(createInsertAccessor(true))).toBe(true);
-        expect(InsertHyperLinkOperation.handler(createInsertAccessor(false, DOCS_ZEN_EDITOR_UNIT_ID_KEY))).toBe(true);
 
         expect(executeCommand).toHaveBeenNthCalledWith(1, OpenHyperLinkEditPanelOperation.id, expect.objectContaining({ type: HyperLinkEditSourceType.VIEWING }));
         expect(executeCommand).toHaveBeenNthCalledWith(2, OpenHyperLinkEditPanelOperation.id, expect.objectContaining({ type: HyperLinkEditSourceType.EDITING }));
-        expect(executeCommand).toHaveBeenNthCalledWith(3, OpenHyperLinkEditPanelOperation.id, expect.objectContaining({ type: HyperLinkEditSourceType.ZEN_EDITOR }));
 
-        expect(InsertHyperLinkOperation.handler(createInsertAccessor(false, undefined, true, null))).toBe(false);
+        expect(InsertHyperLinkOperation.handler(createInsertAccessor(false, true, null))).toBe(false);
 
-        expect(InsertHyperLinkOperation.handler(createInsertAccessor(false, undefined, false))).toBe(false);
+        expect(InsertHyperLinkOperation.handler(createInsertAccessor(false, false))).toBe(false);
     });
 
     it('respects disabled cells and toggles between insert and close commands from the toolbar', () => {
@@ -139,20 +134,20 @@ describe('hyper-link popup operations', () => {
             [IUniverInstanceService, createUniverInstanceService({ workbook: createWorkbook(disabledWorksheet) })],
             [SheetsSelectionsService, { getCurrentSelections: () => [{ range: { startRow: 1, startColumn: 1 } }] }],
             [ICommandService, { executeCommand }],
-            [SheetsHyperLinkPopupService, { currentEditing: null }],
+            [ISheetsHyperLinkPopupService, { currentEditing: null }],
         ]))).toBe(false);
 
         expect(InsertHyperLinkToolbarOperation.handler(createAccessor([
             [IUniverInstanceService, createUniverInstanceService({ workbook: createWorkbook(enabledWorksheet) })],
             [SheetsSelectionsService, { getCurrentSelections: () => [{ range: { startRow: 1, startColumn: 1 } }] }],
             [ICommandService, { executeCommand }],
-            [SheetsHyperLinkPopupService, { currentEditing: { row: 1 } }],
+            [ISheetsHyperLinkPopupService, { currentEditing: { row: 1 } }],
         ]))).toBe(true);
         expect(InsertHyperLinkToolbarOperation.handler(createAccessor([
             [IUniverInstanceService, createUniverInstanceService({ workbook: createWorkbook(enabledWorksheet) })],
             [SheetsSelectionsService, { getCurrentSelections: () => [{ range: { startRow: 1, startColumn: 1 } }] }],
             [ICommandService, { executeCommand }],
-            [SheetsHyperLinkPopupService, { currentEditing: null }],
+            [ISheetsHyperLinkPopupService, { currentEditing: null }],
         ]))).toBe(true);
 
         expect(executeCommand).toHaveBeenCalledWith(CloseHyperLinkPopupOperation.id);

@@ -17,23 +17,31 @@
 import type { Dependency } from '@univerjs/core';
 import type { IUniverSheetsTableUIConfig } from './config/config';
 import { DependentOn, ICommandService, IConfigService, Inject, Injector, merge, Plugin, registerDependencies, touchDependencies, UniverInstanceType } from '@univerjs/core';
-import { IRenderManagerService } from '@univerjs/engine-render';
+import { IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { UniverSheetsTablePlugin } from '@univerjs/sheets-table';
+import { UniverSheetsUIPlugin } from '@univerjs/sheets-ui';
 import pkg from '../package.json';
 import { OpenTableFilterPanelOperation } from './commands/operations/open-table-filter-dialog.opration';
 import { OpenTableSelectorOperation } from './commands/operations/open-table-selector.operation';
 import { defaultPluginConfig, SHEETS_TABLE_UI_PLUGIN_CONFIG_KEY } from './config/config';
 import { PLUGIN_NAME } from './const';
-import { SheetTableAnchorController } from './controllers/sheet-table-anchor.controller';
+import { ComponentsController } from './controllers/components.controller';
 import { SheetsTableComponentController } from './controllers/sheet-table-component.controller';
+import { SheetTableControlsRenderController } from './controllers/sheet-table-controls-render.controller';
 import { SheetsTableFilterButtonRenderController } from './controllers/sheet-table-filter-button-render.controller';
 import { SheetsTableRenderController } from './controllers/sheet-table-render.controller';
 import { SheetTableSelectionController } from './controllers/sheet-table-selection.controller';
 import { SheetTableThemeUIController } from './controllers/sheet-table-theme-ui.controller';
 import { SheetTableMenuController } from './menu/sheet-table-menu.controller';
-import { SheetsTableUiService } from './services/sheets-table-ui-service';
+import { SheetsTableUiService } from './services/sheets-table-ui.service';
 
-@DependentOn(UniverSheetsTablePlugin)
+@DependentOn(
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverSheetsTablePlugin,
+    UniverSheetsUIPlugin
+)
 export class UniverSheetsTableUIPlugin extends Plugin {
     static override pluginName = PLUGIN_NAME;
     static override packageName = pkg.name;
@@ -63,6 +71,8 @@ export class UniverSheetsTableUIPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([ComponentsController]);
+        this._injector.get(ComponentsController);
         registerDependencies(this._injector, [
             [SheetsTableComponentController],
             [SheetsTableUiService],
@@ -87,13 +97,14 @@ export class UniverSheetsTableUIPlugin extends Plugin {
     }
 
     private _registerRenderModules(): void {
-        const renderDependencies: Dependency[] = [
-            [SheetsTableFilterButtonRenderController],
-            [SheetsTableRenderController],
-        ];
+        const renderDependencies: Dependency[] = [];
         if (this._config.hideAnchor !== true) {
-            renderDependencies.push([SheetTableAnchorController]);
+            renderDependencies.push([SheetTableControlsRenderController]);
         }
+        renderDependencies.push(
+            [SheetsTableFilterButtonRenderController],
+            [SheetsTableRenderController]
+        );
 
         renderDependencies.forEach((m) => {
             this.disposeWithMe(this._renderManagerService.registerRenderModule(UniverInstanceType.UNIVER_SHEET, m));

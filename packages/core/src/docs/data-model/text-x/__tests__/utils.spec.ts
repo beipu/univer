@@ -16,13 +16,40 @@
 
 import type { IDocumentBody } from '../../../../types/interfaces/i-document-data';
 import type { IRetainAction } from '../action-types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { Tools } from '../../../../shared/tools';
 import { BooleanNumber } from '../../../../types/enum/text-style';
 import { PresetListType } from '../../preset-list-type';
 import { TextXActionType } from '../action-types';
-import { composeBody, getBodySlice, isUselessRetainAction } from '../utils';
+import { composeBody, getBodySlice, getTextRunSlice, isUselessRetainAction } from '../utils';
 
 describe('test text-x utils', () => {
+    it('only clones text runs intersecting the requested slice', () => {
+        const body: IDocumentBody = {
+            dataStream: 'a'.repeat(10_000),
+            textRuns: Array.from({ length: 1_000 }, (_, index) => ({
+                st: index * 10,
+                ed: index * 10 + 10,
+                ts: {
+                    bl: index % 2 === 0 ? BooleanNumber.TRUE : BooleanNumber.FALSE,
+                },
+            })),
+        };
+        const deepClone = vi.spyOn(Tools, 'deepClone');
+
+        const slice = getTextRunSlice(body, 5_000, 5_010);
+
+        expect(slice).toEqual([{
+            st: 0,
+            ed: 10,
+            ts: {
+                bl: BooleanNumber.TRUE,
+            },
+        }]);
+        expect(deepClone.mock.calls.length).toBeLessThan(50);
+        deepClone.mockRestore();
+    });
+
     it('test getBodySlice fn', () => {
         const body: IDocumentBody = {
             dataStream: 'hello\nworld',
@@ -45,11 +72,12 @@ describe('test text-x utils', () => {
             ],
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1049',
             }],
         };
 
         const sliceBody = getBodySlice(body, 3, 8, false);
-        expect(sliceBody).toEqual({
+        expect(sliceBody).toMatchObject({
             dataStream: 'lo\nwo',
             textRuns: [
                 {
@@ -70,6 +98,7 @@ describe('test text-x utils', () => {
             ],
             paragraphs: [{
                 startIndex: 2,
+                paragraphId: 'para_fixture_1049',
             }],
         } as IDocumentBody);
     });
@@ -103,11 +132,12 @@ describe('test text-x utils', () => {
             ],
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1051',
             }],
         };
 
         const sliceBody = getBodySlice(body, 2, 8, false);
-        expect(sliceBody).toEqual({
+        expect(sliceBody).toMatchObject({
             dataStream: 'llo\nwo',
             textRuns: [
                 {
@@ -135,6 +165,7 @@ describe('test text-x utils', () => {
             ],
             paragraphs: [{
                 startIndex: 3,
+                paragraphId: 'para_fixture_1051',
             }],
         });
     });
@@ -161,6 +192,7 @@ describe('test text-x utils', () => {
             ],
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1053',
             }],
         };
 
@@ -186,7 +218,7 @@ describe('test text-x utils', () => {
 
         const composedBody = composeBody(thisBody, otherBody);
 
-        expect(composedBody).toEqual({
+        expect(composedBody).toMatchObject({
             dataStream: 'hello\nworld',
             textRuns: [
                 {
@@ -215,6 +247,7 @@ describe('test text-x utils', () => {
             ],
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1053',
             }],
         });
     });
@@ -231,7 +264,7 @@ describe('test text-x utils', () => {
 
         expect(() => {
             composeBody(thisBody, otherBody);
-        }).toThrowError();
+        }).toThrow();
     });
 
     it('test composeBody both with paragraphs', () => {
@@ -239,6 +272,7 @@ describe('test text-x utils', () => {
             dataStream: 'hello\nworld',
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1055',
             }],
         };
 
@@ -246,6 +280,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1056',
                 paragraphStyle: {
                     spaceAbove: { v: 10 },
                     lineSpacing: 2,
@@ -256,10 +291,11 @@ describe('test text-x utils', () => {
 
         const composedBody = composeBody(thisBody, otherBody);
 
-        expect(composedBody).toEqual({
+        expect(composedBody).toMatchObject({
             dataStream: 'hello\nworld',
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1056',
                 paragraphStyle: {
                     spaceAbove: { v: 10 },
                     lineSpacing: 2,
@@ -274,6 +310,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 0,
+                paragraphId: 'para_fixture_1058',
                 paragraphStyle: {
                     lineSpacing: 2,
                 },
@@ -292,6 +329,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 0,
+                paragraphId: 'para_fixture_1059',
                 paragraphStyle: {
                     lineSpacing: 1,
                     spaceBelow: {
@@ -303,10 +341,11 @@ describe('test text-x utils', () => {
 
         const composedBody = composeBody(thisBody, otherBody);
 
-        expect(composedBody).toEqual({
+        expect(composedBody).toMatchObject({
             dataStream: '',
             paragraphs: [{
                 startIndex: 0,
+                paragraphId: 'para_fixture_1059',
                 paragraphStyle: {
                     lineSpacing: 1,
                     spaceBelow: {
@@ -330,6 +369,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 2,
+                paragraphId: 'para_fixture_1061',
             }],
         };
 
@@ -337,6 +377,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1062',
                 paragraphStyle: {
                     spaceAbove: { v: 10 },
                     lineSpacing: 2,
@@ -347,12 +388,14 @@ describe('test text-x utils', () => {
 
         const composedBody = composeBody(thisBody, otherBody);
 
-        expect(composedBody).toEqual({
+        expect(composedBody).toMatchObject({
             dataStream: '',
             paragraphs: [{
                 startIndex: 2,
+                paragraphId: 'para_fixture_1061',
             }, {
                 startIndex: 5,
+                paragraphId: 'para_fixture_1062',
                 paragraphStyle: {
                     spaceAbove: { v: 10 },
                     lineSpacing: 2,
@@ -367,6 +410,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 8,
+                paragraphId: 'para_fixture_1065',
             }],
         };
 
@@ -374,6 +418,7 @@ describe('test text-x utils', () => {
             dataStream: '',
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1066',
                 paragraphStyle: {
                     spaceAbove: { v: 10 },
                     lineSpacing: 2,
@@ -384,10 +429,11 @@ describe('test text-x utils', () => {
 
         const composedBody = composeBody(thisBody, otherBody);
 
-        expect(composedBody).toEqual({
+        expect(composedBody).toMatchObject({
             dataStream: '',
             paragraphs: [{
                 startIndex: 5,
+                paragraphId: 'para_fixture_1066',
                 paragraphStyle: {
                     spaceAbove: { v: 10 },
                     lineSpacing: 2,
@@ -395,6 +441,7 @@ describe('test text-x utils', () => {
                 },
             }, {
                 startIndex: 8,
+                paragraphId: 'para_fixture_1065',
             }],
         });
     });

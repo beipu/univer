@@ -17,11 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    threadCommentUI: {
+    'thread-comment-ui': {
+        mobile: { back: '뒤로' },
         panel: {
             title: '댓글 관리',
             empty: '아직 댓글이 없습니다',
-            filterEmpty: '일치하는 결과가 없습니다',
             reset: '필터 초기화',
             addComment: '댓글 추가',
             solved: '해결됨',
@@ -35,6 +35,7 @@ const locale: typeof enUS = {
         item: {
             edit: '편집',
             delete: '댓글 삭제',
+            more: '더 보기',
         },
         filter: {
             sheet: {

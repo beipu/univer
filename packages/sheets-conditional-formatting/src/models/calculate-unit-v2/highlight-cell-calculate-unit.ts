@@ -96,7 +96,7 @@ export class HighlightCellCalculateUnit extends BaseCalculateUnit<Nullable<IConf
                     const configRule = context.rule.rule as IRankHighlightCell;
                     if (configRule.isPercent) {
                         if (configRule.isBottom) {
-                            allValue = allValue.toReversed();
+                            allValue = allValue.slice().reverse();
                         }
 
                         // Calculate the index directly based on the threshold percentage.
@@ -302,7 +302,7 @@ export class HighlightCellCalculateUnit extends BaseCalculateUnit<Nullable<IConf
                     if (isNullable(value) || Number.isNaN(Number(value)) || cellValue?.t !== CellValueType.NUMBER || !preComputingResult) {
                         return;
                     }
-                    const v = serialTimeToTimestamp(Number(value));
+                    const v = serialTimeToTimestamp(Number(value), context.workbook.getDateSystem());
                     const { start, end } = preComputingResult.value!;
                     return v >= start && v <= end;
                 }

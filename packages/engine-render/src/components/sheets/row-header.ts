@@ -27,11 +27,19 @@ export class SpreadsheetRowHeader extends SpreadsheetHeader {
         throw new Error('Method not implemented.');
     }
 
-    override getNoMergeCellPositionByIndex(rowIndex: number, columnIndex: number): Nullable<{ startY: number; startX: number; endX: number; endY: number }> {
+    override getNoMergeCellPositionByIndex(
+        rowIndex: number,
+        columnIndex: number
+    ): Nullable<{ startY: number; startX: number; endX: number; endY: number }> {
         throw new Error('Method not implemented.');
     }
 
-    override getSelectionBounding(startRow: number, startColumn: number, endRow: number, endColumn: number): Nullable<{ startRow: number; startColumn: number; endRow: number; endColumn: number }> {
+    override getSelectionBounding(
+        startRow: number,
+        startColumn: number,
+        endRow: number,
+        endColumn: number
+    ): Nullable<{ startRow: number; startColumn: number; endRow: number; endColumn: number }> {
         throw new Error('Method not implemented.');
     }
 
@@ -70,11 +78,12 @@ export class SpreadsheetRowHeader extends SpreadsheetHeader {
             return;
         }
 
-        const { columnHeaderHeight } = spreadsheetSkeleton;
+        const { columnHeaderHeightAndMarginTop, rowHeaderWidth, rowHeaderWidthAndMarginLeft } = spreadsheetSkeleton;
+        const marginLeft = rowHeaderWidthAndMarginLeft - rowHeaderWidth;
 
         // const { left: fixTranslateLeft, top: fixTranslateTop } = getTranslateInSpreadContextWithPixelRatio();
 
-        ctx.translateWithPrecision(0, columnHeaderHeight);
+        ctx.translateWithPrecision(marginLeft, columnHeaderHeightAndMarginTop);
 
         const extensions = this.getExtensionsByOrder();
         for (const extension of extensions) {
@@ -88,8 +97,13 @@ export class SpreadsheetRowHeader extends SpreadsheetHeader {
         if (!skeleton) {
             return false;
         }
-        const { rowHeaderWidth, columnHeaderHeight } = skeleton;
-        if (oCoord.x >= 0 && oCoord.x <= rowHeaderWidth && oCoord.y > columnHeaderHeight) {
+        const { rowHeaderWidth, rowHeaderWidthAndMarginLeft, columnHeaderHeightAndMarginTop } = skeleton;
+        const marginLeft = rowHeaderWidthAndMarginLeft - rowHeaderWidth;
+        if (
+            oCoord.x >= marginLeft &&
+            oCoord.x <= rowHeaderWidthAndMarginLeft &&
+            oCoord.y > columnHeaderHeightAndMarginTop
+        ) {
             return true;
         }
         return false;

@@ -16,11 +16,18 @@
 
 import type { Workbook } from '@univerjs/core';
 import type { BaseDataValidator } from '@univerjs/data-validation';
-import { DataValidationStatus, Disposable, Inject, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
+import type { LocaleKey } from '../locale/types';
+import {
+    DataValidationStatus,
+    Disposable,
+    Inject,
+    IUniverInstanceService,
+    LocaleService,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { SheetDataValidationModel } from '@univerjs/sheets-data-validation';
 import { CellAlertManagerService, CellAlertType, HoverManagerService } from '@univerjs/sheets-ui';
-import { IZenZoneService } from '@univerjs/ui';
-import { debounceTime } from 'rxjs';
+import { debounceTime, of, switchMap } from 'rxjs';
 
 const ALERT_KEY = 'SHEET_DATA_VALIDATION_ALERT';
 
@@ -30,7 +37,6 @@ export class DataValidationAlertController extends Disposable {
         @Inject(CellAlertManagerService) private readonly _cellAlertManagerService: CellAlertManagerService,
         @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
         @Inject(LocaleService) private readonly _localeService: LocaleService,
-        @IZenZoneService private readonly _zenZoneService: IZenZoneService,
         @Inject(SheetDataValidationModel) private readonly _dataValidationModel: SheetDataValidationModel
     ) {
         super();
@@ -39,13 +45,20 @@ export class DataValidationAlertController extends Disposable {
 
     private _init() {
         this._initCellAlertPopup();
-        this._initZenService();
     }
 
     private _initCellAlertPopup() {
+        this.disposeWithMe(this._univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET).pipe(
+            switchMap((workbook) => workbook?.activeSheet$ ?? of(null))
+        ).subscribe(() => this._cellAlertManagerService.removeAlert(ALERT_KEY)));
+
         this.disposeWithMe(this._hoverManagerService.currentCell$.pipe(debounceTime(100)).subscribe((cellPos) => {
             if (cellPos) {
-                const workbook = this._univerInstanceService.getUnit<Workbook>(cellPos.location.unitId, UniverInstanceType.UNIVER_SHEET)!;
+                const workbook = this._univerInstanceService.getUnit<Workbook>(cellPos.location.unitId, UniverInstanceType.UNIVER_SHEET);
+                if (!workbook || workbook.getActiveSheet()?.getSheetId() !== cellPos.location.subUnitId) {
+                    this._cellAlertManagerService.removeAlert(ALERT_KEY);
+                    return;
+                }
                 const worksheet = workbook.getSheetBySheetId(cellPos.location.subUnitId);
                 if (!worksheet) return;
                 const rule = this._dataValidationModel.getRuleByLocation(cellPos.location.unitId, cellPos.location.subUnitId, cellPos.location.row, cellPos.location.col);
@@ -76,7 +89,7 @@ export class DataValidationAlertController extends Disposable {
                     }
                     this._cellAlertManagerService.showAlert({
                         type: CellAlertType.ERROR,
-                        title: this._localeService.t('dataValidation.error.title'),
+                        title: this._localeService.t<LocaleKey>('sheets-data-validation-ui.error.title'),
                         message: validator?.getRuleFinalError(rule, cellPos.location),
                         location: cellPos.location,
                         width: 200,
@@ -88,14 +101,6 @@ export class DataValidationAlertController extends Disposable {
             }
 
             this._cellAlertManagerService.removeAlert(ALERT_KEY);
-        }));
-    }
-
-    private _initZenService() {
-        this.disposeWithMe(this._zenZoneService.visible$.subscribe((visible) => {
-            if (visible) {
-                this._cellAlertManagerService.removeAlert(ALERT_KEY);
-            }
         }));
     }
 }

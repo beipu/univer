@@ -16,36 +16,39 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { UniverInstanceType } from '@univerjs/core';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
-import { InsertSlideShapeEllipseCommand, InsertSlideShapeRectangleCommand } from '../commands/operations/insert-shape.operation';
+import {
+    InsertSlideShapeEllipseCommand,
+    InsertSlideShapeRectangleCommand,
+} from '../commands/operations/insert-shape.operation';
 
 export const SHAPE_MENU_ID = 'slide.menu.shape';
 
-export function SlideShapeMenuFactory(accessor: IAccessor): IMenuItem {
+export function SlideShapeMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
     return {
         id: SHAPE_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'GraphIcon',
-        tooltip: 'slide.shape.insert.title',
+        tooltip: 'slides-ui.shape.insert.title',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SLIDE),
-        // disabled$: getCurrentRangeDisable$(accessor, { workbookTypes: [WorkbookEditablePermission], worksheetTypes: [WorksheetEditPermission], rangeTypes: [RangeProtectionPermissionEditPoint] }),
     };
 }
 
-export function UploadSlideFloatRectangleShapeMenuFactory(_accessor: IAccessor): IMenuButtonItem {
+export function UploadSlideFloatRectangleShapeMenuFactory(_accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: InsertSlideShapeRectangleCommand.id,
-        title: 'slide.shape.insert.rectangle',
+        title: 'slides-ui.shape.insert.rectangle',
         type: MenuItemType.BUTTON,
         hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_SLIDE),
     };
 }
 
-export function UploadSlideFloatEllipseShapeMenuFactory(_accessor: IAccessor): IMenuButtonItem {
+export function UploadSlideFloatEllipseShapeMenuFactory(_accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: InsertSlideShapeEllipseCommand.id,
-        title: 'slide.shape.insert.ellipse',
+        title: 'slides-ui.shape.insert.ellipse',
         type: MenuItemType.BUTTON,
         hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_SLIDE),
     };

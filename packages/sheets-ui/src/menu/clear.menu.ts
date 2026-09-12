@@ -16,6 +16,7 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { UniverInstanceType } from '@univerjs/core';
 import {
     ClearSelectionAllCommand,
@@ -31,22 +32,21 @@ import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { getCurrentRangeDisable$, getObservableWithExclusiveRange$ } from './menu-util';
 
 export const CLEAR_SELECTION_MENU_ID = 'sheet.menu.clear-selection';
-export function ClearSelectionMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function ClearSelectionMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: CLEAR_SELECTION_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'ClearFormatDoubleIcon',
-        title: 'rightClick.clearSelection',
+        title: 'sheets-ui.rightClick.clearSelection',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function ClearSelectionContentMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ClearSelectionContentMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: ClearSelectionContentCommand.id,
         type: MenuItemType.BUTTON,
-        icon: 'ClearFormatDoubleIcon',
-        title: 'rightClick.clearContent',
+        title: 'sheets-ui.rightClick.clearContent',
         disabled$: getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission],
@@ -55,12 +55,12 @@ export function ClearSelectionContentMenuItemFactory(accessor: IAccessor): IMenu
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
-export function ClearSelectionFormatMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+
+export function ClearSelectionFormatMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: ClearSelectionFormatCommand.id,
         type: MenuItemType.BUTTON,
-        icon: 'ClearFormatDoubleIcon',
-        title: 'rightClick.clearFormat',
+        title: 'sheets-ui.rightClick.clearFormat',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetEditPermission, WorksheetSetCellStylePermission],
@@ -69,13 +69,28 @@ export function ClearSelectionFormatMenuItemFactory(accessor: IAccessor): IMenuB
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
-export function ClearSelectionAllMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+
+export function ClearSelectionAllToolbarMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: ClearSelectionAllCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'ClearFormatDoubleIcon',
-        title: 'rightClick.clearAll',
-        tooltip: 'rightClick.clearAll',
+        tooltip: 'sheets-ui.rightClick.clearAll',
+        disabled$: getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, {
+            workbookTypes: [WorkbookEditablePermission],
+            worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission, WorksheetSetCellStylePermission],
+            rangeTypes: [RangeProtectionPermissionEditPoint],
+        })),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+    };
+}
+
+export function ClearSelectionAllMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return {
+        id: ClearSelectionAllCommand.id,
+        type: MenuItemType.BUTTON,
+        title: 'sheets-ui.rightClick.clearAll',
+        tooltip: 'sheets-ui.rightClick.clearAll',
         disabled$: getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission, WorksheetSetCellStylePermission],

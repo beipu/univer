@@ -45,7 +45,7 @@ export interface IParsedCellValueByClipboard {
         p?: IDocumentData;
         v?: string;
     };
-
+    numfmtPattern?: string;
 }
 
 export interface IUniverSheetCopyDataModel {
@@ -103,6 +103,11 @@ export interface ISheetClipboardHook {
      */
     priority?: number;
     /**
+     * Handles a copy initiated from a focused floating object.
+     * @returns Whether the focused object has taken over the copy.
+     */
+    onBeforeCopyFocusedObject?(unitId: string, subUnitId: string, copyType: COPY_TYPE): boolean;
+    /**
      * The callback would be called after the clipboard service has decided what region need to be copied.
      * Features could use this hook to build copying cache or any other pre-copy jobs.
      * @param unitId
@@ -122,7 +127,6 @@ export interface ISheetClipboardHook {
     /**
      * Properties that would be appended to the td element.
      *
-     * @deprecated should be merged with `onCopyCellContent` to `onCopyCell`
      * @param row row of the the copied cell
      * @param col col of the the copied cell
      * @param rowSpan row span of the the copied cell

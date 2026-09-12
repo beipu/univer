@@ -14,74 +14,88 @@
  * limitations under the License.
  */
 
-import { UniverInstanceType } from '@univerjs/core';
-import { describe, expect, it, vi } from 'vitest';
+import type { IDocDrawing } from '../../services/doc-drawing.service';
+import { BooleanNumber, DrawingTypeEnum, IResourceManagerService, PositionedObjectLayoutType, UniverInstanceType } from '@univerjs/core';
+import { IDrawingManagerService } from '@univerjs/drawing';
+import { describe, expect, it } from 'vitest';
+import { createFacadeTestBed } from '../../facade/__tests__/create-test-bed';
+import { IDocDrawingService } from '../../services/doc-drawing.service';
 import { DocDrawingController, DOCS_DRAWING_PLUGIN } from '../doc-drawing.controller';
 
+function drawing(drawingId: string): IDocDrawing {
+    return {
+        drawingId,
+        unitId: 'test-doc',
+        subUnitId: 'stale-import-unit',
+        drawingType: DrawingTypeEnum.DRAWING_IMAGE,
+        layoutType: PositionedObjectLayoutType.WRAP_NONE,
+        docTransform: { size: { width: 320, height: 180 }, angle: 15, positionH: { relativeFrom: 0, posOffset: 12 }, positionV: { relativeFrom: 0, posOffset: 34 } },
+    };
+}
+
 describe('DocDrawingController', () => {
-    it('should serialize snapshot and load resources into drawing services', () => {
-        const registerDrawingData = vi.fn();
-        const registerDrawingDataForManager = vi.fn();
+    it('serializes snapshots and loads and unloads resources through drawing services', () => {
+        const bed = createFacadeTestBed();
+        try {
+            const model = bed.documentDataModel;
+            model.resetDrawing({ d1: drawing('d1') }, ['d1']);
+            const resources = bed.injector.get(IResourceManagerService);
+            const hook = resources.getAllResourceHooks().find((hook) => hook.pluginName === DOCS_DRAWING_PLUGIN)!;
+            expect(hook.businesses).toEqual([UniverInstanceType.UNIVER_DOC]);
+            expect(JSON.parse(hook.toJson('test-doc'))).toEqual({ data: model.getDrawings(), order: ['d1'] });
+            expect(hook.parseJson('')).toEqual({ data: {}, order: [] });
+            expect(hook.parseJson('{bad json')).toEqual({ data: {}, order: [] });
+            hook.onLoad('test-doc', {
+                data: {
+                    mask: { ...drawing('mask'), behindDoc: BooleanNumber.FALSE },
+                    photo: { ...drawing('photo'), behindDoc: BooleanNumber.TRUE },
+                    d2: drawing('d2'),
+                },
+                order: ['mask', 'photo', 'd2'],
+            });
+            const manager = bed.injector.get(IDrawingManagerService);
+            const docDrawings = bed.injector.get(IDocDrawingService);
+            expect(manager.getDrawingOrder('test-doc', 'test-doc')).toEqual(['photo', 'mask', 'd2']);
+            expect(docDrawings.getDrawingOrder('test-doc', 'test-doc')).toEqual(['mask', 'photo', 'd2']);
+            expect(manager.getDrawingData('test-doc', 'test-doc').d2).toMatchObject({
+                hidden: true,
+                docTransform: drawing('d2').docTransform,
+            });
+            expect(manager.getDrawingData('test-doc', 'test-doc').d2).not.toHaveProperty('transform');
+            expect(docDrawings.getDrawingData('test-doc', 'test-doc').d2).not.toHaveProperty('hidden');
+            hook.onUnLoad('test-doc');
+            expect(model.getDrawings()).toEqual({});
+            expect(model.getDrawingsOrder()).toEqual([]);
+            expect(manager.getDrawingData('test-doc', 'test-doc')).toEqual({});
+            expect(docDrawings.getDrawingData('test-doc', 'test-doc')).toEqual({});
+        } finally {
+            bed.univer.dispose();
+        }
+    });
 
-        let snapshot: any = {
-            drawings: { d1: { id: 'd1', drawingType: 'image' } },
-            drawingsOrder: ['d1'],
-        };
-
-        const doc = {
-            getSnapshot: () => snapshot,
-            resetDrawing: (data: any, order: any) => {
-                snapshot = { ...snapshot, drawings: data, drawingsOrder: order };
-            },
-            getDrawings: () => snapshot.drawings,
-            getDrawingsOrder: () => snapshot.drawingsOrder,
-        };
-
-        const univerInstanceService = {
-            getUnit: vi.fn((_unitId: string, _type?: UniverInstanceType) => doc),
-        };
-
-        let capturedResource: any;
-        const resourceManagerService = {
-            registerPluginResource: vi.fn((resource: any) => {
-                capturedResource = resource;
-                return { dispose: vi.fn() };
-            }),
-        };
-
-        const controller = new DocDrawingController(
-            { registerDrawingData } as any,
-            { registerDrawingData: registerDrawingDataForManager } as any,
-            resourceManagerService as any,
-            univerInstanceService as any
-        );
-
-        expect(resourceManagerService.registerPluginResource).toHaveBeenCalledTimes(1);
-        expect(capturedResource.pluginName).toBe(DOCS_DRAWING_PLUGIN);
-        expect(capturedResource.businesses).toEqual([UniverInstanceType.UNIVER_DOC]);
-
-        const json = capturedResource.toJson('doc-1');
-        const parsed = JSON.parse(json);
-        expect(parsed.data).toEqual(snapshot.drawings);
-        expect(parsed.order).toEqual(snapshot.drawingsOrder);
-
-        expect(capturedResource.parseJson('')).toEqual({ data: {}, order: [] });
-        expect(capturedResource.parseJson('{bad json')).toEqual({ data: {}, order: [] });
-
-        capturedResource.onLoad('doc-1', { data: { d2: { id: 'd2' } }, order: ['d2'] });
-        expect(registerDrawingData).toHaveBeenCalledWith('doc-1', expect.any(Object));
-        expect(registerDrawingDataForManager).toHaveBeenCalledWith('doc-1', expect.any(Object));
-
-        capturedResource.onUnLoad('doc-1');
-        expect(registerDrawingData).toHaveBeenLastCalledWith('doc-1', {
-            'doc-1': {
-                unitId: 'doc-1',
-                subUnitId: 'doc-1',
-                data: {},
-                order: [],
-            },
+    it('normalizes imported body and footnote drawing identities without flattening persisted resources', () => {
+        const bed = createFacadeTestBed({
+            id: 'test-doc',
+            documentStyle: {},
+            body: { dataStream: '\r\n' },
+            drawings: { image: drawing('image') },
+            drawingsOrder: ['image'],
+            notes: { note: { type: 'footnote' as const, noteId: 'note', body: { dataStream: '\b\r\n' }, drawings: { 'note-image': { ...drawing('note-image'), layoutType: PositionedObjectLayoutType.INLINE } }, drawingsOrder: ['note-image'] } },
         });
-
-        controller.dispose();
+        try {
+            const controller = bed.injector.get(DocDrawingController);
+            expect(controller.loadDrawingDataForUnit('test-doc')).toBe(true);
+            for (const service of [bed.injector.get(IDocDrawingService), bed.injector.get(IDrawingManagerService)]) {
+                expect(service.getDrawingOrder('test-doc', 'test-doc')).toEqual(['image', 'note-image']);
+                expect(service.getDrawingData('test-doc', 'test-doc')).toMatchObject({
+                    image: { unitId: 'test-doc', subUnitId: 'test-doc' },
+                    'note-image': { unitId: 'test-doc', subUnitId: 'test-doc' },
+                });
+            }
+            expect(bed.documentDataModel.getDrawings()).not.toHaveProperty('note-image');
+            expect(bed.documentDataModel.getSnapshot().notes?.note.drawings?.['note-image'].subUnitId).toBe('stale-import-unit');
+        } finally {
+            bed.univer.dispose();
+        }
     });
 });

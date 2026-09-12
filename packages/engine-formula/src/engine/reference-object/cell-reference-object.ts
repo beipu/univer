@@ -23,10 +23,14 @@ import { ErrorValueObject } from '../value-object/base-value-object';
 import { BaseReferenceObject } from './base-reference-object';
 import { RangeReferenceObject } from './range-reference-object';
 
+const EXCEL_MAX_ROWS = 1_048_576;
+const EXCEL_MAX_COLUMNS = 16_384;
+
 export class CellReferenceObject extends BaseReferenceObject {
     constructor(token: string) {
         super(token);
         const grid = deserializeRangeWithSheetWithCache(token);
+        this.setUnitQualifier(grid.unitId);
         this.setForcedUnitIdDirect(grid.unitId);
         this.setForcedSheetName(grid.sheetName);
         this.setRangeData(grid.range);
@@ -34,6 +38,15 @@ export class CellReferenceObject extends BaseReferenceObject {
 
     override isCell() {
         return true;
+    }
+
+    override isExceedRange() {
+        if ((this.getForcedSheetId() == null || this.getForcedSheetId()?.length === 0) && this.getForcedSheetName().length > 0) {
+            return true;
+        }
+
+        const { startRow, endRow, startColumn, endColumn } = this.getRangePosition();
+        return startRow < 0 || startColumn < 0 || endRow >= EXCEL_MAX_ROWS || endColumn >= EXCEL_MAX_COLUMNS;
     }
 
     override unionBy(referenceObject: BaseReferenceObject) {
@@ -46,7 +59,7 @@ export class CellReferenceObject extends BaseReferenceObject {
         //     return ErrorValueObject.create(ErrorType.REF);
         // }
 
-        const newRangeData = this.unionRange(this.getRangeData(), cellReferenceObject.getRangeData());
+        const newRangeData = this.unionRange(this.getRangePosition(), cellReferenceObject.getRangePosition());
 
         return this._createRange(newRangeData);
     }
@@ -112,10 +125,6 @@ export class CellReferenceObject extends BaseReferenceObject {
         rangeReferenceObject.setRuntimeArrayFormulaCellData(this.getRuntimeArrayFormulaCellData());
 
         rangeReferenceObject.setRuntimeFeatureCellData(this.getRuntimeFeatureCellData());
-
-        const { x, y } = this.getRefOffset();
-
-        rangeReferenceObject.setRefOffset(x, y);
 
         const forceSheetId = this.getForcedSheetId();
 

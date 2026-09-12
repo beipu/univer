@@ -41,6 +41,12 @@ function buildRemoteChannel(target: Record<string, (...args: unknown[]) => unkno
     };
 }
 
+async function flushPromises(times = 6): Promise<void> {
+    for (let index = 0; index < times; index++) {
+        await Promise.resolve();
+    }
+}
+
 describe('data-sync controllers', () => {
     it('DataSyncPrimaryController should sync add/dispose/mutation with branch guards', async () => {
         const added$ = new Subject<{ unit: { getUnitId(): string; getSnapshot(): unknown } }>();
@@ -53,6 +59,7 @@ describe('data-sync controllers', () => {
             createInstance: vi.fn(async () => true),
             disposeInstance: vi.fn(async () => true),
             syncMutation: vi.fn(async () => true),
+            whenReady: vi.fn(async () => true as const),
         };
 
         const remoteChannel = buildRemoteChannel(remoteInstanceImpl);
@@ -88,6 +95,16 @@ describe('data-sync controllers', () => {
         const univerInstanceService = {
             getTypeOfUnitAdded$: vi.fn(() => added$.asObservable()),
             getTypeOfUnitDisposed$: vi.fn(() => disposed$.asObservable()),
+            getUnit: vi.fn((unitId: string) => {
+                if (unitId !== 'unit-2') {
+                    return null;
+                }
+                return {
+                    type: UniverInstanceType.UNIVER_BASE,
+                    getUnitId: () => 'unit-2',
+                    getSnapshot: () => ({ base: true }),
+                };
+            }),
         } as unknown as IUniverInstanceService;
 
         const remoteSyncService = {
@@ -124,13 +141,18 @@ describe('data-sync controllers', () => {
         controller.registerSyncingMutations({ id: 'm-sync' } as never);
 
         const unit2Disposable = controller.syncUnit('unit-2');
+        expect(remoteInstanceImpl.createInstance).toHaveBeenCalledWith({
+            unitID: 'unit-2',
+            type: UniverInstanceType.UNIVER_BASE,
+            snapshot: { base: true },
+        });
 
         commandCallback?.({
             id: 'm-sync',
             type: CommandType.MUTATION,
             params: { unitId: 'unit-2' },
         }, {});
-        await Promise.resolve();
+        await flushPromises();
         expect(remoteInstanceImpl.syncMutation).toHaveBeenCalledTimes(1);
 
         commandCallback?.({
@@ -158,19 +180,128 @@ describe('data-sync controllers', () => {
             type: CommandType.MUTATION,
             params: {},
         }, {});
-        await Promise.resolve();
+        await flushPromises();
 
         expect(remoteInstanceImpl.syncMutation).toHaveBeenCalledTimes(2);
 
         unit2Disposable.dispose();
+        expect(remoteInstanceImpl.disposeInstance).toHaveBeenCalledWith({ unitID: 'unit-2' });
         commandCallback?.({
             id: 'm-sync',
             type: CommandType.MUTATION,
             params: { unitId: 'unit-2' },
         }, {});
-        await Promise.resolve();
+        await flushPromises();
         expect(remoteInstanceImpl.syncMutation).toHaveBeenCalledTimes(2);
 
+        const unit3Disposable = controller.syncUnitMutations('unit-3');
+        commandCallback?.({
+            id: 'm-sync',
+            type: CommandType.MUTATION,
+            params: { unitId: 'unit-3' },
+        }, {});
+        await flushPromises();
+        expect(remoteInstanceImpl.createInstance).toHaveBeenCalledTimes(2);
+        expect(remoteInstanceImpl.syncMutation).toHaveBeenCalledTimes(3);
+        unit3Disposable.dispose();
+
+        controller.dispose();
+    });
+
+    it('DataSyncPrimaryController should serialize remote mutation sync calls', async () => {
+        const added$ = new Subject<{ unit: { getUnitId(): string; getSnapshot(): unknown } }>();
+        const disposed$ = new Subject<{ getUnitId(): string }>();
+        let commandCallback: ((commandInfo: unknown, options?: unknown) => void) | undefined;
+        const dependencies: Array<[unknown, IDependencyFactory]> = [];
+        let remoteProxy: unknown;
+        const resolvers: Array<(value: boolean) => void> = [];
+
+        const remoteInstanceImpl = {
+            createInstance: vi.fn(async () => true),
+            disposeInstance: vi.fn(async () => true),
+            syncMutation: vi.fn(() => new Promise<boolean>((resolve) => resolvers.push(resolve))),
+            whenReady: vi.fn(async () => true as const),
+        };
+
+        const remoteChannel = buildRemoteChannel(remoteInstanceImpl);
+
+        const rpcChannelService: IRPCChannelService = {
+            requestChannel: vi.fn(() => remoteChannel),
+            registerChannel: vi.fn(),
+        };
+
+        const injector = {
+            add: vi.fn((dependency: [unknown, IDependencyFactory]) => {
+                dependencies.push(dependency);
+            }),
+            get: vi.fn((token: unknown) => {
+                if (token === IRemoteInstanceService) {
+                    if (!remoteProxy) {
+                        const record = dependencies.find(([depToken]) => depToken === IRemoteInstanceService);
+                        remoteProxy = record?.[1].useFactory();
+                    }
+                    return remoteProxy;
+                }
+                return undefined;
+            }),
+        } as unknown as Injector;
+
+        const commandService = {
+            onCommandExecuted: vi.fn((callback: (commandInfo: unknown, options?: unknown) => void) => {
+                commandCallback = callback;
+                return { dispose: vi.fn() };
+            }),
+        } as unknown as ICommandService;
+
+        const univerInstanceService = {
+            getTypeOfUnitAdded$: vi.fn(() => added$.asObservable()),
+            getTypeOfUnitDisposed$: vi.fn(() => disposed$.asObservable()),
+            getUnit: vi.fn(() => null),
+        } as unknown as IUniverInstanceService;
+
+        const remoteSyncService = {
+            syncMutation: vi.fn(async () => true),
+        };
+
+        const controller = new DataSyncPrimaryController(
+            injector,
+            commandService,
+            univerInstanceService,
+            rpcChannelService,
+            remoteSyncService as never
+        );
+
+        controller.registerSyncingMutations({ id: 'm-source' } as never);
+        controller.registerSyncingMutations({ id: 'm-calculate' } as never);
+        controller.syncUnit('unit-1');
+
+        commandCallback?.({
+            id: 'm-source',
+            type: CommandType.MUTATION,
+            params: { unitId: 'unit-1' },
+        }, {});
+        commandCallback?.({
+            id: 'm-calculate',
+            type: CommandType.MUTATION,
+            params: { unitId: 'unit-1' },
+        }, {});
+
+        await flushPromises();
+        expect(remoteInstanceImpl.syncMutation).toHaveBeenCalledTimes(1);
+        expect(remoteInstanceImpl.syncMutation).toHaveBeenNthCalledWith(1, {
+            mutationInfo: expect.objectContaining({ id: 'm-source' }),
+        }, {});
+
+        resolvers[0](true);
+        await flushPromises();
+
+        expect(remoteInstanceImpl.syncMutation).toHaveBeenCalledTimes(2);
+        expect(remoteInstanceImpl.syncMutation).toHaveBeenNthCalledWith(2, {
+            mutationInfo: expect.objectContaining({ id: 'm-calculate' }),
+        }, {});
+
+        resolvers[1](true);
+        await flushPromises();
         controller.dispose();
     });
 

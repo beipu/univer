@@ -15,9 +15,27 @@
  */
 
 import type { Workbook } from '@univerjs/core';
-import type { IAddSheetTableCommandParams, IDeleteSheetTableParams, ISetSheetTableParams, ITableFilterItem, ITableInfo, ITableInfoWithUnitId, ITableOptions, ITableRange } from '@univerjs/sheets-table';
-import { customNameCharacterCheck, ILogService, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
-import { AddSheetTableCommand, DeleteSheetTableCommand, SetSheetTableFilterCommand, SheetTableService } from '@univerjs/sheets-table';
+import type {
+    IAddSheetTableCommandParams,
+    IDeleteSheetTableParams,
+    ISetSheetTableParams,
+    ITableFilterItem,
+    ITableInfo,
+    ITableInfoWithUnitId,
+    ITableOptions,
+    ITableRange,
+} from '@univerjs/sheets-table';
+import {
+    customNameCharacterCheck,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
+import {
+    AddSheetTableCommand,
+    DeleteSheetTableCommand,
+    SetSheetTableFilterCommand,
+    SheetTableService,
+} from '@univerjs/sheets-table';
 import { FWorkbook } from '@univerjs/sheets/facade';
 
 /**
@@ -27,11 +45,12 @@ export interface IFWorkbookSheetsTableMixin {
     /**
      * Get table information
      * @param {string} tableId The table id
-     * @returns {ITableInfo} The table information
+     * @returns {ITableInfoWithUnitId | undefined} The table information, including workbook and worksheet IDs, or `undefined` if not found.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -55,11 +74,12 @@ export interface IFWorkbookSheetsTableMixin {
     /**
      * Get table information by name
      * @param {string} tableName The table name
-     * @returns {ITableInfo} The table information
+     * @returns {ITableInfoWithUnitId | undefined} The table information, including workbook and worksheet IDs, or `undefined` if not found.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -99,11 +119,12 @@ export interface IFWorkbookSheetsTableMixin {
      * @param {ITableRange} rangeInfo The table range information
      * @param {string} [tableId] The table id
      * @param {ITableOptions} [options] The table options
-     * @returns {string} The table id
+     * @returns {Promise<string | undefined>} A promise resolving to the table ID, or `undefined` if the name is invalid or creation fails.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -129,12 +150,13 @@ export interface IFWorkbookSheetsTableMixin {
      * set table filter
      * @param {string} tableId The table id
      * @param {number} column The column index, starting from 0.
-     * @param {ITableFilterItem} filter The filter item
+     * @param {ITableFilterItem | undefined} filter The filter to apply, or `undefined` to clear the column filter.
      * @returns {Promise<boolean>} The result of set table filter
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -163,12 +185,12 @@ export interface IFWorkbookSheetsTableMixin {
      * }
      * ```
      */
-    setTableFilter(tableId: string, column: number, filter: ITableFilterItem | undefined): void;
+    setTableFilter(tableId: string, column: number, filter: ITableFilterItem | undefined): Promise<boolean>;
 
     /**
      * Remove table
      * @param {string} tableId The table id
-     * @returns {boolean} The result of remove table
+     * @returns {Promise<boolean>} A promise resolving to whether the table was removed; `false` if the table is not found.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
@@ -197,9 +219,14 @@ export class FWorkbookSheetsTableMixin extends FWorkbook implements IFWorkbookSh
         return sheetTableService.getTableList(unitId);
     }
 
-    override async addTable(subUnitId: string, tableName: string, rangeInfo: ITableRange, tableId?: string, options?: ITableOptions): Promise<string | undefined> {
+    override async addTable(
+        subUnitId: string,
+        tableName: string,
+        rangeInfo: ITableRange,
+        tableId?: string,
+        options?: ITableOptions
+    ): Promise<string | undefined> {
         const sheetTableService = this._injector.get(SheetTableService);
-        const localeService = this._injector.get(LocaleService);
 
         const univerInstanceService = this._injector.get(IUniverInstanceService);
         const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
@@ -211,8 +238,6 @@ export class FWorkbookSheetsTableMixin extends FWorkbook implements IFWorkbookSh
         }
         const isValidName = customNameCharacterCheck(tableName, sheetNameSet);
         if (!isValidName) {
-            const logService = this._injector.get(ILogService);
-            logService.warn(localeService.t('sheets-table.tableNameError'));
             return undefined;
         }
 
@@ -262,6 +287,5 @@ export class FWorkbookSheetsTableMixin extends FWorkbook implements IFWorkbookSh
 
 FWorkbook.extend(FWorkbookSheetsTableMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FWorkbook extends IFWorkbookSheetsTableMixin { }
 }

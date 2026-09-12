@@ -17,22 +17,29 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-filter': {
+    'sheets-filter-ui': {
         toolbar: {
             'smart-toggle-filter-tooltip': 'Prepnúť filter',
             'clear-filter-criteria': 'Vymazať podmienky filtra',
             're-calc-filter-conditions': 'Prepočítať podmienky filtra',
         },
-        command: {
-            'not-valid-filter-range': 'Vybraný rozsah má iba jeden riadok a nie je vhodný na filtrovanie.',
-        },
         shortcut: {
             'smart-toggle-filter': 'Prepnúť filter',
+        },
+        permission: {
+            filterErr: 'Nemáte povolenie používať filter.',
         },
         panel: {
             'clear-filter': 'Vymazať filter',
             cancel: 'Zrušiť',
             confirm: 'Potvrdiť',
+            mobile: {
+                resize: 'Zmeniť veľkosť panela filtra',
+                back: 'Späť',
+                column: 'Stĺpec {0}',
+                'previous-column': 'Predchádzajúci stĺpec',
+                'next-column': 'Nasledujúci stĺpec',
+            },
             'by-values': 'Podľa hodnôt',
             'by-colors': 'Podľa farieb',
             'filter-by-cell-fill-color': 'Filtrovať podľa farby výplne bunky',
@@ -67,9 +74,6 @@ const locale: typeof enUS = {
             between: 'Medzi',
             'not-between': 'Nie medzi',
             custom: 'Vlastné',
-        },
-        msg: {
-            'filter-header-forbidden': 'Riadok hlavičky filtra sa nedá presunúť.',
         },
         date: {
             1: 'Január',

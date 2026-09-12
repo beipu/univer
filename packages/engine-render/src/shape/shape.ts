@@ -15,18 +15,28 @@
  */
 
 import type { IOffset, IScale, ISize, Nullable } from '@univerjs/core';
-
 import type { IObjectFullState } from '../basics/interfaces';
-import type { IViewportInfo, Vector2 } from '../basics/vector2';
+import type { IBoundRectNoAngle, IViewportInfo, Vector2 } from '../basics/vector2';
 import type { UniverRenderingContext } from '../context';
 import { BASE_OBJECT_ARRAY, BaseObject, ObjectType } from '../base-object';
 import { SHAPE_TYPE } from '../basics/const';
+import { Canvas } from '../canvas';
 
 export type LineJoin = 'round' | 'bevel' | 'miter';
 export type LineCap = 'butt' | 'round' | 'square';
 export type PaintFirst = 'fill' | 'stroke';
 
 const BASE_OBJECT_ARRAY_Set = new Set(BASE_OBJECT_ARRAY);
+
+function resolveRenderCachePixelRatio(ctx: UniverRenderingContext, fixedPixelRatio?: number): number {
+    if (fixedPixelRatio !== undefined) {
+        return fixedPixelRatio;
+    }
+
+    const transform = ctx.getTransform();
+    return Math.max(Math.hypot(transform.a, transform.b), Math.hypot(transform.c, transform.d));
+}
+
 export interface IShapeProps extends IObjectFullState, ISize, IOffset, IScale {
     rotateEnabled?: boolean;
     resizeEnabled?: boolean;
@@ -40,8 +50,10 @@ export interface IShapeProps extends IObjectFullState, ISize, IOffset, IScale {
     paintFirst?: PaintFirst;
 
     stroke?: Nullable<string | CanvasGradient>;
+    strokeOpacity?: number;
     strokeScaleEnabled?: boolean; // strokeUniform: boolean;
     fill?: Nullable<string | CanvasGradient>;
+    fillOpacity?: number;
     fillAfterStrokeEnabled?: boolean;
     hitStrokeWidth?: number | string;
     strokeLineJoin?: LineJoin;
@@ -69,8 +81,10 @@ export const SHAPE_OBJECT_ARRAY = [
     'globalCompositeOperation',
     'paintFirst',
     'stroke',
+    'strokeOpacity',
     'strokeScaleEnabled',
     'fill',
+    'fillOpacity',
     'fillAfterStrokeEnabled',
     'hitStrokeWidth',
     'strokeLineJoin',
@@ -89,6 +103,11 @@ export const SHAPE_OBJECT_ARRAY = [
 ];
 
 export abstract class Shape<T extends IShapeProps> extends BaseObject {
+    private _renderCacheCanvas: Nullable<Canvas>;
+    private _renderCacheBounds: Nullable<IBoundRectNoAngle>;
+    private _renderCachePixelRatio = 0;
+    private _renderCacheTransformSize: Nullable<ISize>;
+
     private _hoverCursor: Nullable<string>;
 
     private _moveCursor: string | null = null;
@@ -101,9 +120,13 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
 
     private _stroke: Nullable<string | CanvasGradient>;
 
+    private _strokeOpacity?: number;
+
     private _strokeScaleEnabled: boolean = false; // strokeUniform: boolean;
 
     private _fill: Nullable<string | CanvasGradient>;
+
+    private _fillOpacity?: number;
 
     private _fillAfterStrokeEnabled: boolean = false;
 
@@ -169,12 +192,20 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
         return this._stroke;
     }
 
+    get strokeOpacity() {
+        return this._strokeOpacity;
+    }
+
     get strokeScaleEnabled() {
         return this._strokeScaleEnabled;
     }
 
     get fill() {
         return this._fill;
+    }
+
+    get fillOpacity() {
+        return this._fillOpacity;
     }
 
     get fillAfterStrokeEnabled() {
@@ -262,6 +293,7 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
 
         ctx.save();
         this._setFillStyles(ctx, props);
+        ctx.globalAlpha *= props.fillOpacity ?? 1;
         if (props.fillRule === 'evenodd') {
             ctx.fill('evenodd');
         } else {
@@ -275,11 +307,11 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
      * @param {UniverRenderingContext} ctx SheetContext to render on
      */
     private static _renderStroke(ctx: UniverRenderingContext, props: IShapeProps) {
-        const { stroke, strokeWidth, strokeScaleEnabled } = props;
+        const { stroke, strokeWidth } = props;
 
         // let { scaleX, scaleY } = props;
         // const { scaleX = 1, scaleY = 1 } = ctx.getScale();
-        if (!stroke || strokeWidth === 0) {
+        if (!stroke || strokeWidth === undefined || !Number.isFinite(strokeWidth) || strokeWidth <= 0) {
             return;
         }
 
@@ -291,6 +323,7 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
         // }
         // this._setLineDash(ctx);
         this._setStrokeStyles(ctx, props);
+        ctx.globalAlpha *= props.strokeOpacity ?? 1;
 
         ctx.stroke();
         ctx.restore();
@@ -388,6 +421,112 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
         };
     }
 
+    override transformByState(option: IObjectFullState): this | undefined {
+        const previousWidth = this.width;
+        const previousHeight = this.height;
+        const cachedSize = this._renderCacheTransformSize;
+        const hasReusableCache = Boolean(
+            this._renderCacheCanvas &&
+            this._renderCacheBounds &&
+            cachedSize?.width === this.width &&
+            cachedSize.height === this.height
+        );
+
+        const result = super.transformByState(option);
+        const geometryChanged = previousWidth !== this.width || previousHeight !== this.height;
+        if (hasReusableCache && !geometryChanged) {
+            // Translation and rotation only change the outer transform; the cached local pixels
+            // remain valid. Keep filters and 3D effects out of the per-frame drag path.
+            this.makeDirty(false);
+        } else if (geometryChanged) {
+            this._releaseRenderCache();
+        }
+        return result;
+    }
+
+    override translate(x?: number | string, y?: number | string): this {
+        const cachedSize = this._renderCacheTransformSize;
+        const hasReusableCache = Boolean(
+            this._renderCacheCanvas &&
+            this._renderCacheBounds &&
+            cachedSize?.width === this.width &&
+            cachedSize.height === this.height
+        );
+
+        super.translate(x, y);
+        if (hasReusableCache) {
+            this.makeDirty(false);
+        }
+        return this;
+    }
+
+    protected _renderWithCache(
+        ctx: UniverRenderingContext,
+        bounds: IBoundRectNoAngle,
+        draw: (cacheContext: UniverRenderingContext) => void,
+        fixedPixelRatio?: number
+    ): void {
+        const pixelRatio = resolveRenderCachePixelRatio(ctx, fixedPixelRatio);
+        if (pixelRatio <= Number.EPSILON) {
+            return;
+        }
+
+        const width = Math.ceil((bounds.right - bounds.left) * pixelRatio) / pixelRatio;
+        const height = Math.ceil((bounds.bottom - bounds.top) * pixelRatio) / pixelRatio;
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+
+        const cacheBoundsChanged =
+            this._renderCacheBounds?.left !== bounds.left ||
+            this._renderCacheBounds?.top !== bounds.top ||
+            this._renderCacheBounds?.right !== bounds.right ||
+            this._renderCacheBounds?.bottom !== bounds.bottom;
+        const cacheSizeChanged =
+            this._renderCacheCanvas?.getWidth() !== width ||
+            this._renderCacheCanvas?.getHeight() !== height ||
+            this._renderCachePixelRatio !== pixelRatio;
+
+        if (!this._renderCacheCanvas) {
+            this._renderCacheCanvas = new Canvas({
+                colorService: this.getEngine()?.canvasColorService,
+                width,
+                height,
+                pixelRatio,
+            });
+        } else if (cacheSizeChanged) {
+            this._renderCacheCanvas.setSize(width, height, pixelRatio);
+        }
+
+        if (this.isDirty() || cacheBoundsChanged || cacheSizeChanged) {
+            const cacheContext = this._renderCacheCanvas.getContext();
+            this._renderCacheCanvas.clear();
+            cacheContext.save();
+            cacheContext.translate(-bounds.left, -bounds.top);
+            draw(cacheContext);
+            cacheContext.restore();
+            this._renderCacheBounds = { ...bounds };
+            this._renderCachePixelRatio = pixelRatio;
+            this._renderCacheTransformSize = { width: this.width, height: this.height };
+        }
+
+        ctx.drawImage(
+            this._renderCacheCanvas.getCanvasEle(),
+            bounds.left,
+            bounds.top,
+            width,
+            height
+        );
+    }
+
+    protected _releaseRenderCache(): void {
+        this._renderCacheCanvas?.dispose();
+        this._renderCacheCanvas = null;
+        this._renderCacheBounds = null;
+        this._renderCachePixelRatio = 0;
+        this._renderCacheTransformSize = null;
+    }
+
     protected _draw(ctx: UniverRenderingContext, bounds?: IViewportInfo) {
         /** abstract */
     }
@@ -441,5 +580,10 @@ export abstract class Shape<T extends IShapeProps> extends BaseObject {
         }
 
         this.makeDirty(true);
+    }
+
+    override dispose(): void {
+        this._releaseRenderCache();
+        super.dispose();
     }
 }

@@ -15,9 +15,10 @@
  */
 
 import type { Nullable } from '@univerjs/core';
-import type { IDocumentSkeletonBoundingBox, IDocumentSkeletonFontStyle } from '../../../../basics/i-document-skeleton-cached';
-import type { IOpenTypeGlyphInfo } from './text-shaping';
-import { ptToPixel } from '../../../../basics/tools';
+import type {
+    IDocumentSkeletonBoundingBox,
+    IDocumentSkeletonFontStyle,
+} from '../../../../basics/i-document-skeleton-cached';
 
 export const DEFAULT_MEASURE_TEXT = '0';
 
@@ -35,6 +36,10 @@ const getDefaultBaselineOffset = (fontSize: number) => ({
     spr: 0.6,
     spo: fontSize,
 });
+
+function getNormalFontKey(font: string): string {
+    return font.replace(/\d+(?:\.\d+)?(?:pt|px)/, '1000pt').trim();
+}
 
 interface IFontData {
     notDefWidth: number;
@@ -57,10 +62,17 @@ interface IGlyphHorizonData {
     pixelsPerEm?: number[];
 }
 
+/** Invalidates selected CSS font keys in both measurement caches; registered font data is retained. */
+export function invalidateDocumentFontMetrics(matches: (fontStyle: string) => boolean): boolean {
+    return FontCache.invalidateMetrics(matches);
+}
+
 export class FontCache {
+    private static _normalLineHeightCache = new Map<string, number>();
+
     private static _getTextHeightCache: { [key: string]: { width: number; height: number } } = {};
 
-    private static _context: CanvasRenderingContext2D;
+    private static _context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
 
     private static _fontDataMap: Map<string, IFontData> = new Map();
 
@@ -68,6 +80,25 @@ export class FontCache {
 
     static get globalFontMeasureCache() {
         return this._globalFontMeasureCache;
+    }
+
+    static invalidateMetrics(matches: (fontStyle: string) => boolean): boolean {
+        let changed = false;
+        const keys = new Set([
+            ...this._globalFontMeasureCache.keys(),
+            ...Object.keys(this._getTextHeightCache),
+            ...this._normalLineHeightCache.keys(),
+        ]);
+        for (const key of keys) {
+            if (matches(key)) {
+                this._globalFontMeasureCache.delete(key);
+                delete this._getTextHeightCache[key];
+                this._normalLineHeightCache.delete(key);
+                this._normalLineHeightCache.delete(getNormalFontKey(key));
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     static setFontMeasureCache(fontStyle: string, content: string, tm: IMeasureTextCache) {
@@ -100,11 +131,10 @@ export class FontCache {
         return this._globalFontMeasureCache.get(fontStyle)?.get(content);
     }
 
-    // 自动清除文字缓存，阈值可调整，清除规则是触发上限后删除一半的缓存
+    // Automatically clear text cache, threshold is adjustable, clear rule is to delete half of the cache after reaching the upper limit
     static autoCleanFontMeasureCache(cacheLimit: number = 1000000) {
         let allSize = 0;
         let isDelete = false;
-        let i = 0;
 
         for (const item of this._globalFontMeasureCache) {
             const [, values] = item;
@@ -113,7 +143,6 @@ export class FontCache {
                 isDelete = true;
                 break;
             }
-            i++;
         }
 
         if (isDelete) {
@@ -123,11 +152,11 @@ export class FontCache {
                 deleteAllSize += values.size;
                 if (deleteAllSize > cacheLimit / 2) {
                     const limit = deleteAllSize - cacheLimit / 2;
-                    this._clearMeasureCache(limit, values); // 如果字体样式下面的文字数量部门超过阈值，则深入内部清除
+                    this._clearMeasureCache(limit, values); // If the number of characters under the font style exceeds the threshold, clear deeply internally
                     break;
                 }
 
-                // 清除整个样式下的字体缓存
+                // Clear font cache under the entire style
                 this._globalFontMeasureCache.delete(key);
             }
 
@@ -168,6 +197,13 @@ export class FontCache {
             return this._getTextHeightCache[fontStyle];
         }
 
+        if (typeof document === 'undefined') {
+            return {
+                width: 0,
+                height: this._getFontSizeFromStyle(fontStyle),
+            };
+        }
+
         let dom = document.getElementById('universheetTextSizeTest');
         const defaultStyle = 'float:left;white-space:nowrap;visibility:hidden;margin:0;padding:0;';
         if (!dom) {
@@ -185,7 +221,55 @@ export class FontCache {
         return result;
     }
 
-    static getTextSize(content: string, fontStyle: IDocumentSkeletonFontStyle): IDocumentSkeletonBoundingBox {
+    /** CSS normal spacing includes font leading that Canvas bounding boxes omit. */
+    static getNormalLineHeight(fontStyle: IDocumentSkeletonFontStyle): number | undefined {
+        const key = getNormalFontKey(fontStyle.fontString);
+        let ratio = this._normalLineHeightCache.get(key);
+        if (ratio == null && typeof document !== 'undefined' && document.body != null) {
+            const element = document.createElement('div');
+            element.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;white-space:pre;margin:0;padding:0;border:0;';
+            element.style.font = key;
+            element.style.lineHeight = 'normal';
+            element.textContent = 'Hg\nHg';
+            document.body.appendChild(element);
+            try {
+                // Measuring large text preserves subpixel font metrics at ordinary document sizes.
+                const height = element.getBoundingClientRect().height / 2000;
+                if (Number.isFinite(height) && height > 0) {
+                    ratio = height;
+                    if (this._normalLineHeightCache.size >= 1024) {
+                        this._normalLineHeightCache.clear();
+                    }
+                    this._normalLineHeightCache.set(key, ratio);
+                }
+            } finally {
+                element.remove();
+            }
+        }
+        return ratio == null ? undefined : ratio * fontStyle.originFontSize;
+    }
+
+    /** Transfers browser-only normal spacing measurements to the document layout Worker. */
+    static getNormalLineHeightCache(): Record<string, number> {
+        return Object.fromEntries(this._normalLineHeightCache);
+    }
+
+    static setNormalLineHeightCache(metrics: Record<string, number>): void {
+        for (const [font, ratio] of Object.entries(metrics)) {
+            if (Number.isFinite(ratio) && ratio > 0) {
+                if (this._normalLineHeightCache.size >= 1024 && !this._normalLineHeightCache.has(font)) {
+                    this._normalLineHeightCache.clear();
+                }
+                this._normalLineHeightCache.set(font, ratio);
+            }
+        }
+    }
+
+    static getTextSize(
+        content: string,
+        fontStyle: IDocumentSkeletonFontStyle,
+        includeNormalFontLeading = false
+    ): IDocumentSkeletonBoundingBox {
         const { fontString, fontSize, fontFamily } = fontStyle;
 
         let bBox = this._getBoundingBoxByFont(fontFamily, fontSize);
@@ -198,24 +282,10 @@ export class FontCache {
             bBox = this._calculateBoundingBoxByMeasureText(measureText, fontStyle);
         }
 
-        return bBox;
-    }
-
-    static getBBoxFromGlyphInfo(glyphInfo: IOpenTypeGlyphInfo, fontStyle: IDocumentSkeletonFontStyle) {
-        const glyph = glyphInfo.glyph!;
-        const font = glyphInfo.font!;
-        const { y1, y2 } = glyphInfo.boundingBox!;
-        const scale = ptToPixel(fontStyle.fontSize) / font.unitsPerEm;
-
-        const { ascender, descender } = font;
-
-        return this._calculateBoundingBoxByMeasureText({
-            width: (glyph.advanceWidth ?? 0) * scale,
-            fontBoundingBoxAscent: ascender * scale,
-            fontBoundingBoxDescent: Math.abs(descender * scale),
-            actualBoundingBoxAscent: y2 * scale,
-            actualBoundingBoxDescent: Math.abs(y1 * scale),
-        }, fontStyle);
+        return {
+            ...bBox,
+            normalLineHeight: (includeNormalFontLeading ? this.getNormalLineHeight(fontStyle) : undefined) ?? bBox.ba + bBox.bd,
+        };
     }
 
     /**
@@ -226,8 +296,7 @@ export class FontCache {
      */
     static getMeasureText(content: string, fontString: string): IMeasureTextCache {
         if (!this._context) {
-            const canvas = document.createElement('canvas');
-            this._context = canvas.getContext('2d')!;
+            this._context = this._createMeasureContext();
         }
         if (!this._context) {
             return {
@@ -266,14 +335,17 @@ export class FontCache {
             actualBoundingBoxDescent,
         };
 
-        // 兼容不支持textMetrics的情况
+        // Compatibility for browsers that do not support textMetrics
         if (
             fontBoundingBoxAscent == null ||
             fontBoundingBoxDescent == null ||
             Number.isNaN(fontBoundingBoxAscent) ||
             Number.isNaN(fontBoundingBoxDescent)
         ) {
-            const oneLineTextHeight = this.getTextSizeByDom(DEFAULT_MEASURE_TEXT, fontString).height;
+            const measuredHeight = actualBoundingBoxAscent + actualBoundingBoxDescent;
+            const oneLineTextHeight = typeof document === 'undefined' && typeof OffscreenCanvas !== 'undefined' && Number.isFinite(measuredHeight) && measuredHeight > 0
+                ? measuredHeight
+                : this.getTextSizeByDom(DEFAULT_MEASURE_TEXT, fontString).height;
 
             if (ctx.textBaseline === 'top') {
                 cache.fontBoundingBoxAscent = cache.actualBoundingBoxAscent = oneLineTextHeight;
@@ -290,6 +362,23 @@ export class FontCache {
         this.setFontMeasureCache(fontString, content, cache);
 
         return cache;
+    }
+
+    private static _createMeasureContext(): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null {
+        if (typeof document !== 'undefined') {
+            return document.createElement('canvas').getContext('2d');
+        }
+
+        if (typeof OffscreenCanvas !== 'undefined') {
+            return new OffscreenCanvas(1, 1).getContext('2d');
+        }
+
+        return null;
+    }
+
+    private static _getFontSizeFromStyle(fontStyle: string): number {
+        const match = /(?:^|\s)(\d+(?:\.\d+)?)px(?:\s|\/|$)/.exec(fontStyle);
+        return match == null ? 0 : Number(match[1]);
     }
 
     private static _clearMeasureCache(limit: number, values: Map<string, IMeasureTextCache>) {

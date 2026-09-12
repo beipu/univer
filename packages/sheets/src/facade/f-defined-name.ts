@@ -16,10 +16,27 @@
 
 import type { ISetDefinedNameMutationParam } from '@univerjs/engine-formula';
 import type { FWorksheet } from './f-worksheet';
-import { generateRandomId, IAuthzIoService, ICommandService, Inject, Injector, IPermissionService, IUniverInstanceService, LocaleService } from '@univerjs/core';
+import {
+    generateRandomId,
+    IAuthzIoService,
+    ICommandService,
+    Inject,
+    Injector,
+    IPermissionService,
+    IUniverInstanceService,
+    LocaleService,
+} from '@univerjs/core';
 import { FBase } from '@univerjs/core/facade';
 import { IDefinedNamesService, IFunctionService, ISuperTableService, serializeRange } from '@univerjs/engine-formula';
-import { RangeProtectionRuleModel, RemoveDefinedNameCommand, SCOPE_WORKBOOK_VALUE_DEFINED_NAME, SetDefinedNameCommand, validateDefinedName, WorksheetProtectionPointModel, WorksheetProtectionRuleModel } from '@univerjs/sheets';
+import {
+    RangeProtectionRuleModel,
+    RemoveDefinedNameCommand,
+    SCOPE_WORKBOOK_VALUE_DEFINED_NAME,
+    SetDefinedNameCommand,
+    validateDefinedName,
+    WorksheetProtectionPointModel,
+    WorksheetProtectionRuleModel,
+} from '@univerjs/sheets';
 
 /**
  * Get defined name field name
@@ -31,18 +48,18 @@ import { RangeProtectionRuleModel, RemoveDefinedNameCommand, SCOPE_WORKBOOK_VALU
 function getDefinedNameFieldName(unitId: string, localeService: LocaleService, definedNamesService: IDefinedNamesService): string {
     const definedNameMap = definedNamesService.getDefinedNameMap(unitId);
     if (definedNameMap == null) {
-        return localeService.t('definedName.defaultName') + 1;
+        return localeService.t('sheets.definedName.defaultName') + 1;
     }
-    const definedNames = Array.from(Object.values(definedNameMap));
+    const definedNames = Object.values(definedNameMap);
     const count = definedNames.length + 1;
-    const name = localeService.t('definedName.defaultName') + count;
+    const name = localeService.t('sheets.definedName.defaultName') + count;
     if (definedNamesService.getValueByName(unitId, name) == null) {
         return name;
     }
 
     let i = count + 1;
     while (true) {
-        const newName = localeService.t('definedName.defaultName') + i;
+        const newName = localeService.t('sheets.definedName.defaultName') + i;
         if (definedNamesService.getValueByName(unitId, newName) == null) {
             return newName;
         }
@@ -90,7 +107,7 @@ export class FDefinedNameBuilder {
 
     /**
      * Sets the formula of the defined name builder.
-     * @param {string }formula The formula of the defined name.
+     * @param {string} formula The formula without the leading `=`; this method prepends it.
      * @returns {FDefinedNameBuilder} The instance of `FDefinedNameBuilder` for method chaining.
      * @example
      * ```ts
@@ -353,7 +370,7 @@ export class FDefinedName extends FBase {
 
     /**
      * Sets the formula of the defined name.
-     * @param {string} formula The formula of the defined name.
+     * @param {string} formula The formula without the leading `=`; this method prepends it.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();

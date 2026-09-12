@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Tableau',
         selectRange: 'Sélectionner la plage du tableau',
         rename: 'Renommer le tableau',
+        renamePlaceholder: 'Saisir le nom du tableau',
         updateRange: 'Mettre à jour la plage du tableau',
         tableRangeWithMergeError: 'La plage du tableau ne peut pas chevaucher des cellules fusionnées',
         tableRangeWithOtherTableError: 'La plage du tableau ne peut pas chevaucher d\'autres tableaux',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'Pied de page',
         firstLine: 'Première ligne',
         secondLine: 'Deuxième ligne',
-        columnPrefix: 'Colonne',
-        tablePrefix: 'Tableau',
         tableNameError: 'Le nom du tableau ne peut pas contenir d\'espaces, ne peut pas commencer par un chiffre et ne peut pas être identique à un nom de tableau existant',
+        columnMenu: {
+            'insert-left': 'Insérer 1 colonne à gauche',
+            'insert-right': 'Insérer 1 colonne à droite',
+            delete: 'Supprimer la colonne du tableau',
+        },
+
+        sort: {
+            'sort-asc': 'Croissant',
+            'sort-desc': 'Décroissant',
+        },
 
         insert: {
             main: 'Insérer un tableau',
@@ -132,12 +141,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'Filtre',
             'by-values': 'Par valeurs',
+            'by-colors': 'Par couleurs',
             'by-conditions': 'Par conditions',
+            back: 'Retour',
+            resize: 'Redimensionner',
+            'filter-by-cell-fill-color': 'Couleur de remplissage de cellule',
+            'filter-by-cell-text-color': 'Couleur du texte de cellule',
+            'filter-by-color-none': 'Cette colonne ne contient qu’une seule couleur',
             'clear-filter': 'Effacer le filtre',
             cancel: 'Annuler',
             confirm: 'Confirmer',
             'search-placeholder': 'Utilisez un espace pour séparer les mots-clés',
+            'input-values-placeholder': 'Saisir des valeurs',
             'select-all': 'Tout sélectionner',
         },
     },

@@ -14,25 +14,35 @@
  * limitations under the License.
  */
 
+import type { IParagraphConfig, ISectionBreakConfig } from '../../../../basics/interfaces';
 import {
     AlignTypeH,
     AlignTypeV,
     BooleanNumber,
+    DataStreamTreeTokenType,
     DocumentFlavor,
     GridType,
     NumberUnitType,
     ObjectRelativeFromH,
     ObjectRelativeFromV,
     SectionType,
+    SpacingRule,
 } from '@univerjs/core';
+
 import { describe, expect, it, vi } from 'vitest';
 import { GlyphType } from '../../../../basics/i-document-skeleton-cached';
+import { getDocumentCompatibilityPolicy } from '../../document-compatibility';
 import {
     clearFontCreateConfigCache,
     columnIterator,
+    compareDocumentSkeletonNestedPagePathOrder,
+    documentSkeletonLineIterator,
+    documentSkeletonTableIterator,
     getCharSpaceApply,
     getCharSpaceConfig,
     getColumnByDivide,
+    getDocumentSkeletonColumnPagePathInfo,
+    getDocumentSkeletonNestedPageOffset,
     getFontConfigFromLastGlyph,
     getFontCreateConfig,
     getGlyphGroupWidth,
@@ -64,6 +74,8 @@ import {
     resetContext,
     setPageParent,
     updateBlockIndex,
+    updateInlineDrawingCoordsAndBorder,
+    updateParagraphBorders,
     validationGrid,
 } from '../tools';
 
@@ -172,6 +184,8 @@ describe('docs layout tools extra', () => {
         expect(isBlankPage({ sections: [{ columns: [{ lines: [blankLine] }] }] } as any)).toBe(true);
 
         expect(getNumberUnitValue(null, 100)).toBe(0);
+        expect(getNumberUnitValue({} as any, 100)).toBe(0);
+        expect(getNumberUnitValue({ v: Number.NaN } as any, 100)).toBe(0);
         expect(getNumberUnitValue({ v: 10, u: NumberUnitType.PIXEL } as any, 100)).toBe(10);
         expect(getNumberUnitValue({ v: 2, u: NumberUnitType.POINT } as any, 10)).toBe(2);
 
@@ -194,6 +208,7 @@ describe('docs layout tools extra', () => {
                 lineSpacing: 0,
                 spacingRule: 0,
                 snapToGrid: BooleanNumber.TRUE,
+                defaultTabStop: 17,
             },
         };
 
@@ -204,10 +219,110 @@ describe('docs layout tools extra', () => {
         const charCfg = getCharSpaceConfig(sectionBreakConfig as any, paragraphConfig as any);
         expect(charCfg).toEqual(expect.objectContaining({
             charSpace: 2,
-            defaultTabStop: 5,
+            defaultTabStop: 17,
             documentFontSize: 11,
         }));
     });
+
+    it('defaults word-style docx paragraphs to snap when the section uses a document grid', () => {
+        const linesAndCharsCfg = getLineHeightConfig({
+            linePitch: 30.46666666666667,
+            gridType: GridType.LINES_AND_CHARS,
+        } as any, {
+            useWordStyleLineHeight: true,
+            paragraphStyle: {
+                lineSpacing: 26.666666666666668,
+                spacingRule: SpacingRule.EXACT,
+            },
+        } as any);
+
+        const linesCfg = getLineHeightConfig({
+            linePitch: 30.46666666666667,
+            gridType: GridType.LINES,
+        } as any, {
+            useWordStyleLineHeight: true,
+            paragraphStyle: {},
+        } as any);
+
+        const charsOnlyCfg = getLineHeightConfig({
+            linePitch: 30.46666666666667,
+            gridType: GridType.SNAP_TO_CHARS,
+        } as any, {
+            useWordStyleLineHeight: true,
+            paragraphStyle: {},
+        } as any);
+
+        expect(linesAndCharsCfg.snapToGrid).toBe(BooleanNumber.TRUE);
+        expect(linesCfg.snapToGrid).toBe(BooleanNumber.TRUE);
+        expect(charsOnlyCfg.snapToGrid).toBe(BooleanNumber.FALSE);
+    });
+
+    it('applies the classic table-grid line-height policy only when enabled', () => {
+        const paragraphConfig = {
+            useWordStyleLineHeight: true,
+            isInsideTable: true,
+            paragraphStyle: {
+                lineSpacing: 1.5,
+                spacingRule: SpacingRule.AUTO,
+            },
+        };
+        const enabled = getLineHeightConfig({
+            linePitch: 20.8,
+            gridType: GridType.LINES,
+            adjustLineHeightInTable: BooleanNumber.TRUE,
+        } as any, paragraphConfig as any);
+        const disabled = getLineHeightConfig({
+            linePitch: 20.8,
+            gridType: GridType.LINES,
+            adjustLineHeightInTable: BooleanNumber.FALSE,
+        } as any, paragraphConfig as any);
+        const body = getLineHeightConfig({
+            linePitch: 20.8,
+            gridType: GridType.LINES,
+            adjustLineHeightInTable: BooleanNumber.FALSE,
+        } as any, { ...paragraphConfig, isInsideTable: false } as any);
+
+        expect({
+            tableWithCompatibility: enabled.snapToGrid,
+            tableWithoutCompatibility: disabled.snapToGrid,
+            bodyWithoutCompatibility: body.snapToGrid,
+        }).toMatchInlineSnapshot(`
+          {
+            "bodyWithoutCompatibility": 1,
+            "tableWithCompatibility": 1,
+            "tableWithoutCompatibility": 0,
+          }
+        `);
+    });
+
+    it('does not activate a line grid when a word-style section only carries line pitch', () => {
+        const lineCfg = getLineHeightConfig({
+            linePitch: 24,
+        } as any, {
+            useWordStyleLineHeight: true,
+            paragraphStyle: {},
+        } as any);
+
+        expect(lineCfg.gridType).toBe(GridType.DEFAULT);
+        expect(lineCfg.snapToGrid).toBe(BooleanNumber.FALSE);
+        expect(lineCfg.lineSpacing).toBe(1);
+    });
+
+    it.each([undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+        'falls back to automatic spacing for invalid fixed line spacing: %s',
+        (lineSpacing) => {
+            const lineCfg = getLineHeightConfig({} as ISectionBreakConfig, {
+                useWordStyleLineHeight: true,
+                paragraphStyle: {
+                    lineSpacing,
+                    spacingRule: SpacingRule.EXACT,
+                },
+            } as IParagraphConfig);
+
+            expect(lineCfg.lineSpacing).toBe(1);
+            expect(lineCfg.spacingRule).toBe(SpacingRule.AUTO);
+        }
+    );
 
     it('updates block index values and iterates skeleton blocks', () => {
         const { page, column } = createPageSkeleton();
@@ -231,6 +346,217 @@ describe('docs layout tools extra', () => {
         expect(columns.length).toBe(1);
     });
 
+    it('anchors a complete paragraph to its model paragraph index when hidden flow tokens create a gap', () => {
+        const { page, line1, divide1, divide2 } = createPageSkeleton();
+        line1.paragraphStart = true;
+        line1.paragraphIndex = 10;
+        const paragraphMark = divide2.glyphGroup[divide2.glyphGroup.length - 1];
+        paragraphMark.raw = DataStreamTreeTokenType.PARAGRAPH;
+        paragraphMark.streamType = DataStreamTreeTokenType.PARAGRAPH;
+
+        updateBlockIndex([page], -1);
+
+        expect(divide1.st).toBe(8);
+        expect(line1.ed).toBe(10);
+    });
+
+    it('uses content width for unspecified editor documents when updating block indexes', () => {
+        const { page, column } = createPageSkeleton();
+
+        updateBlockIndex([page] as any, -1, getDocumentCompatibilityPolicy(DocumentFlavor.UNSPECIFIED));
+
+        expect(column.width).toBe(13);
+        expect(page.width).toBe(13);
+    });
+
+    it('keeps layout column width when updating block indexes without a policy', () => {
+        const { page, column } = createPageSkeleton();
+
+        updateBlockIndex([page] as any, -1);
+
+        expect(column.width).toBe(200);
+        expect(page.width).toBe(200);
+    });
+
+    it('keeps layout column width for traditional documents when updating block indexes', () => {
+        const { page, column } = createPageSkeleton();
+
+        updateBlockIndex([page] as any, -1, getDocumentCompatibilityPolicy(DocumentFlavor.TRADITIONAL));
+
+        expect(column.width).toBe(200);
+        expect(page.width).toBe(200);
+    });
+
+    it('copies paragraph background color to the rendered line', () => {
+        const { page, line1 } = createPageSkeleton();
+        const paragraphMark = {
+            streamType: DataStreamTreeTokenType.PARAGRAPH,
+            count: 1,
+            glyphType: GlyphType.WORD,
+            width: 0,
+            bBox: { ba: 0, bd: 0 },
+            xOffset: 0,
+        };
+        line1.divides = [{
+            glyphGroup: [paragraphMark],
+        }];
+        const ctx = {
+            paragraphConfigCache: new Map([[
+                undefined,
+                new Map([[
+                    0,
+                    {
+                        paragraphStyle: {
+                            shading: {
+                                backgroundColor: { rgb: '#ffffff' },
+                            },
+                        },
+                    },
+                ]]),
+            ]]),
+        };
+
+        updateInlineDrawingCoordsAndBorder(ctx as any, [page] as any);
+
+        expect(line1.backgroundColor).toEqual({ rgb: '#ffffff' });
+    });
+
+    it('copies every paragraph border without relying on a terminal paragraph glyph', () => {
+        const { page, line1 } = createPageSkeleton();
+        line1.paragraphStart = true;
+        line1.paragraphIndex = 10;
+        line1.ed = 10;
+        const paragraphStyle = {
+            borderTop: { color: { rgb: '#111111' }, width: 1, padding: 1 },
+            borderBottom: { color: { rgb: '#222222' }, width: 2, padding: 2 },
+            borderLeft: { color: { rgb: '#333333' }, width: 3, padding: 3 },
+            borderRight: { color: { rgb: '#444444' }, width: 4, padding: 4 },
+        };
+        const ctx = {
+            paragraphConfigCache: new Map([[
+                undefined,
+                new Map([[10, { paragraphStyle }]]),
+            ]]),
+        };
+
+        updateInlineDrawingCoordsAndBorder(ctx as any, [page] as any);
+
+        expect(line1).toMatchObject(paragraphStyle);
+    });
+
+    it('uses the between border only between adjacent paragraphs with matching border sets', () => {
+        const { page, line1, line2 } = createPageSkeleton();
+        line1.paragraphStart = true;
+        line1.paragraphIndex = 10;
+        line1.ed = 10;
+        line2.paragraphStart = true;
+        line2.paragraphIndex = 20;
+        line2.ed = 20;
+        const paragraphStyle = {
+            borderTop: { color: { rgb: '#111111' }, width: 1, padding: 1 },
+            borderBottom: { color: { rgb: '#222222' }, width: 2, padding: 2 },
+            borderLeft: { color: { rgb: '#333333' }, width: 3, padding: 3 },
+            borderRight: { color: { rgb: '#444444' }, width: 4, padding: 4 },
+            borderBetween: { color: { rgb: '#555555' }, width: 5, padding: 5 },
+        };
+        const ctx = {
+            paragraphConfigCache: new Map([[
+                undefined,
+                new Map([
+                    [10, { paragraphStyle }],
+                    [20, { paragraphStyle }],
+                ]),
+            ]]),
+        };
+
+        updateInlineDrawingCoordsAndBorder(ctx as any, [page] as any);
+
+        expect(line1.borderTop).toEqual(paragraphStyle.borderTop);
+        expect(line1.borderBetween).toEqual(paragraphStyle.borderBetween);
+        expect(line1.borderBottom).toBeUndefined();
+        expect(line2.borderTop).toBeUndefined();
+        expect(line2.borderBetween).toBeUndefined();
+        expect(line2.borderBottom).toEqual(paragraphStyle.borderBottom);
+    });
+
+    it('uses cached border styles at retained and reused page boundaries', () => {
+        const previous = createPageSkeleton();
+        const current = createPageSkeleton();
+        const next = createPageSkeleton();
+        const pages = [previous, current, next].map(({ page, column, line1 }) => {
+            column.lines = [line1];
+            return page;
+        });
+        const lines = [previous.line1, current.line1, next.line1];
+        const paragraphStyle = {
+            borderTop: { color: { rgb: '#111111' }, width: 1, padding: 1 },
+            borderBottom: { color: { rgb: '#222222' }, width: 2, padding: 2 },
+            borderBetween: { color: { rgb: '#555555' }, width: 5, padding: 5 },
+        };
+        lines.forEach((line, index) => {
+            line.paragraphStart = true;
+            line.paragraphIndex = (index + 1) * 10;
+            line.ed = line.paragraphIndex;
+            line.paragraphBorders = paragraphStyle;
+        });
+        const ctx = {
+            paragraphConfigCache: new Map([[
+                undefined,
+                new Map([[20, { paragraphStyle }]]),
+            ]]),
+        };
+
+        updateParagraphBorders(ctx as any, pages as any);
+
+        expect(previous.line1.borderTop).toEqual(paragraphStyle.borderTop);
+        expect(previous.line1.borderBetween).toEqual(paragraphStyle.borderBetween);
+        expect(current.line1.borderTop).toBeUndefined();
+        expect(current.line1.borderBetween).toEqual(paragraphStyle.borderBetween);
+        expect(next.line1.borderTop).toBeUndefined();
+        expect(next.line1.borderBottom).toEqual(paragraphStyle.borderBottom);
+    });
+
+    it('updates only cross-boundary attachments on context pages', () => {
+        const previous = createPageSkeleton();
+        const current = createPageSkeleton();
+        const next = createPageSkeleton();
+        const pages = [previous, current, next].map(({ page, column, line1 }) => {
+            column.lines = [line1];
+            return page;
+        });
+        const lines = [previous.line1, current.line1, next.line1];
+        const paragraphStyle = {
+            borderTop: { color: { rgb: '#111111' }, width: 1, padding: 1 },
+            borderBottom: { color: { rgb: '#222222' }, width: 2, padding: 2 },
+            borderBetween: { color: { rgb: '#555555' }, width: 5, padding: 5 },
+        };
+        lines.forEach((line, index) => {
+            line.paragraphStart = true;
+            line.paragraphIndex = (index + 1) * 10;
+            line.ed = line.paragraphIndex;
+            line.paragraphBorders = paragraphStyle;
+        });
+        const previousTop = { color: { rgb: '#aaaaaa' }, width: 6, padding: 6 };
+        const nextBottom = { color: { rgb: '#bbbbbb' }, width: 7, padding: 7 };
+        previous.line1.borderTop = previousTop;
+        next.line1.borderBottom = nextBottom;
+        const ctx = {
+            paragraphConfigCache: new Map([[
+                undefined,
+                new Map([[20, { paragraphStyle }]]),
+            ]]),
+        };
+
+        updateParagraphBorders(ctx as any, pages as any, [current.page] as any);
+
+        expect(previous.line1.borderTop).toBe(previousTop);
+        expect(previous.line1.borderBetween).toEqual(paragraphStyle.borderBetween);
+        expect(current.line1.borderTop).toBeUndefined();
+        expect(current.line1.borderBetween).toEqual(paragraphStyle.borderBetween);
+        expect(next.line1.borderTop).toBeUndefined();
+        expect(next.line1.borderBottom).toBe(nextBottom);
+    });
+
     it('computes horizontal and vertical positioned object coordinates', () => {
         const { page, column } = createPageSkeleton();
 
@@ -248,6 +574,21 @@ describe('docs layout tools extra', () => {
             relativeFrom: ObjectRelativeFromH.COLUMN,
             posOffset: 50,
         } as any, column as any, page as any, 20)).toBe(60);
+
+        expect(getPositionHorizon({
+            relativeFrom: ObjectRelativeFromH.COLUMN,
+            posOffset: 0,
+        } as any, column as any, page as any, 20)).toBe(10);
+
+        expect(getPositionHorizon({
+            relativeFrom: ObjectRelativeFromH.MARGIN,
+            posOffset: 50,
+        } as any, column as any, page as any, 20)).toBe(70);
+
+        expect(getPositionHorizon({
+            relativeFrom: ObjectRelativeFromH.COLUMN,
+            posOffset: -603.2,
+        } as any, column as any, page as any, 1895.68)).toBeCloseTo(-593.2);
 
         expect(getPositionHorizon({
             relativeFrom: ObjectRelativeFromH.PAGE,
@@ -297,7 +638,7 @@ describe('docs layout tools extra', () => {
         expect(fromLastGlyph.charSpace).toBe(1);
 
         const viewModel = {
-            getTextRun: vi.fn(() => ({ st: 0, ed: 10, ts: { fs: 12, ff: 'Arial' } })),
+            getTextRun: vi.fn(() => ({ st: 0, ed: 10, ts: { fs: 12, ff: 'Arial', eastAsiaFontFamily: '宋体' } })),
             getCustomDecoration: vi.fn(() => null),
             getCustomRange: vi.fn(() => null),
             getDataModel: vi.fn(() => ({
@@ -322,6 +663,7 @@ describe('docs layout tools extra', () => {
         const config1 = getFontCreateConfig(0, viewModel as any, paragraphNode as any, sectionBreakConfig as any, paragraph as any);
         const config2 = getFontCreateConfig(0, viewModel as any, paragraphNode as any, sectionBreakConfig as any, paragraph as any);
         expect(config1).toBe(config2);
+        expect(config1.fontStyle.fontFamily).toBe('Arial, 宋体');
 
         const configWithBullet = getFontCreateConfig(
             0,
@@ -331,6 +673,15 @@ describe('docs layout tools extra', () => {
             { paragraphStyle: {}, bullet: { listType: 'bullet' } } as any
         );
         expect(configWithBullet.textStyle.bl).toBe(1);
+
+        const configWithMissingBulletList = getFontCreateConfig(
+            0,
+            viewModel as any,
+            paragraphNode as any,
+            sectionBreakConfig as any,
+            { paragraphStyle: {}, bullet: { listType: 'missing' } } as any
+        );
+        expect(configWithMissingBulletList.textStyle.bl).toBeUndefined();
     });
 
     it('creates default skeleton, prepares section config, and resolves page paths', () => {
@@ -341,6 +692,8 @@ describe('docs layout tools extra', () => {
 
         const ctx = {
             docsConfig: { locale: 'zh-CN' },
+            modernPageWidth: 390,
+            modernHorizontalMargin: 20,
             viewModel: {
                 getChildren: () => [{ endIndex: 9 }, { endIndex: 19 }],
                 getSectionBreak: vi.fn((endIndex: number) => {
@@ -351,6 +704,12 @@ describe('docs layout tools extra', () => {
                             marginLeft: 30,
                             marginRight: 40,
                             renderConfig: { isRenderStyle: BooleanNumber.TRUE },
+                            defaultHeaderId: 'section-header',
+                            defaultFooterId: 'section-footer',
+                            evenPageHeaderId: 'section-even-header',
+                            evenPageFooterId: 'section-even-footer',
+                            firstPageHeaderId: 'section-first-header',
+                            firstPageFooterId: 'section-first-footer',
                         };
                     }
                     return { sectionType: SectionType.CONTINUOUS };
@@ -365,15 +724,37 @@ describe('docs layout tools extra', () => {
                     marginTop: 20,
                     marginBottom: 20,
                     renderConfig: {},
+                    defaultHeaderId: 'document-header',
+                    defaultFooterId: 'document-footer',
                 },
             },
         };
 
         const sectionConfig = prepareSectionBreakConfig(ctx as any, 0);
-        expect(sectionConfig.pageSize?.width).toBeGreaterThan(0);
-        expect(sectionConfig.headerIds).toEqual(expect.objectContaining({
-            defaultHeaderId: expect.any(String),
-        }));
+        expect(sectionConfig.pageSize?.width).toBe(390);
+        expect(sectionConfig.marginLeft).toBe(20);
+        expect(sectionConfig.marginRight).toBe(20);
+        expect(sectionConfig.headerIds).toEqual({
+            defaultHeaderId: '',
+            evenPageHeaderId: '',
+            firstPageHeaderId: '',
+        });
+        expect(sectionConfig.footerIds).toEqual({
+            defaultFooterId: '',
+            evenPageFooterId: '',
+            firstPageFooterId: '',
+        });
+        expect(sectionConfig.evenAndOddHeaders).toBe(BooleanNumber.FALSE);
+        expect(sectionConfig.useFirstPageHeaderFooter).toBe(BooleanNumber.FALSE);
+
+        const desktopSectionConfig = prepareSectionBreakConfig({
+            ...ctx,
+            modernPageWidth: undefined,
+            modernHorizontalMargin: undefined,
+        } as any, 0);
+        expect(desktopSectionConfig.pageSize?.width).toBe(800);
+        expect(desktopSectionConfig.marginLeft).toBe(30);
+        expect(desktopSectionConfig.marginRight).toBe(40);
 
         const dirtyCtx = {
             isDirty: true,
@@ -389,6 +770,7 @@ describe('docs layout tools extra', () => {
         expect((mergedMin as any).a.v).toBe(3);
 
         const pageCell = { id: 'cell-page' };
+        const columnPage = { id: 'column-page' };
         const root = {
             pages: [
                 {
@@ -396,10 +778,476 @@ describe('docs layout tools extra', () => {
                     skeTables: new Map([
                         ['t1', { rows: [{ cells: [pageCell] }] }],
                     ]),
+                    skeColumnGroups: new Map([
+                        ['cg1', { columns: [{ page: columnPage }] }],
+                    ]),
                 },
             ],
         };
         expect(getPageFromPath(root as any, ['pages', 0])).toBe(root.pages[0]);
         expect(getPageFromPath(root as any, ['pages', 0, 'skeTables', 't1', 'rows', 0, 'cells', 0])).toBe(pageCell);
+        expect(getPageFromPath(root as any, ['pages', 0, 'skeColumnGroups', 'cg1', 'columns', 0, 'page'])).toBe(columnPage);
+        expect(getPageFromPath(root as any, ['skeTables', 't1', 'rows', 0, 'cells', 0])).toBeNull();
+    });
+
+    it('DOCX golden e2e inherits header and footer references from the previous traditional section', () => {
+        const sections = [
+            { sectionId: 'section_1', defaultHeaderId: 'header-section-1' },
+            { sectionId: 'section_2' },
+        ];
+        const ctx = {
+            docsConfig: {},
+            viewModel: {
+                getChildren: () => [{ endIndex: 4 }, { endIndex: 9 }],
+                getSectionBreak: (endIndex: number) => endIndex === 4 ? sections[0] : sections[1],
+            },
+            dataModel: {
+                documentStyle: {
+                    documentFlavor: DocumentFlavor.TRADITIONAL,
+                    defaultHeaderId: 'header-global',
+                },
+            },
+        };
+
+        expect(prepareSectionBreakConfig(ctx as any, 1).headerIds?.defaultHeaderId).toBe('header-section-1');
+    });
+
+    it('DOCX golden e2e does not inherit the title-page flag into a traditional section', () => {
+        const sections = [
+            { sectionId: 'cover', useFirstPageHeaderFooter: BooleanNumber.TRUE },
+            { sectionId: 'body' },
+        ];
+        const ctx = {
+            docsConfig: {},
+            viewModel: {
+                getChildren: () => [{ endIndex: 4 }, { endIndex: 9 }],
+                getSectionBreak: (endIndex: number) => endIndex === 4 ? sections[0] : sections[1],
+            },
+            dataModel: {
+                documentStyle: {
+                    documentFlavor: DocumentFlavor.TRADITIONAL,
+                    useFirstPageHeaderFooter: BooleanNumber.TRUE,
+                },
+            },
+        };
+
+        expect(prepareSectionBreakConfig(ctx as any, 0).useFirstPageHeaderFooter).toBe(BooleanNumber.TRUE);
+        expect(prepareSectionBreakConfig(ctx as any, 1).useFirstPageHeaderFooter).toBe(BooleanNumber.FALSE);
+    });
+
+    it('keeps a traditional section without an explicit grid off the line grid', () => {
+        const ctx = {
+            docsConfig: {},
+            viewModel: {
+                getChildren: () => [{ endIndex: 4 }],
+                getSectionBreak: () => ({ sectionId: 'section_1', linePitch: 24 }),
+            },
+            dataModel: {
+                documentStyle: {
+                    documentFlavor: DocumentFlavor.TRADITIONAL,
+                    linePitch: 24,
+                },
+            },
+        };
+
+        const sectionConfig = prepareSectionBreakConfig(ctx as any, 0);
+        expect(sectionConfig.linePitch).toBe(24);
+        expect(sectionConfig.gridType).toBe(GridType.DEFAULT);
+    });
+
+    it('iterates document skeleton lines with nested table and column layout context', () => {
+        const page = {
+            marginLeft: 60,
+            marginRight: 40,
+            marginTop: 10,
+            pageHeight: 800,
+            pageWidth: 600,
+            sections: [createLineSection(1, 5, 100)],
+            skeTables: new Map([['table-1', {
+                tableId: 'table-1',
+                left: 100,
+                top: 40,
+                width: 300,
+                rows: [{
+                    top: 0,
+                    cells: [{
+                        left: 20,
+                        marginLeft: 3,
+                        marginRight: 2,
+                        marginTop: 4,
+                        pageWidth: 200,
+                        sections: [createLineSection(2, 7, 80)],
+                    }],
+                }],
+            }]]),
+            skeColumnGroups: new Map([['column-group-1', {
+                columnGroupId: 'column-group-1',
+                left: 20,
+                top: 120,
+                columns: [{
+                    left: 200,
+                    top: 0,
+                    width: 300,
+                    page: {
+                        marginLeft: 0,
+                        marginRight: 0,
+                        marginTop: 0,
+                        pageHeight: 80,
+                        pageWidth: 160,
+                        sections: [createLineSection(3, 10, 120)],
+                    },
+                }],
+            }]]),
+        };
+
+        const contexts: unknown[] = [];
+        documentSkeletonLineIterator([page as any], {
+            docsLeft: 0,
+            pageMarginTop: 30,
+            tableCellInsetX: 6,
+            unitId: 'doc-1',
+        }, (context) => contexts.push({
+            paragraphIndex: context.line.paragraphIndex,
+            pageIndex: context.pageIndex,
+            pageLeft: context.pageLeft,
+            sectionTop: context.sectionTop,
+            source: context.source,
+            visualLeft: context.visualLeft,
+            visualWidth: context.visualWidth,
+            clipLeft: context.clipLeft,
+            clipRight: context.clipRight,
+        }));
+
+        expect(contexts).toEqual([
+            {
+                clipLeft: undefined,
+                clipRight: undefined,
+                pageIndex: 0,
+                pageLeft: 60,
+                paragraphIndex: 1,
+                sectionTop: 10,
+                source: 'page',
+                visualLeft: 65,
+                visualWidth: 495,
+            },
+            {
+                clipLeft: 160,
+                clipRight: 378,
+                pageIndex: 0,
+                pageLeft: 183,
+                paragraphIndex: 2,
+                sectionTop: 54,
+                source: 'table-cell',
+                visualLeft: 189,
+                visualWidth: 183,
+            },
+            {
+                clipLeft: undefined,
+                clipRight: undefined,
+                pageIndex: 0,
+                pageLeft: 280,
+                paragraphIndex: 3,
+                sectionTop: 130,
+                source: 'column',
+                visualLeft: 290,
+                visualWidth: 290,
+            },
+        ]);
+    });
+
+    it('iterates top-level and column nested tables with document geometry', () => {
+        const page = {
+            marginLeft: 60,
+            marginRight: 40,
+            marginTop: 10,
+            pageHeight: 800,
+            pageWidth: 600,
+            sections: [createLineSection(1, 5, 100)],
+            skeTables: new Map([['table-1', {
+                tableId: 'table-1',
+                left: 100,
+                top: 40,
+                width: 300,
+                height: 44,
+                rows: [{
+                    top: 0,
+                    height: 44,
+                    index: 0,
+                    cells: [{
+                        left: 20,
+                        marginLeft: 3,
+                        marginRight: 2,
+                        marginTop: 4,
+                        marginBottom: 5,
+                        pageWidth: 200,
+                        pageHeight: 44,
+                        sections: [createLineSection(2, 7, 80)],
+                    }],
+                }],
+            }]]),
+            skeColumnGroups: new Map([['column-group-1', {
+                columnGroupId: 'column-group-1',
+                left: 20,
+                top: 120,
+                columns: [{
+                    left: 200,
+                    top: 8,
+                    width: 300,
+                    page: {
+                        marginLeft: 4,
+                        marginRight: 6,
+                        marginTop: 6,
+                        pageHeight: 80,
+                        pageWidth: 160,
+                        sections: [createLineSection(3, 10, 120)],
+                        skeTables: new Map([['nested-table-1', {
+                            tableId: 'nested-table-1',
+                            left: 12,
+                            top: 14,
+                            width: 120,
+                            height: 36,
+                            rows: [{
+                                top: 0,
+                                height: 36,
+                                index: 0,
+                                cells: [{
+                                    left: 10,
+                                    marginLeft: 2,
+                                    marginRight: 3,
+                                    marginTop: 5,
+                                    marginBottom: 4,
+                                    pageWidth: 60,
+                                    pageHeight: 36,
+                                    sections: [createLineSection(4, 9, 50)],
+                                }],
+                            }],
+                        }]]),
+                    },
+                }],
+            }]]),
+        };
+
+        const tables = Array.from(documentSkeletonTableIterator([page as any], {
+            docsLeft: 7,
+            docsTop: 9,
+            pageMarginTop: 30,
+            tableCellInsetX: 6,
+            unitId: 'doc-1',
+        }));
+
+        expect(tables.map((context) => ({
+            cells: context.cells.map((cell) => ({
+                cellRect: cell.cellRect,
+                clipLeft: cell.clipLeft,
+                clipRight: cell.clipRight,
+                visualLeft: cell.visualLeft,
+                visualWidth: cell.visualWidth,
+            })),
+            pageIndex: context.pageIndex,
+            source: context.source,
+            tableId: context.table.tableId,
+            tableRect: context.tableRect,
+        }))).toEqual([
+            {
+                cells: [{
+                    cellRect: { bottom: 98, left: 190, right: 385, top: 63 },
+                    clipLeft: 167,
+                    clipRight: 385,
+                    visualLeft: 196,
+                    visualWidth: 183,
+                }],
+                pageIndex: 0,
+                source: 'page',
+                tableId: 'table-1',
+                tableRect: { bottom: 103, left: 167, right: 467, top: 59 },
+            },
+            {
+                cells: [{
+                    cellRect: { bottom: 199, left: 315, right: 370, top: 172 },
+                    clipLeft: 303,
+                    clipRight: 370,
+                    visualLeft: 321,
+                    visualWidth: 43,
+                }],
+                pageIndex: 0,
+                source: 'column',
+                tableId: 'nested-table-1',
+                tableRect: { bottom: 203, left: 303, right: 423, top: 167 },
+            },
+        ]);
+    });
+
+    it('iterates header tables with the root page margins and header content offset', () => {
+        const header = {
+            height: 80,
+            marginBottom: 5,
+            marginLeft: 0,
+            marginRight: 0,
+            marginTop: 24,
+            pageHeight: 100,
+            pageWidth: 440,
+            sections: [],
+            skeTables: new Map([['header-table-1', {
+                tableId: 'header-table-1',
+                height: 30,
+                left: 0,
+                rows: [],
+                top: 0,
+                width: 120,
+            }]]),
+        };
+        const page = {
+            footerId: 'footer-1',
+            headerId: 'header-1',
+            marginBottom: 100,
+            marginLeft: 80,
+            marginRight: 80,
+            marginTop: 100,
+            pageHeight: 600,
+            pageWidth: 600,
+            sections: [],
+            skeTables: new Map(),
+        };
+
+        const tables = Array.from(documentSkeletonTableIterator([page as any], {
+            docsLeft: 10,
+            docsTop: 20,
+            skeHeaders: new Map([['header-1', new Map([[600, header as any]])]]),
+        }));
+
+        expect(tables.map((context) => ({
+            pageIndex: context.pageIndex,
+            pageLeft: context.pageLeft,
+            pageTop: context.pageTop,
+            source: context.source,
+            tableId: context.tableId,
+            tableRect: context.tableRect,
+        }))).toEqual([{
+            pageIndex: 0,
+            pageLeft: 90,
+            pageTop: 44,
+            source: 'header',
+            tableId: 'header-table-1',
+            tableRect: {
+                bottom: 74,
+                left: 90,
+                right: 210,
+                top: 44,
+            },
+        }]);
+    });
+
+    it('uses the accumulated height of preceding pages for table coordinates', () => {
+        const createPageWithTable = (pageHeight: number, tableId: string) => {
+            const { page } = createPageSkeleton();
+            page.marginBottom = 20;
+            page.marginLeft = 30;
+            page.marginRight = 30;
+            page.marginTop = 20;
+            page.pageHeight = pageHeight;
+            page.pageWidth = 300;
+            page.sections = [];
+            page.skeTables = new Map([[tableId, {
+                tableId,
+                height: 30,
+                left: 10,
+                rows: [],
+                top: 15,
+                width: 100,
+            }]]);
+            return page;
+        };
+
+        const tables = documentSkeletonTableIterator([
+            createPageWithTable(400, 'short-page-table'),
+            createPageWithTable(700, 'tall-page-table'),
+        ], {
+            docsTop: 8,
+            pageMarginTop: 12,
+        });
+
+        expect(tables.map(({ pageIndex, tableId, tableRect }) => ({
+            pageIndex,
+            tableId,
+            top: tableRect.top,
+        }))).toEqual([
+            { pageIndex: 0, tableId: 'short-page-table', top: 43 },
+            { pageIndex: 1, tableId: 'tall-page-table', top: 455 },
+        ]);
+    });
+
+    it('resolves column child page offsets from skeleton parents', () => {
+        const columnPage = {};
+        const column = {
+            left: 60,
+            page: columnPage,
+            top: 4,
+        };
+        const columnGroup = {
+            columnGroupId: 'cg-1',
+            columns: [column],
+            left: 20,
+            top: 30,
+        };
+        (columnPage as { parent?: unknown }).parent = column;
+        (column as { parent?: unknown }).parent = columnGroup;
+
+        expect(getDocumentSkeletonNestedPageOffset(columnPage as never)).toEqual({
+            left: 80,
+            top: 34,
+        });
+        expect(getDocumentSkeletonNestedPageOffset({ parent: { cells: [] } } as never)).toBeUndefined();
+    });
+
+    it('compares nested column page paths within the same column group', () => {
+        const firstColumn = {
+            path: ['pages', 0, 'skeColumnGroups', 'cg-1', 'columns', 0, 'page'],
+        };
+        const secondColumn = {
+            path: ['pages', 0, 'skeColumnGroups', 'cg-1', 'columns', 1, 'page'],
+        };
+        const otherGroup = {
+            path: ['pages', 0, 'skeColumnGroups', 'cg-2', 'columns', 0, 'page'],
+        };
+        const body = {
+            path: ['pages', 0],
+        };
+
+        expect(compareDocumentSkeletonNestedPagePathOrder(firstColumn as never, secondColumn as never)).toBe(true);
+        expect(compareDocumentSkeletonNestedPagePathOrder(secondColumn as never, firstColumn as never)).toBe(false);
+        expect(compareDocumentSkeletonNestedPagePathOrder(firstColumn as never, otherGroup as never)).toBeUndefined();
+        expect(compareDocumentSkeletonNestedPagePathOrder(firstColumn as never, body as never)).toBeUndefined();
+    });
+
+    it('parses nested column page paths through one shared helper', () => {
+        expect(getDocumentSkeletonColumnPagePathInfo({
+            path: ['pages', 2, 'skeColumnGroups', 'cg-1', 'columns', 3, 'page'],
+        })).toEqual({
+            columnGroupId: 'cg-1',
+            columnIndex: 3,
+            pageIndex: 2,
+        });
+        expect(getDocumentSkeletonColumnPagePathInfo({
+            path: ['pages', 2, 'skeTables', 'table-1', 'rows', 0, 'cells', 0],
+        })).toBeUndefined();
     });
 });
+
+function createLineSection(paragraphIndex: number, columnLeft: number, columnWidth: number) {
+    return {
+        top: 0,
+        columns: [{
+            left: columnLeft,
+            width: columnWidth,
+            lines: [{
+                lineHeight: 24,
+                marginBottom: 0,
+                marginTop: 0,
+                paddingBottom: 0,
+                paddingTop: 0,
+                paragraphIndex,
+                top: 0,
+            }],
+        }],
+    };
+}

@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { BaselineOffset, BooleanNumber, HorizontalAlign, VerticalAlign, WrapStrategy } from '../../types/enum';
-import { CustomRangeType } from '../../types/interfaces';
+import { CustomRangeType, DocumentFlavor } from '../../types/interfaces';
 import {
     addLinkToDocumentModel,
     createDocumentModelWithStyle,
@@ -41,13 +41,21 @@ describe('sheet util helpers', () => {
         expect(documentModel.getBody()).toMatchObject({
             dataStream: 'Cell\r\n',
             textRuns: [{ st: 0, ed: 4, ts: { ff: 'Inter', fs: 12, va: BaselineOffset.SUPERSCRIPT } }],
-            paragraphs: [{ startIndex: 4, paragraphStyle: { horizontalAlign: HorizontalAlign.CENTER } }],
+            paragraphs: [{
+                startIndex: 4,
+                paragraphId: expect.stringMatching(/^para_/),
+                paragraphStyle: { horizontalAlign: HorizontalAlign.CENTER },
+            }],
         });
         expect(documentModel.getSnapshot().documentStyle).toMatchObject({
+            textStyle: { ff: 'Inter', fs: 12, va: BaselineOffset.SUPERSCRIPT },
+            defaultParagraphStyle: { horizontalAlign: HorizontalAlign.CENTER },
             marginTop: 1,
             marginRight: 4,
             marginBottom: 3,
             marginLeft: 2,
+            documentFlavor: DocumentFlavor.UNSPECIFIED,
+            paragraphLineGapDefault: 0,
             renderConfig: {
                 horizontalAlign: HorizontalAlign.CENTER,
                 verticalAlign: VerticalAlign.MIDDLE,
@@ -57,6 +65,19 @@ describe('sheet util helpers', () => {
             },
         });
         expect(documentModel.getDrawingsOrder()).toEqual([]);
+    });
+
+    it('should fill missing cell padding sides with defaults when creating document models', () => {
+        const documentModel = createDocumentModelWithStyle('March 5', {}, {
+            paddingData: { l: 5 },
+        });
+
+        expect(documentModel.getSnapshot().documentStyle).toMatchObject({
+            marginTop: 0,
+            marginRight: 2,
+            marginBottom: 2,
+            marginLeft: 5,
+        });
     });
 
     it('should extract cell style fragments and enrich document links once', () => {

@@ -14,11 +14,20 @@
  * limitations under the License.
  */
 
-import type { ITextRange, Nullable } from '@univerjs/core';
-import type { Documents, DocumentSkeleton, IDocumentSkeletonGlyph, INodePosition, IPoint, ISuccinctDocRangeParam, ITextSelectionStyle, Scene } from '@univerjs/engine-render';
+import type { IColorStyle, ITextRange, Nullable } from '@univerjs/core';
+import type {
+    Documents,
+    DocumentSkeleton,
+    IDocumentSkeletonGlyph,
+    INodePosition,
+    IPoint,
+    ISuccinctDocRangeParam,
+    ITextSelectionStyle,
+    Scene,
+} from '@univerjs/engine-render';
 import type { IDocRange } from './range-interface';
-import { BooleanNumber, COLORS, DOC_RANGE_TYPE, generateRandomId, RANGE_DIRECTION } from '@univerjs/core';
-import { getColor, NORMAL_TEXT_SELECTION_PLUGIN_STYLE, Rect, RegularPolygon } from '@univerjs/engine-render';
+import { BooleanNumber, ColorKit, COLORS, DOC_RANGE_TYPE, generateRandomId, getColorStyle, RANGE_DIRECTION } from '@univerjs/core';
+import { DocumentSkeletonPageType, getColor, NORMAL_TEXT_SELECTION_PLUGIN_STYLE, Rect, RegularPolygon } from '@univerjs/engine-render';
 import {
     compareNodePosition,
     compareNodePositionLogic,
@@ -33,6 +42,7 @@ const TEXT_ANCHOR_KEY_PREFIX = '__TestSelectionAnchor__';
 const ID_LENGTH = 6;
 const BLINK_ON = 500;
 const BLINK_OFF = 500;
+const DEFAULT_CARET_COLOR = 'gray.1000';
 
 export const TEXT_RANGE_LAYER_INDEX = 3;
 
@@ -111,6 +121,7 @@ export class TextRange implements IDocRange {
     private _cursorList: ITextRange[] = [];
 
     private _anchorBlinkTimer: Nullable<ReturnType<typeof setInterval>> = null;
+    private _anchorActiveStroke = DEFAULT_CARET_COLOR;
 
     constructor(
         private _scene: Scene,
@@ -156,7 +167,7 @@ export class TextRange implements IDocRange {
             .getViewModel()
             .getDataModel()
             .getSelfOrHeaderFooterModel(this._segmentId)
-            .getBody();
+            ?.getBody();
 
         if (startOffset == null || body == null) {
             return startOffset;
@@ -174,7 +185,7 @@ export class TextRange implements IDocRange {
             .getViewModel()
             .getDataModel()
             .getSelfOrHeaderFooterModel(this._segmentId)
-            .getBody();
+            ?.getBody();
 
         if (endOffset == null || body == null) {
             return endOffset;
@@ -292,7 +303,7 @@ export class TextRange implements IDocRange {
 
     activeStatic() {
         this._anchorShape?.setProps({
-            stroke: this.style?.strokeActive || getColor(COLORS.black, 1),
+            stroke: this._anchorActiveStroke,
         });
     }
 
@@ -308,10 +319,19 @@ export class TextRange implements IDocRange {
 
     activate() {
         this._current = true;
+
+        if (this._isCollapsed()) {
+            this._anchorShape?.show();
+            this.activeStatic();
+        }
     }
 
     deactivate() {
         this._current = false;
+
+        if (this._isCollapsed()) {
+            this._anchorShape?.hide();
+        }
     }
 
     dispose() {
@@ -451,6 +471,7 @@ export class TextRange implements IDocRange {
         let left = boundingLeft + docsLeft;
         const top = boundingTop + docsTop;
         const isItalic = glyph?.ts?.it === BooleanNumber.TRUE;
+        this._anchorActiveStroke = this._getAnchorActiveStroke(glyph);
 
         if (isItalic) {
             left += height * Math.tan((ITALIC_DEGREE * Math.PI) / 180) / 2;
@@ -465,6 +486,7 @@ export class TextRange implements IDocRange {
             } else {
                 this._anchorShape.skew(0, 0);
             }
+            this.activeStatic();
 
             return;
         }
@@ -474,7 +496,7 @@ export class TextRange implements IDocRange {
             top,
             height,
             strokeWidth: this.style?.strokeWidth || 1,
-            stroke: this.style?.strokeActive || getColor(COLORS.black, 1),
+            stroke: this._anchorActiveStroke,
             evented: false,
         });
 
@@ -485,6 +507,44 @@ export class TextRange implements IDocRange {
         this._anchorShape = anchor;
         this._scene.addObject(anchor, TEXT_RANGE_LAYER_INDEX);
         this.activeStatic();
+    }
+
+    private _getAnchorActiveStroke(glyph: Nullable<IDocumentSkeletonGlyph>): string {
+        if (this.style?.strokeActive && this.style.strokeActive !== NORMAL_TEXT_SELECTION_PLUGIN_STYLE.strokeActive) {
+            return this.style.strokeActive;
+        }
+
+        const colorService = this._scene.getEngine?.()?.canvasColorService;
+        if (!colorService) {
+            return DEFAULT_CARET_COLOR;
+        }
+
+        try {
+            const backgroundColorKit = new ColorKit(colorService.getRenderColor(this._getAnchorBackgroundColor(glyph)));
+            if (!backgroundColorKit.isValid) {
+                return DEFAULT_CARET_COLOR;
+            }
+
+            return ColorKit.getContrastRatio(colorService.getRenderColor('gray.0'), backgroundColorKit) > ColorKit.getContrastRatio(colorService.getRenderColor(DEFAULT_CARET_COLOR), backgroundColorKit)
+                ? 'gray.0'
+                : DEFAULT_CARET_COLOR;
+        } catch {
+            return DEFAULT_CARET_COLOR;
+        }
+    }
+
+    private _getAnchorBackgroundColor(glyph: Nullable<IDocumentSkeletonGlyph>): string {
+        const line = glyph?.parent?.parent;
+        const page = line?.parent?.parent?.parent;
+        let cellBackground: IColorStyle | undefined;
+        if (page?.type === DocumentSkeletonPageType.CELL && page.parent && 'rowSource' in page.parent) {
+            const row = page.parent;
+            const cellIndex = row.cells.indexOf(page);
+            cellBackground = row.rowSource.tableCells[cellIndex]?.backgroundColor;
+        }
+
+        const background = glyph?.ts?.bg ?? line?.backgroundColor ?? cellBackground;
+        return background?.rgb ?? getColorStyle(background) ?? 'gray.0';
     }
 
     private _setCursorList(cursorList: ITextRange[]) {

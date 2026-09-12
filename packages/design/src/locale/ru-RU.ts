@@ -18,6 +18,20 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'Закрыть метку',
+            close: 'Закрыть',
+            menu: 'Меню',
+            previous: 'Предыдущее',
+            next: 'Следующее',
+            imageGallery: 'Галерея изображений',
+            image: 'Изображение {0} из {1}',
+            zoomIn: 'Увеличить',
+            zoomOut: 'Уменьшить',
+            resetZoom: 'Сбросить масштаб',
+            increment: 'Увеличить значение',
+            decrement: 'Уменьшить значение',
+        },
         Confirm: {
             cancel: 'отмена',
             confirm: 'ок',
@@ -25,11 +39,8 @@ const locale: typeof enUS = {
         CascaderList: {
             empty: 'Нет',
         },
-        Select: {
-            empty: 'Нет',
-        },
         Calendar: {
-            year: '',
+            year: 'Год',
             weekDays: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
             months: [
                 'Январь',
@@ -45,6 +56,12 @@ const locale: typeof enUS = {
                 'Ноябрь',
                 'Декабрь',
             ],
+            ariaLabels: {
+                previousMonth: 'Предыдущий месяц',
+                nextMonth: 'Следующий месяц',
+                selectYear: 'Выбрать год',
+                selectMonth: 'Выбрать месяц',
+            },
         },
         ColorPicker: {
             more: 'Больше цветов',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: 'ромбовидный',
             offset: 'смещение',
             angle: 'угол',
-            flip: 'перевернуть',
             delete: 'удалить',
+            transparency: 'прозрачность',
         },
     },
 };

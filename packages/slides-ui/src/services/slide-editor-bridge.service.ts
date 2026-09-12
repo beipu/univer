@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { IDisposable, IDocumentBody, IDocumentData, IDocumentSettings, IDocumentStyle, IParagraph, IParagraphStyle, IPosition, Nullable } from '@univerjs/core';
+import type { IDisposable, IPosition, Nullable } from '@univerjs/core';
 import type { Engine, IDocumentLayoutObject, RichText, Scene } from '@univerjs/engine-render';
 import type { KeyCode } from '@univerjs/ui';
 import type { Observable } from 'rxjs';
@@ -32,7 +32,7 @@ import {
 import { IEditorService } from '@univerjs/docs-ui';
 import { DeviceInputEventType, IRenderManagerService } from '@univerjs/engine-render';
 import { SLIDE_KEY } from '@univerjs/slides';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import { SLIDE_EDITOR_ID } from '../const';
 
 // TODO same as @univerjs/slides/views/render/adaptors/index.js
@@ -43,7 +43,7 @@ export enum SLIDE_VIEW_KEY {
     VIEWPORT = '__SLIDEViewPort_',
 }
 
-export const ISlideEditorBridgeService = createIdentifier<SlideEditorBridgeService>('univer.slide-editor-bridge.service');
+export const ISlideEditorBridgeService = createIdentifier<ISlideEditorBridgeService>('univer.slide-editor-bridge.service');
 
 export interface IEditorBridgeServiceParam {
     unitId: string;
@@ -77,12 +77,6 @@ export interface ISetEditorInfo {
 export interface ISlideEditorBridgeService {
     currentEditRectState$: Observable<Nullable<IEditorBridgeServiceParam>>;
     visible$: Observable<IEditorBridgeServiceVisibleParam>;
-
-    /**
-     * @deprecated This is a temp solution only for demo purposes. We should have mutations to directly write
-     * content to slides.
-     */
-    endEditing$: Subject<RichText>;
 
     // interceptor: InterceptorManager<{
     //     BEFORE_CELL_EDIT: typeof BEFORE_CELL_EDIT;
@@ -129,8 +123,6 @@ export class SlideEditorBridgeService extends Disposable implements ISlideEditor
 
     private readonly _afterVisible$ = new BehaviorSubject<IEditorBridgeServiceVisibleParam>(this._visibleParam);
     readonly afterVisible$ = this._afterVisible$.asObservable();
-
-    readonly endEditing$ = new Subject<RichText>();
 
     private _currentEditRectInfo: ISetEditorInfo;
 
@@ -208,8 +200,6 @@ export class SlideEditorBridgeService extends Disposable implements ISlideEditor
         const editorRectInfo = this._currentEditRectInfo;
         const unitId = editorRectInfo.unitId;
 
-        // let docData: IDocumentData = this.genDocData(editorRectInfo.startEditingText);
-
         const docData = editorRectInfo.richTextObj.documentData;
         docData.id = editorUnitId;
         docData.documentStyle = {
@@ -242,7 +232,7 @@ export class SlideEditorBridgeService extends Disposable implements ISlideEditor
         };
         // canvasOffset will be used in slide-editing.render-controller.ts@_handleEditorVisible
         // const mainScene = this._mainScene;
-        const renderUnit = this._renderManagerService.getRenderById(unitId);
+        const renderUnit = this._renderManagerService.getRenderUnitById(unitId);
         const mainScene = renderUnit?.scene;
         const mainViewport = mainScene?.getViewport(SLIDE_KEY.VIEW);
         const slideMainRect = mainScene?.getObject(SLIDE_KEY.COMPONENT);
@@ -285,51 +275,5 @@ export class SlideEditorBridgeService extends Disposable implements ISlideEditor
 
     getCurrentEditorId() {
         return this._editorUnitId;
-    }
-
-    /**
-     * @deprecated
-     */
-    genDocData(target: RichText) {
-        const editorUnitId = this.getCurrentEditorId();
-        const content = target.text;
-        const fontSize = target.fs;
-        const docData: IDocumentData = {
-            id: editorUnitId,
-            body: {
-                dataStream: `${content}\r\n`,
-                textRuns: [{ st: 0, ed: content.length }],
-                paragraphs: [{
-                    paragraphStyle: {
-                        // no use
-                        // textStyle: { fs: 30 },
-                        // horizontalAlign: HorizontalAlign.CENTER,
-                        // verticalAlign: VerticalAlign.MIDDLE,
-                    } as IParagraphStyle,
-                    startIndex: content.length + 1,
-                }] as IParagraph[],
-                sectionBreaks: [{ startIndex: content.length + 2 }],
-            } as IDocumentBody,
-            documentStyle: {
-                marginBottom: 0,
-                marginLeft: 0,
-                marginRight: 0,
-                marginTop: 0,
-                pageSize: { width: Infinity, height: Infinity },
-                textStyle: { fs: fontSize },
-                renderConfig: {
-                    // horizontalAlign: HorizontalAlign.CENTER,
-                    verticalAlign: VerticalAlign.MIDDLE,
-                    centerAngle: 0,
-                    vertexAngle: 0,
-                    wrapStrategy: 0,
-                },
-            } as IDocumentStyle,
-            drawings: {},
-            drawingsOrder: [],
-            settings: { zoomRatio: 1 } as IDocumentSettings,
-        };
-
-        return docData;
     }
 }

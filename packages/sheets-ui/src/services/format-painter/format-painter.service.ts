@@ -16,7 +16,17 @@
 
 import type { IMutationInfo, IRange, IStyleData } from '@univerjs/core';
 import type { Observable } from 'rxjs';
-import { createIdentifier, Disposable, ICommandService, ILogService, Inject, IUndoRedoService, ObjectMatrix, ThemeService } from '@univerjs/core';
+import {
+    createIdentifier,
+    Disposable,
+    ICommandService,
+    ILogService,
+    Inject,
+    IUndoRedoService,
+    ObjectMatrix,
+    sequenceExecute,
+    ThemeService,
+} from '@univerjs/core';
 import { SetRangeValuesMutation, SheetsSelectionsService } from '@univerjs/sheets';
 import { BehaviorSubject } from 'rxjs';
 import { IMarkSelectionService } from '../mark-selection/mark-selection.service';
@@ -170,7 +180,7 @@ export class FormatPainterService extends Disposable implements IFormatPainterSe
             redoMutationsInfo,
         });
 
-        const result = redoMutationsInfo.every((m) => this._commandService.executeCommand(m.id, m.params));
+        const { result } = sequenceExecute(redoMutationsInfo, this._commandService);
         if (result) {
             // add to undo redo services
             this._undoRedoService.pushUndoRedo({

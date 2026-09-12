@@ -15,7 +15,6 @@
  */
 
 import type { BaseFunction } from '../../functions/base-function';
-
 import type { LexerNode } from '../analysis/lexer-node';
 import type {
     AsyncArrayObject,
@@ -26,16 +25,18 @@ import type {
 } from '../reference-object/base-reference-object';
 import type { BaseValueObject } from '../value-object/base-value-object';
 import type { FormulaFunctionResultValueType } from '../value-object/primitive-object';
-import { Inject, Injector } from '@univerjs/core';
+import { DateSystem, Inject, Injector } from '@univerjs/core';
 import { AstNodePromiseType } from '../../basics/common';
 import { ErrorType } from '../../basics/error-type';
 import { matchToken } from '../../basics/token';
 import { COLUMN_LIKE_FUNCTION_NAMES } from '../../functions/column-like-functions';
+import { FUNCTION_NAMES_TEXT } from '../../functions/text/function-names';
 import { FormulaDataModel } from '../../models/formula-data.model';
 import { IFormulaCurrentConfigService } from '../../services/current-data.service';
 import { IDefinedNamesService } from '../../services/defined-names.service';
 import { IFunctionService } from '../../services/function.service';
 import { IFormulaRuntimeService } from '../../services/runtime.service';
+import { IFormulaUnitReferenceResolver } from '../../services/unit-reference-resolver.service';
 import { prefixHandler } from '../utils/prefix-handler';
 import { ArrayValueObject, transformToValueObject, ValueObjectFactory } from '../value-object/array-value-object';
 import { ErrorValueObject } from '../value-object/base-value-object';
@@ -50,7 +51,8 @@ export class FunctionNode extends BaseAstNode {
         private _currentConfigService: IFormulaCurrentConfigService,
         private _runtimeService: IFormulaRuntimeService,
         private _definedNamesService: IDefinedNamesService,
-        private _formulaDataModel: FormulaDataModel
+        private _formulaDataModel: FormulaDataModel,
+        private _unitReferenceResolver: IFormulaUnitReferenceResolver
     ) {
         super(token);
 
@@ -73,40 +75,37 @@ export class FunctionNode extends BaseAstNode {
         if (this._functionExecutor.needsFormulaDataModel) {
             this._functionExecutor.setFormulaDataModel(this._formulaDataModel);
         }
+
+        if (this._functionExecutor.needsUnitReferenceResolver) {
+            this._functionExecutor.setUnitReferenceResolver(this._unitReferenceResolver);
+        }
     }
 
     override get nodeType() {
         return NodeType.FUNCTION;
     }
 
-    override async executeAsync() {
-        const variants: BaseValueObject[] = [];
+    override preservesLazyIfReferenceArray(child: BaseAstNode): boolean {
+        return this._functionExecutor.lazyIfReferenceArrayArgumentIndexes.includes(this.getChildren().indexOf(child));
+    }
+
+    override async executeAsync(dateSystem: DateSystem = DateSystem.Date1900) {
         const children = this.getChildren();
-        const childrenCount = children.length;
 
         this._compatibility();
 
-        for (let i = 0; i < childrenCount; i++) {
-            const child = children[i];
-            const object = child.getValue();
-            if (object == null) {
-                continue;
-            }
-            if (object.isReferenceObject() && !this._functionExecutor.needsReferenceObject) {
-                variants.push((object as BaseReferenceObject).toArrayValueObject());
-            } else {
-                variants.push(object as BaseValueObject);
-            }
-        }
-
-        const resultVariant = await this._calculateAsync(variants);
+        const resultVariant = this._functionExecutor.needsAstChildren
+            ? this._calculateAst(children, dateSystem)
+            : await this._calculateAsync(this._collectVariants(children, dateSystem), dateSystem);
         let result: FunctionVariantType;
 
         if (resultVariant.isAsyncObject() || resultVariant.isAsyncArrayObject()) {
-            result = await (resultVariant as AsyncObject | AsyncArrayObject).getValue();
+            result = await (resultVariant as AsyncObject | AsyncArrayObject).getValue() as FunctionVariantType;
         } else {
             result = resultVariant as FunctionVariantType;
         }
+
+        result = this._normalizeTopLevelLegacyArrayResult(result).withDateSystem(dateSystem) as FunctionVariantType;
 
         this._setEmbeddedArrayFormulaToResult(result);
 
@@ -117,41 +116,59 @@ export class FunctionNode extends BaseAstNode {
         return Promise.resolve(AstNodePromiseType.SUCCESS);
     }
 
-    override execute() {
-        const variants: BaseValueObject[] = [];
+    override execute(dateSystem: DateSystem = DateSystem.Date1900) {
         const children = this.getChildren();
-        const childrenCount = children.length;
 
         this._compatibility();
 
+        const resultVariant = (this._functionExecutor.needsAstChildren
+            ? this._calculateAst(children, dateSystem)
+            : this._calculate(this._collectVariants(children, dateSystem), dateSystem)) as FunctionVariantType;
+
+        const result = this._normalizeTopLevelLegacyArrayResult(resultVariant).withDateSystem(dateSystem) as FunctionVariantType;
+
+        this._setEmbeddedArrayFormulaToResult(result);
+
+        this._setRefData(result);
+
+        this.setValue(result as FunctionVariantType);
+    }
+
+    private _collectVariants(children: BaseAstNode[], dateSystem: DateSystem): BaseValueObject[] {
+        const variants: BaseValueObject[] = [];
+        const childrenCount = children.length;
+
         for (let i = 0; i < childrenCount; i++) {
-            const child = children[i];
-            const object = child.getValue();
+            const object = this._getChildVariant(children[i], dateSystem);
 
             if (object == null) {
                 continue;
             }
 
-            if (object.isReferenceObject() && this._functionExecutor.needsFilteredOutRows) {
-                this._setFilteredOutRows(object as BaseReferenceObject);
-            }
-
-            // In the SUBTOTAL function, we need to get rowData information, we can only use ReferenceObject
-            if (object.isReferenceObject() && !this._functionExecutor.needsReferenceObject) {
-                // Array converted from reference object needs to be marked
-                variants.push((object as BaseReferenceObject).toArrayValueObject());
-            } else {
-                variants.push(object as BaseValueObject);
-            }
+            variants.push(object as BaseValueObject);
         }
 
-        const resultVariant = this._calculate(variants) as FunctionVariantType;
+        return variants;
+    }
 
-        this._setEmbeddedArrayFormulaToResult(resultVariant);
+    private _getChildVariant(child: BaseAstNode, dateSystem: DateSystem): FunctionVariantType | undefined {
+        const object = child.getValue();
 
-        this._setRefData(resultVariant);
+        if (object == null) {
+            return;
+        }
 
-        this.setValue(resultVariant as FunctionVariantType);
+        if (object.isReferenceObject() && this._functionExecutor.needsFilteredOutRows) {
+            this._setFilteredOutRows(object as BaseReferenceObject);
+        }
+
+        // In the SUBTOTAL function, we need to get rowData information, we can only use ReferenceObject
+        if (object.isReferenceObject() && !this._functionExecutor.needsReferenceObject) {
+            // Array converted from reference object needs to be marked
+            return (object as BaseReferenceObject).withDateSystem(dateSystem).toArrayValueObject();
+        }
+
+        return object.withDateSystem(dateSystem);
     }
 
     isFunctionExecutorArgumentsIgnoreNumberPattern() {
@@ -174,6 +191,28 @@ export class FunctionNode extends BaseAstNode {
         }
 
         this._runtimeService.setUnitArrayFormulaEmbeddedMap();
+    }
+
+    private _normalizeTopLevelLegacyArrayResult(result: FunctionVariantType): FunctionVariantType {
+        const parent = this.getParent();
+        const isTopLevel = parent == null || parent.nodeType === NodeType.ROOT;
+        if (!this._functionExecutor.returnsLegacyArrayAsScalar || !isTopLevel || !result.isArray()) {
+            return result;
+        }
+
+        const array = result as ArrayValueObject;
+        if (array.getRowCount() <= 1 && array.getColumnCount() <= 1) {
+            return result;
+        }
+
+        if (
+            this._runtimeService.hasFunctionRefInfoOverride() &&
+            (this._runtimeService.currentRowCount > 1 || this._runtimeService.currentColumnCount > 1)
+        ) {
+            return result;
+        }
+
+        return array.getFirstCell();
     }
 
     /**
@@ -239,12 +278,15 @@ export class FunctionNode extends BaseAstNode {
     /**
      * Transform the result of a custom function to a NodeValueType.
      */
-    private _handleCustomResult(resultVariantCustom: FormulaFunctionResultValueType): NodeValueType {
+    private _handleCustomResult(
+        resultVariantCustom: FormulaFunctionResultValueType,
+        dateSystem: DateSystem
+    ): NodeValueType {
         if (typeof resultVariantCustom !== 'object' || resultVariantCustom == null) {
-            return ValueObjectFactory.create(resultVariantCustom);
+            return ValueObjectFactory.create(resultVariantCustom, false, dateSystem);
         }
 
-        const arrayValues = transformToValueObject(resultVariantCustom);
+        const arrayValues = transformToValueObject(resultVariantCustom, false, dateSystem);
         return ArrayValueObject.create({
             calculateValueList: arrayValues,
             rowCount: arrayValues.length,
@@ -282,7 +324,7 @@ export class FunctionNode extends BaseAstNode {
         });
     }
 
-    private _calculate(variants: BaseValueObject[]) {
+    private _calculate(variants: BaseValueObject[], dateSystem: DateSystem) {
         // Check the number of parameters
         const { minParams, maxParams } = this._functionExecutor;
         if (minParams !== -1 && maxParams !== -1 && (variants.length < minParams || variants.length > maxParams)) {
@@ -297,7 +339,7 @@ export class FunctionNode extends BaseAstNode {
                 ...this._mapVariantsToValues(variants)
             ) as FormulaFunctionResultValueType;
 
-            resultVariant = this._handleCustomResult(resultVariantCustom);
+            resultVariant = this._handleCustomResult(resultVariantCustom, dateSystem);
         } else {
             this._handleAddressFunction();
             resultVariant = this._functionExecutor.calculate(...variants);
@@ -306,7 +348,19 @@ export class FunctionNode extends BaseAstNode {
         return resultVariant;
     }
 
-    private async _calculateAsync(variants: BaseValueObject[]) {
+    private _calculateAst(children: BaseAstNode[], dateSystem: DateSystem) {
+        const { minParams, maxParams } = this._functionExecutor;
+        if (minParams !== -1 && maxParams !== -1 && (children.length < minParams || children.length > maxParams)) {
+            return ErrorValueObject.create(ErrorType.NA);
+        }
+
+        this._setRefInfo();
+        this._handleAddressFunction();
+
+        return this._functionExecutor.calculateAst(children, (node) => this._getChildVariant(node, dateSystem) ?? null);
+    }
+
+    private async _calculateAsync(variants: BaseValueObject[], dateSystem: DateSystem) {
         // Check the number of parameters
         const { minParams, maxParams } = this._functionExecutor;
         if (minParams !== -1 && maxParams !== -1 && (variants.length < minParams || variants.length > maxParams)) {
@@ -322,7 +376,7 @@ export class FunctionNode extends BaseAstNode {
                 ...this._mapVariantsToValues(variants)
             );
 
-            resultVariant = this._handleCustomResult(resultVariantCustom);
+            resultVariant = this._handleCustomResult(resultVariantCustom, dateSystem);
         } else {
             this._handleAddressFunction();
             resultVariant = this._functionExecutor.calculate(...variants);
@@ -332,7 +386,7 @@ export class FunctionNode extends BaseAstNode {
     }
 
     private _setDefinedNamesForFunction() {
-        const editorUnitId = this._currentConfigService.getExecuteUnitId();
+        const editorUnitId = this._runtimeService.currentUnitId;
         if (editorUnitId == null) {
             return;
         }
@@ -345,9 +399,10 @@ export class FunctionNode extends BaseAstNode {
     }
 
     private _setRefInfo() {
-        const { currentUnitId, currentSubUnitId, currentRow, currentColumn } = this._runtimeService;
+        const { currentUnitId, currentSubUnitId, currentRow, currentColumn, currentRowCount, currentColumnCount } = this._runtimeService;
 
-        this._functionExecutor.setRefInfo(currentUnitId, currentSubUnitId, currentRow, currentColumn);
+        this._functionExecutor.setRefInfo(currentUnitId, currentSubUnitId, currentRow, currentColumn, currentRowCount, currentColumnCount);
+        this._functionExecutor.setDateSystem(this._currentConfigService.getDateSystem(currentUnitId));
 
         if (this._functionExecutor.needsSheetRowColumnCount) {
             const { rowCount, columnCount } = this._currentConfigService.getSheetRowColumnCount(currentUnitId, currentSubUnitId);
@@ -429,7 +484,8 @@ export class FunctionNodeFactory extends BaseAstNodeFactory {
         @IFormulaRuntimeService private readonly _runtimeService: IFormulaRuntimeService,
         @IDefinedNamesService private readonly _definedNamesService: IDefinedNamesService,
         @Inject(Injector) private readonly _injector: Injector,
-        @Inject(FormulaDataModel) private readonly _formulaDataModel: FormulaDataModel
+        @Inject(FormulaDataModel) private readonly _formulaDataModel: FormulaDataModel,
+        @IFormulaUnitReferenceResolver private readonly _unitReferenceResolver: IFormulaUnitReferenceResolver
     ) {
         super();
     }
@@ -451,7 +507,8 @@ export class FunctionNodeFactory extends BaseAstNodeFactory {
             this._currentConfigService,
             this._runtimeService,
             this._definedNamesService,
-            this._formulaDataModel
+            this._formulaDataModel,
+            this._unitReferenceResolver
         );
     }
 
@@ -469,7 +526,7 @@ export class FunctionNodeFactory extends BaseAstNodeFactory {
             return ErrorNode.create(ErrorType.VALUE);
         }
 
-        const tokenTrimUpper = tokenTrim.toUpperCase();
+        const tokenTrimUpper = normalizeFunctionToken(tokenTrim.toUpperCase());
 
         if (isColon && COLUMN_LIKE_FUNCTION_NAMES.has(tokenTrimUpper)) {
             return;
@@ -491,4 +548,18 @@ export class FunctionNodeFactory extends BaseAstNodeFactory {
     private _isParentUnionNode(param: LexerNode) {
         return param.getParent()?.getParent()?.getToken() === matchToken.COLON;
     }
+}
+
+function normalizeFunctionToken(token: string): string {
+    if (token === 'REGEXTEST' || token === '_XLFN.REGEXTEST') {
+        return FUNCTION_NAMES_TEXT.REGEXMATCH;
+    }
+
+    for (const prefix of ['_XLFN.', '_XLWS.', '_XLETA.']) {
+        if (token.startsWith(prefix)) {
+            return token.slice(prefix.length);
+        }
+    }
+
+    return token;
 }

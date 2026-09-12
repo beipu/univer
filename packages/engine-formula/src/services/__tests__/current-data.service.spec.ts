@@ -14,11 +14,21 @@
  * limitations under the License.
  */
 
-import { ObjectMatrix } from '@univerjs/core';
+import {
+    DateSystem,
+    Injector,
+    IUniverInstanceService,
+    LocaleService,
+    LocaleType,
+    ObjectMatrix,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { describe, expect, it, vi } from 'vitest';
-import { FormulaCurrentConfigService } from '../current-data.service';
+import { FormulaDataModel } from '../../models/formula-data.model';
+import { FormulaCurrentConfigService, IFormulaCurrentConfigService } from '../current-data.service';
+import { ISheetRowFilteredService } from '../sheet-row-filtered.service';
 
-function createService() {
+function createService(withCurrentWorkbook = true) {
     const workbookForCurrentType = {
         getUnitId: vi.fn(() => 'unit-current'),
         getActiveSheet: vi.fn(() => ({
@@ -32,8 +42,13 @@ function createService() {
 
     const workbookById = new Map<string, unknown>();
     const univerInstanceService = {
-        getCurrentUnitForType: vi.fn(() => workbookForCurrentType),
+        getCurrentUnitOfType: vi.fn(() => withCurrentWorkbook ? workbookForCurrentType : undefined),
         getUnit: vi.fn((unitId: string) => workbookById.get(unitId)),
+        getUnitType: vi.fn((unitId: string) =>
+            workbookById.has(unitId)
+                ? UniverInstanceType.UNIVER_SHEET
+                : UniverInstanceType.UNRECOGNIZED
+        ),
     };
     const localeService = {
         getCurrentLocale: vi.fn(() => 'zhCN'),
@@ -41,6 +56,7 @@ function createService() {
     const formulaDataModel = {
         getCalculateData: vi.fn(() => ({
             allUnitData: {},
+            unitNameMap: {},
             unitSheetNameMap: {},
             unitStylesData: {},
         })),
@@ -52,12 +68,34 @@ function createService() {
         getRowFiltered: vi.fn((_unitId: string, _sheetId: string, row: number) => row === 2 || row === 4),
     };
 
-    const service = new FormulaCurrentConfigService(
-        univerInstanceService as never,
-        localeService as never,
-        formulaDataModel as never,
-        sheetRowFilteredService as never
-    );
+    class TestUniverInstanceService {
+        getCurrentUnitOfType = univerInstanceService.getCurrentUnitOfType;
+        getUnit = univerInstanceService.getUnit;
+        getUnitType = univerInstanceService.getUnitType;
+    }
+
+    class TestLocaleService {
+        getCurrentLocale = localeService.getCurrentLocale;
+    }
+
+    class TestFormulaDataModel {
+        getCalculateData = formulaDataModel.getCalculateData;
+        getFormulaData = formulaDataModel.getFormulaData;
+        getArrayFormulaCellData = formulaDataModel.getArrayFormulaCellData;
+        getArrayFormulaRange = formulaDataModel.getArrayFormulaRange;
+    }
+
+    class TestSheetRowFilteredService {
+        getRowFiltered = sheetRowFilteredService.getRowFiltered;
+    }
+
+    const injector = new Injector();
+    injector.add([IUniverInstanceService, { useClass: TestUniverInstanceService as never }]);
+    injector.add([LocaleService, { useClass: TestLocaleService as never }]);
+    injector.add([FormulaDataModel, { useClass: TestFormulaDataModel as never }]);
+    injector.add([ISheetRowFilteredService, { useClass: TestSheetRowFilteredService as never }]);
+    injector.add([IFormulaCurrentConfigService, { useClass: FormulaCurrentConfigService }]);
+    const service = injector.get(IFormulaCurrentConfigService) as FormulaCurrentConfigService;
 
     return {
         service,
@@ -91,6 +129,12 @@ describe('FormulaCurrentConfigService', () => {
                     SheetA: 'sheetA',
                 },
             } as never,
+            unitNameMap: {
+                unitA: {
+                    name: 'Sales.xlsx',
+                    unitType: UniverInstanceType.UNIVER_SHEET,
+                },
+            },
             formulaData: { unitA: { sheetA: {} } } as never,
             arrayFormulaCellData: {},
             arrayFormulaRange: {},
@@ -109,6 +153,12 @@ describe('FormulaCurrentConfigService', () => {
         expect(service.getUnitData().unitA.sheetB.rowData).toEqual({ 0: { h: 20 } });
         expect(service.getSheetName('unitA', 'sheetA')).toBe('SheetA');
         expect(service.getSheetName('unitA', 'sheetB')).toBe('SheetB');
+        expect(service.getUnitNameMap()).toEqual({
+            unitA: {
+                name: 'Sales.xlsx',
+                unitType: UniverInstanceType.UNIVER_SHEET,
+            },
+        });
         expect(service.getClearDependencyTreeCache()).toEqual({ unitA: { sheetA: 'SheetA' } });
         expect(service.getDirtyData()).toEqual(expect.objectContaining({
             forceCalculation: true,
@@ -118,7 +168,7 @@ describe('FormulaCurrentConfigService', () => {
     });
 
     it('should load sheet data from model when allUnitData is omitted and expose workbook info', () => {
-        const { service, formulaDataModel, localeService } = createService();
+        const { service, workbookById, formulaDataModel, localeService } = createService();
 
         formulaDataModel.getCalculateData.mockReturnValue({
             allUnitData: {
@@ -133,6 +183,12 @@ describe('FormulaCurrentConfigService', () => {
                 },
             },
             unitStylesData: { 'unit-current': {} },
+            unitNameMap: {
+                'unit-current': {
+                    name: 'Current.xlsx',
+                    unitType: UniverInstanceType.UNIVER_SHEET,
+                },
+            },
             unitSheetNameMap: { 'unit-current': { Main: 'sheet-current' } },
         });
 
@@ -152,12 +208,19 @@ describe('FormulaCurrentConfigService', () => {
 
         expect(service.getExecuteUnitId()).toBe('unit-current');
         expect(service.getExecuteSubUnitId()).toBe('sheet-current');
+        expect(service.getUnitNameMap()['unit-current']?.name).toBe('Current.xlsx');
         expect(service.getSheetsInfo()).toEqual({
             sheetOrder: ['sheet-current'],
             sheetNameMap: { 'sheet-current': 'Main' },
         });
+        workbookById.set('unit-current', {
+            getSnapshot: () => ({ locale: LocaleType.FR_FR }),
+        });
         expect(service.getLocale()).toBe('zhCN');
         expect(localeService.getCurrentLocale).toHaveBeenCalled();
+        workbookById.set('date-1904', { getDateSystem: () => DateSystem.Date1904 });
+        expect(service.getDateSystem('date-1904')).toBe(DateSystem.Date1904);
+        expect(service.getDateSystem('missing')).toBe(DateSystem.Date1900);
     });
 
     it('should resolve sheet size, filtered rows and lightweight data loading', () => {
@@ -176,11 +239,13 @@ describe('FormulaCurrentConfigService', () => {
 
         expect(service.getSheetRowColumnCount('unit-size', 'sheet-size')).toEqual({ rowCount: 22, columnCount: 8 });
         expect(service.getSheetRowColumnCount('unit-size', 'missing')).toEqual({ rowCount: 0, columnCount: 0 });
+        expect(service.getSheetRowColumnCount('doc-unit', 'doc-unit')).toEqual({ rowCount: 0, columnCount: 0 });
         expect(service.getFilteredOutRows('unit-size', 'sheet-size', 1, 5)).toEqual([2, 4]);
 
         formulaDataModel.getCalculateData.mockReturnValue({
             allUnitData: {},
             unitStylesData: {},
+            unitNameMap: {},
             unitSheetNameMap: {},
         });
         formulaDataModel.getFormulaData.mockReturnValue({ unitLite: { sheetLite: { 1: { 1: { f: '=A1' } } } } });
@@ -192,12 +257,27 @@ describe('FormulaCurrentConfigService', () => {
         expect(service.getUnitData().unitLite.sheetLite.rowData).toEqual({ 1: { h: 30 } });
     });
 
+    it('returns empty sheet metadata when formula calculation runs without Sheets', () => {
+        const { service } = createService(false);
+
+        expect(service.getSheetsInfo()).toEqual({
+            sheetOrder: [],
+            sheetNameMap: {},
+        });
+    });
+
     it('should update dirty ranges/register data and cleanup all caches on dispose', () => {
         const { service } = createService();
 
         service.registerUnitData({ unit: { sheet: { cellData: new ObjectMatrix({}), rowCount: 1, columnCount: 1, rowData: {}, columnData: {} } } } as never);
         service.registerFormulaData({ unit: { sheet: { 1: { 1: { f: '=1' } } } } } as never);
         service.registerSheetNameMap({ unit: { Sheet: 'sheet' } } as never);
+        service.registerUnitNameMap({
+            unit: {
+                name: 'Book.xlsx',
+                unitType: UniverInstanceType.UNIVER_SHEET,
+            },
+        });
         service.loadDirtyRangesAndExcludedCell(
             [{ unitId: 'unit', sheetId: 'sheet', range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 } }],
             { unit: { sheet: { 0: { 0: true } } } } as never
@@ -212,6 +292,7 @@ describe('FormulaCurrentConfigService', () => {
         expect(service.getUnitData()).toEqual({});
         expect(service.getFormulaData()).toEqual({});
         expect(service.getSheetNameMap()).toEqual({});
+        expect(service.getUnitNameMap()).toEqual({});
         expect(service.getExcludedRange()).toEqual({});
     });
 });

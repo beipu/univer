@@ -15,8 +15,9 @@
  */
 
 import type { ITableSelectionInfo } from '../../commands/operations/open-table-selector.operation';
+import type { LocaleKey } from '../../locale/types';
 import { IUniverInstanceService, LocaleService, Rectangle } from '@univerjs/core';
-import { Button } from '@univerjs/design';
+import { ActionRow, Button } from '@univerjs/design';
 import { deserializeRangeWithSheet, serializeRange } from '@univerjs/engine-formula';
 import { getSheetCommandTarget } from '@univerjs/sheets';
 import { RangeSelector } from '@univerjs/sheets-formula-ui';
@@ -24,11 +25,14 @@ import { TableManager } from '@univerjs/sheets-table';
 import { useDependency } from '@univerjs/ui';
 import { useState } from 'react';
 
-export const SheetTableSelector = (props: ITableSelectionInfo & {
+export interface ISheetTableSelectorProps extends ITableSelectionInfo {
     onConfirm: (info: ITableSelectionInfo) => void;
     onCancel: () => void;
-}) => {
-    const { unitId, subUnitId, range, onCancel, onConfirm, tableId } = props;
+    ActionRowComponent?: typeof ActionRow;
+}
+
+export const SheetTableSelector = (props: ISheetTableSelectorProps) => {
+    const { unitId, subUnitId, range, onCancel, onConfirm, tableId, ActionRowComponent = ActionRow } = props;
 
     const tableManager = useDependency(TableManager);
     const [selectedRange, setSelectedRange] = useState(range);
@@ -57,7 +61,7 @@ export const SheetTableSelector = (props: ITableSelectionInfo & {
                     });
 
                     if (hasOverlapWithMerge) {
-                        setRangeError(localeService.t('sheets-table.tableRangeWithMergeError'));
+                        setRangeError(localeService.t<LocaleKey>('sheets-table-ui.tableRangeWithMergeError'));
                         return;
                     }
 
@@ -70,13 +74,13 @@ export const SheetTableSelector = (props: ITableSelectionInfo & {
                     });
 
                     if (hasOverlapWithOtherTable) {
-                        setRangeError(localeService.t('sheets-table.tableRangeWithOtherTableError'));
+                        setRangeError(localeService.t<LocaleKey>('sheets-table-ui.tableRangeWithOtherTableError'));
                         return;
                     }
                     const { startRow, endRow } = newRange;
                     const isSingleRow = startRow === endRow;
                     if (isSingleRow) {
-                        setRangeError(localeService.t('sheets-table.tableRangeSingleRowError'));
+                        setRangeError(localeService.t<LocaleKey>('sheets-table-ui.tableRangeSingleRowError'));
                         return;
                     }
 
@@ -98,7 +102,7 @@ export const SheetTableSelector = (props: ITableSelectionInfo & {
                                 });
                                 return;
                             } else {
-                                setRangeError(localeService.t('sheets-table.updateError'));
+                                setRangeError(localeService.t<LocaleKey>('sheets-table-ui.updateError'));
                                 return;
                             }
                         }
@@ -115,8 +119,8 @@ export const SheetTableSelector = (props: ITableSelectionInfo & {
                 </div>
             )}
 
-            <div className="univer-mt-4 univer-flex univer-justify-end">
-                <Button onClick={onCancel}>{localeService.t('sheets-table.cancel')}</Button>
+            <ActionRowComponent className="univer-mt-4 univer-flex univer-justify-end univer-gap-2">
+                <Button onClick={onCancel}>{localeService.t<LocaleKey>('sheets-table-ui.cancel')}</Button>
                 <Button
                     variant="primary"
                     onClick={() => {
@@ -129,11 +133,10 @@ export const SheetTableSelector = (props: ITableSelectionInfo & {
                             range: selectedRange,
                         });
                     }}
-                    className="univer-ml-2"
                 >
-                    {localeService.t('sheets-table.confirm')}
+                    {localeService.t<LocaleKey>('sheets-table-ui.confirm')}
                 </Button>
-            </div>
+            </ActionRowComponent>
         </>
     );
 };

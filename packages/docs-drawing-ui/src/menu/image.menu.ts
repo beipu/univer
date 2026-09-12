@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-import type { IAccessor } from '@univerjs/core';
+import type { DocumentDataModel, IAccessor } from '@univerjs/core';
 import type { IMenuItem } from '@univerjs/ui';
-import { DOCS_ZEN_EDITOR_UNIT_ID_KEY, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-
+import type { LocaleKey } from '../locale/types';
+import { IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
 import { DocSelectionManagerService } from '@univerjs/docs';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { Observable } from 'rxjs';
@@ -37,8 +37,8 @@ const getDisableWhenSelectionInTableObservable = (accessor: IAccessor) => {
 
             if (activeRange) {
                 const { segmentId, startOffset, endOffset } = activeRange;
-                const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
-                const tables = docDataModel?.getSelfOrHeaderFooterModel(segmentId).getBody()?.tables;
+                const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+                const tables = docDataModel?.getSelfOrHeaderFooterModel(segmentId)?.getBody()?.tables;
 
                 if (tables && tables.length) {
                     if (tables.some((table) => {
@@ -61,22 +61,38 @@ const getDisableWhenSelectionInTableObservable = (accessor: IAccessor) => {
     });
 };
 
-export function ImageMenuFactory(accessor: IAccessor): IMenuItem {
+export function ImageMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
     return {
         id: DOCS_IMAGE_MENU_ID,
-        type: MenuItemType.SUBITEMS,
+        commandId: IMAGE_MENU_UPLOAD_FLOAT_ID,
+        type: MenuItemType.BUTTON,
         icon: 'AddImageIcon',
-        tooltip: 'docImage.title',
+        tooltip: 'docs-drawing-ui.title',
         disabled$: getDisableWhenSelectionInTableObservable(accessor),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
-export function UploadFloatImageMenuFactory(_accessor: IAccessor): IMenuItem {
+export function UploadFloatImageMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
     return {
         id: IMAGE_MENU_UPLOAD_FLOAT_ID,
-        title: 'docImage.upload.float',
+        title: 'docs-drawing-ui.upload.float',
         type: MenuItemType.BUTTON,
-        hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        icon: 'AddImageIcon',
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+    };
+}
+
+export function UploadFloatImageBelowMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
+    return {
+        id: `${IMAGE_MENU_UPLOAD_FLOAT_ID}.below`,
+        commandId: IMAGE_MENU_UPLOAD_FLOAT_ID,
+        title: 'docs-drawing-ui.upload.float',
+        type: MenuItemType.BUTTON,
+        icon: 'AddImageIcon',
+        params: {
+            paragraphMenuPlacement: 'below',
+        },
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }

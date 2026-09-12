@@ -18,6 +18,7 @@
 
 import type { Dependency, IWorkbookData, Workbook } from '@univerjs/core';
 import type { ISheetData } from '@univerjs/engine-formula';
+import type { FFormula } from '@univerjs/engine-formula/facade';
 import {
     CellValueType,
     ILogService,
@@ -45,6 +46,7 @@ import {
     FormulaDataModel,
     FormulaDependencyGenerator,
     FormulaRuntimeService,
+    FormulaUnitReferenceResolver,
     FunctionNodeFactory,
     FunctionService,
     GlobalComputingStatusService,
@@ -55,7 +57,9 @@ import {
     IFeatureCalculationManagerService,
     IFormulaCurrentConfigService,
     IFormulaDependencyGenerator,
+    IFormulaExternalReferenceDataLoader,
     IFormulaRuntimeService,
+    IFormulaUnitReferenceResolver,
     IFunctionService,
     IHyperlinkEngineFormulaService,
     Interpreter,
@@ -66,6 +70,7 @@ import {
     LambdaParameterNodeFactory,
     Lexer,
     LexerTreeBuilder,
+    NoopFormulaExternalReferenceDataLoader,
     OperatorNodeFactory,
     OtherFormulaManagerService,
     PrefixNodeFactory,
@@ -197,8 +202,10 @@ export function createFunctionTestBed(workbookData?: IWorkbookData, dependencies
             injector.add([LexerTreeBuilder]);
 
             injector.add([IFormulaCurrentConfigService, { useClass: FormulaCurrentConfigService }]);
+            injector.add([IFormulaExternalReferenceDataLoader, { useClass: NoopFormulaExternalReferenceDataLoader }]);
             injector.add([IHyperlinkEngineFormulaService, { useClass: HyperlinkEngineFormulaService }]);
             injector.add([IFormulaRuntimeService, { useClass: FormulaRuntimeService }]);
+            injector.add([IFormulaUnitReferenceResolver, { useClass: FormulaUnitReferenceResolver }]);
             injector.add([IFunctionService, { useClass: FunctionService }]);
             injector.add([IOtherFormulaManagerService, { useClass: OtherFormulaManagerService }]);
             injector.add([IFeatureCalculationManagerService, { useClass: FeatureCalculationManagerService }]);
@@ -251,7 +258,7 @@ export function createFunctionTestBed(workbookData?: IWorkbookData, dependencies
     logService.setLogLevel(LogLevel.SILENT); // change this to `true` to debug tests via logs
 
     const sheetData: ISheetData = {};
-    const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+    const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
     const unitId = workbook.getUnitId();
     const sheetId = workbook.getActiveSheet()!.getSheetId();
     workbook.getSheets().forEach((sheet) => {
@@ -274,6 +281,15 @@ export function createFunctionTestBed(workbookData?: IWorkbookData, dependencies
         sheetId,
         sheetData,
     };
+}
+
+export function waitForCalculationEnd(formulaEngine: FFormula): Promise<void> {
+    return new Promise((resolve) => {
+        const disposable = formulaEngine.calculationEnd(() => {
+            disposable.dispose();
+            resolve();
+        });
+    });
 }
 
 export function stripArrayValue(array: (string | number | boolean | null)[][]) {

@@ -15,11 +15,39 @@
  */
 
 import type { Workbook, Worksheet } from '@univerjs/core';
-import type { IDeleteDrawingCommandParams, IInsertDrawingCommandParams, ISetDrawingArrangeCommandParams, ISetDrawingCommandParams } from '@univerjs/sheets-drawing';
-import { Disposable, ICommandService, Inject, IPermissionService, IUniverInstanceService, LocaleService, UniverInstanceType, UserManagerService } from '@univerjs/core';
+import type {
+    IInsertSheetDrawingCommandParams,
+    IRemoveSheetDrawingCommandParams,
+    ISetDrawingArrangeCommandParams,
+    ISetDrawingCommandParams,
+} from '@univerjs/sheets-drawing';
+import type { LocaleKey } from '../locale/types';
+import {
+    Disposable,
+    ICommandService,
+    Inject,
+    IPermissionService,
+    IUniverInstanceService,
+    LocaleService,
+    UniverInstanceType,
+    UserManagerService,
+} from '@univerjs/core';
 import { IRenderManagerService, ObjectType } from '@univerjs/engine-render';
-import { SheetPermissionCheckController, WorkbookEditablePermission, WorkbookViewPermission, WorksheetEditPermission, WorksheetViewPermission } from '@univerjs/sheets';
-import { InsertSheetDrawingCommand, ISheetDrawingService, RemoveSheetDrawingCommand, SetDrawingArrangeCommand, SetSheetDrawingCommand } from '@univerjs/sheets-drawing';
+import {
+    SheetPermissionCheckController,
+    WorkbookEditablePermission,
+    WorkbookViewPermission,
+    WorksheetEditPermission,
+    WorksheetViewPermission,
+} from '@univerjs/sheets';
+import {
+    InsertSheetDrawingCommand,
+    ISheetDrawingService,
+    RemoveSheetDrawingCommand,
+    SetDrawingArrangeCommand,
+    SetSheetDrawingCommand,
+    SetSheetDrawingPlacementCommand,
+} from '@univerjs/sheets-drawing';
 import { combineLatest, distinctUntilChanged, EMPTY, map, switchMap, tap } from 'rxjs';
 
 const drawingObjectTypes = [
@@ -100,7 +128,7 @@ export class SheetDrawingPermissionController extends Disposable {
         const drawingData = this._sheetDrawingService.getDrawingData(unitId, subUnitId);
         const drawingDataValues = Object.values(drawingData);
 
-        const renderObject = this._renderManagerService.getRenderById(unitId);
+        const renderObject = this._renderManagerService.getRenderUnitById(unitId);
         const scene = renderObject?.scene;
 
         if (!scene) {
@@ -172,7 +200,7 @@ export class SheetDrawingPermissionController extends Disposable {
         const drawingData = this._sheetDrawingService.getDrawingData(unitId, subUnitId);
         const drawingDataValues = Object.values(drawingData);
 
-        const renderObject = this._renderManagerService.getRenderById(unitId);
+        const renderObject = this._renderManagerService.getRenderUnitById(unitId);
         const scene = renderObject?.scene;
 
         if (!scene) {
@@ -209,7 +237,7 @@ export class SheetDrawingPermissionController extends Disposable {
 
                                 const unitId = workbook.getUnitId();
                                 const subUnitId = sheet.getSheetId();
-                                const renderObject = this._renderManagerService.getRenderById(unitId);
+                                const renderObject = this._renderManagerService.getRenderUnitById(unitId);
                                 const scene = renderObject?.scene;
 
                                 if (!scene) {
@@ -265,7 +293,7 @@ export class SheetDrawingPermissionController extends Disposable {
                     },
                     complete: () => {
                         this._sheetDrawingService.setDrawingVisible(true);
-                        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+                        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
                         const sheet = workbook?.getActiveSheet();
                         const unitId = workbook?.getUnitId();
                         const subUnitId = sheet?.getSheetId();
@@ -301,7 +329,7 @@ export class SheetDrawingPermissionController extends Disposable {
 
                                 const unitId = workbook.getUnitId();
                                 const subUnitId = sheet.getSheetId();
-                                const renderObject = this._renderManagerService.getRenderById(unitId);
+                                const renderObject = this._renderManagerService.getRenderUnitById(unitId);
                                 const scene = renderObject?.scene;
 
                                 if (!scene) {
@@ -366,7 +394,7 @@ export class SheetDrawingPermissionController extends Disposable {
                         }
                     },
                     complete: () => {
-                        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+                        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
                         if (!workbook) {
                             return;
                         }
@@ -378,7 +406,7 @@ export class SheetDrawingPermissionController extends Disposable {
                         }
 
                         const subUnitId = sheet.getSheetId();
-                        const renderObject = this._renderManagerService.getRenderById(unitId);
+                        const renderObject = this._renderManagerService.getRenderUnitById(unitId);
                         const scene = renderObject?.scene;
 
                         if (!scene) {
@@ -411,10 +439,14 @@ export class SheetDrawingPermissionController extends Disposable {
                 let subUnitId: string | undefined;
 
                 if (command.id === InsertSheetDrawingCommand.id || command.id === RemoveSheetDrawingCommand.id || command.id === SetSheetDrawingCommand.id) {
-                    const params = command.params as IInsertDrawingCommandParams | IDeleteDrawingCommandParams | ISetDrawingCommandParams;
+                    const params = command.params as IInsertSheetDrawingCommandParams | IRemoveSheetDrawingCommandParams | ISetDrawingCommandParams;
                     const { drawings } = params;
                     unitId = drawings?.[0]?.unitId;
                     subUnitId = drawings?.[0]?.subUnitId;
+                } else if (command.id === SetSheetDrawingPlacementCommand.id) {
+                    const target = getPlacementCommandTarget(command.params);
+                    unitId = target.unitId;
+                    subUnitId = target.subUnitId;
                 } else if (command.id === SetDrawingArrangeCommand.id) {
                     const params = command.params as ISetDrawingArrangeCommandParams;
                     unitId = params.unitId;
@@ -430,9 +462,26 @@ export class SheetDrawingPermissionController extends Disposable {
                     worksheetTypes: [WorksheetEditPermission],
                 }, unitId, subUnitId);
                 if (!permission) {
-                    this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.editErr'));
+                    this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-drawing-ui.permission.dialog.editErr'));
                 }
             })
         );
     }
+}
+
+function getPlacementCommandTarget(params: object | undefined): {
+    unitId?: string;
+    subUnitId?: string;
+} {
+    if (!params) {
+        return {};
+    }
+
+    const unitId = 'unitId' in params && typeof params.unitId === 'string'
+        ? params.unitId
+        : undefined;
+    const subUnitId = 'subUnitId' in params && typeof params.subUnitId === 'string'
+        ? params.subUnitId
+        : undefined;
+    return { unitId, subUnitId };
 }

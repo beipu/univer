@@ -32,7 +32,8 @@ export interface IFWorksheetCommentMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const comments = fWorksheet.getComments();
      * comments.forEach((comment) => {
      *   const isRoot = comment.getIsRoot();
@@ -56,7 +57,8 @@ export interface IFWorksheetCommentMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const result = await fWorksheet.clearComments();
      * console.log(result);
      * ```
@@ -66,9 +68,11 @@ export interface IFWorksheetCommentMixin {
     /**
      * get comment by comment id
      * @param {string} commentId comment id
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a new comment
      * const richText = univerAPI.newRichText().insertText('hello univer');
@@ -105,6 +109,7 @@ export class FWorksheetCommentMixin extends FWorksheet implements IFWorksheetCom
     /**
      * Subscribe to comment events.
      * @param callback Callback function, param contains comment info and target cell.
+     * @returns {IDisposable} A disposable used to remove the listener.
      */
     onCommented(callback: (params: IAddCommentCommandParams) => void): IDisposable {
         const commandService = this._injector.get(ICommandService);
@@ -127,6 +132,5 @@ export class FWorksheetCommentMixin extends FWorksheet implements IFWorksheetCom
 
 FWorksheet.extend(FWorksheetCommentMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FWorksheet extends IFWorksheetCommentMixin {}
 }

@@ -14,86 +14,65 @@
  * limitations under the License.
  */
 
-import type {
-    BorderStyleTypes,
-    DocumentDataModel,
-    IBorderStyleData,
-    ICellData,
-    ICellDataForSheetInterceptor,
-    ICellInfo,
-    ICellWithCoord,
-    IColAutoWidthInfo,
-    IColumnRange,
-    IGetRowColByPosOptions,
-    IPaddingData,
-    IRange,
-    IRowAutoHeightInfo,
-    IRowRange,
-    ISize,
-    IStyleData,
-    ITextRotation,
-    Nullable,
-    Styles,
-    Worksheet,
-} from '@univerjs/core';
+import type { BorderStyleTypes, IBorderStyleData, ICellDataForSheetInterceptor, ICellInfo, ICellWithCoord, IColAutoWidthInfo, IColumnRange, IDocumentData, IPaddingData, IRange, IRowAutoHeightInfo, IRowRange, ISize, IStyleData, ITextRotation, Nullable, Styles, Worksheet } from '@univerjs/core';
 import type { IDocumentSkeletonColumn } from '../../basics/i-document-skeleton-cached';
 import type { ITransformChangeState } from '../../basics/interfaces';
 import type { IBoundRectNoAngle, IPoint, IViewportInfo } from '../../basics/vector2';
 import type { Scene } from '../../scene';
-import type { BorderCache, IFontCacheItem, IStylesCache } from './interfaces';
+import type { IBorderCache, IFontCacheItem, IStylesCache } from './interfaces';
 import {
-    addLinkToDocumentModel,
     BooleanNumber,
+
     CellValueType,
+    ColorKit,
     DEFAULT_STYLES,
-    extractPureTextFromCell,
+    DocumentDataModel,
     getColorStyle,
+    getDisplayValueFromCell,
     HorizontalAlign,
+
     IConfigService,
     IContextService,
+
     Inject,
     Injector,
+
+    isCellCoverable,
+    isDefaultFormat,
+
     isNullCell,
+
     isWhiteColor,
+
     LocaleService,
+
+    numfmt,
     ObjectMatrix,
     Range,
     searchArray,
     SheetSkeleton,
+
+    ThemeService,
     Tools,
     VerticalAlign,
+
     WrapStrategy,
 } from '@univerjs/core';
 import { distinctUntilChanged, startWith } from 'rxjs';
 import { FontCache } from '../../basics';
-import { BORDER_TYPE as BORDER_LTRB, COLOR_BLACK_RGB, MAXIMUM_COL_WIDTH, MAXIMUM_ROW_HEIGHT, MIN_COL_WIDTH } from '../../basics/const';
+import { BORDER_TYPE, COLOR_BLACK_RGB, MAXIMUM_COL_WIDTH, MAXIMUM_ROW_HEIGHT, MIN_COL_WIDTH } from '../../basics/const';
 import { getRotateOffsetAndFarthestHypotenuse } from '../../basics/draw';
 import { convertTextRotation, VERTICAL_ROTATE_ANGLE } from '../../basics/text-rotation';
-import {
-    degToRad,
-    getFontStyleString,
-} from '../../basics/tools';
+import { degToRad, getFontStyleString } from '../../basics/tools';
 import { DocSimpleSkeleton } from '../docs/layout/doc-simple-skeleton';
 import { DocumentSkeleton } from '../docs/layout/doc-skeleton';
 import { columnIterator } from '../docs/layout/tools';
 import { DocumentViewModel } from '../docs/view-model/document-view-model';
-import { EXPAND_SIZE_FOR_RENDER_OVERFLOW, MEASURE_EXTENT, MEASURE_EXTENT_FOR_PARAGRAPH } from './constants';
+import { EXPAND_SIZE_FOR_RENDER_OVERFLOW, MEASURE_EXTENT, MEASURE_EXTENT_FOR_PARAGRAPH, shouldRenderRowText } from './constants';
 import { SHEET_VIEWPORT_KEY } from './interfaces';
-import { createDocumentModelWithStyle, extractOtherStyle, getFontFormat } from './util';
-
-interface ICellDocumentModelOption {
-    isDeepClone?: boolean;
-    displayRawFormula?: boolean;
-    ignoreTextRotation?: boolean;
-}
-
-const DEFAULT_CELL_DOCUMENT_MODEL_OPTION: ICellDocumentModelOption = {
-    isDeepClone: false,
-    displayRawFormula: false,
-    ignoreTextRotation: false,
-};
 
 interface IRowColumnRange extends IRowRange, IColumnRange { }
+
 export interface IDocumentLayoutObject {
     documentModel: Nullable<DocumentDataModel>;
     fontString: string;
@@ -114,9 +93,145 @@ export const DEFAULT_PADDING_DATA = {
 
 export const RENDER_RAW_FORMULA_KEY = 'RENDER_RAW_FORMULA';
 
+const GENERAL_NUMBER_MAX_SIGNIFICANT_DIGITS = 15;
+const GENERAL_NUMBER_RESERVE_GLYPH = '0';
+
+export function getShrinkToFitScale(contentWidth: number, availableWidth: number, fontSize: number): number {
+    if (contentWidth <= availableWidth || contentWidth <= 0 || availableWidth <= 0 || fontSize <= 0) {
+        return 1;
+    }
+
+    return Math.max(1 / fontSize, availableWidth / contentWidth);
+}
+
+export function getGeneralNumberDisplayText(
+    value: number,
+    displayText: string,
+    fontString: string,
+    availableWidth: number
+): string {
+    if (availableWidth <= 0) {
+        return displayText;
+    }
+
+    const roundingReserveWidth = FontCache.getMeasureText(GENERAL_NUMBER_RESERVE_GLYPH, fontString).width;
+    if (FontCache.getMeasureText(displayText, fontString).width + roundingReserveWidth <= availableWidth) {
+        return displayText;
+    }
+
+    let bestFit = '';
+    for (let decimalPlaces = 0; decimalPlaces < GENERAL_NUMBER_MAX_SIGNIFICANT_DIGITS; decimalPlaces++) {
+        const pattern = decimalPlaces === 0 ? '0E+00' : `0.${'#'.repeat(decimalPlaces)}E+00`;
+        const candidate = numfmt.format(pattern, value);
+        if (FontCache.getMeasureText(candidate, fontString).width + roundingReserveWidth > availableWidth) {
+            break;
+        }
+        bestFit = candidate;
+    }
+
+    if (bestFit) {
+        return bestFit;
+    }
+
+    if (Math.abs(value) < 1 && FontCache.getMeasureText('0', fontString).width < availableWidth) {
+        return '0';
+    }
+
+    const hashWidth = FontCache.getMeasureText('#', fontString).width;
+    if (hashWidth <= 0) {
+        return '#';
+    }
+    return '#'.repeat(Math.max(1, Math.floor(availableWidth / hashWidth)));
+}
+
+export function scaleDocumentDataForShrinkToFit(documentData: IDocumentData, scale: number, fallbackFontSize: number): IDocumentData {
+    const scaled = Tools.deepClone(documentData);
+    const defaultTextStyle = scaled.documentStyle.textStyle ?? {};
+    const defaultFontSize = defaultTextStyle.fs ?? fallbackFontSize;
+    scaled.documentStyle.textStyle = {
+        ...defaultTextStyle,
+        fs: defaultFontSize * scale,
+    };
+
+    scaled.body?.textRuns?.forEach((textRun) => {
+        const textStyle = textRun.ts ?? {};
+        textRun.ts = {
+            ...textStyle,
+            fs: (textStyle.fs ?? defaultFontSize) * scale,
+        };
+    });
+
+    return scaled;
+}
+
+function getResolvedRenderHorizontalAlign(
+    horizontalAlign: HorizontalAlign,
+    cellData: Nullable<ICellDataForSheetInterceptor>
+): HorizontalAlign {
+    if (horizontalAlign !== HorizontalAlign.UNSPECIFIED) {
+        return horizontalAlign;
+    }
+
+    if (cellData?.t === CellValueType.NUMBER || (!Tools.isDefine(cellData?.t) && typeof cellData?.v === 'number')) {
+        return HorizontalAlign.RIGHT;
+    }
+
+    if (cellData?.t === CellValueType.BOOLEAN) {
+        return HorizontalAlign.CENTER;
+    }
+
+    return horizontalAlign;
+}
+
+function setRenderTextCache(cacheItem: IFontCacheItem, cellData: Nullable<ICellDataForSheetInterceptor>): void {
+    if (cacheItem.documentSkeleton) {
+        cacheItem.displayText = undefined;
+        cacheItem.resolvedHorizontalAlign = undefined;
+        return;
+    }
+
+    cacheItem.displayText = getDisplayValueFromCell(cellData);
+    cacheItem.resolvedHorizontalAlign = getResolvedRenderHorizontalAlign(
+        cacheItem.horizontalAlign ?? HorizontalAlign.UNSPECIFIED,
+        cellData
+    );
+}
+
+function pushRowRange(ranges: IRange[], row: number, startColumn: number, endColumn: number): void {
+    if (endColumn < startColumn) {
+        return;
+    }
+
+    const last = ranges[ranges.length - 1];
+    if (last && last.startRow === row && last.endRow === row && last.endColumn + 1 === startColumn) {
+        last.endColumn = endColumn;
+        return;
+    }
+
+    ranges.push({
+        startRow: row,
+        endRow: row,
+        startColumn,
+        endColumn,
+    });
+}
+
 export interface ICacheItem {
     bg: boolean;
     border: boolean;
+}
+
+interface ISetStylesCacheForOneCellOptions {
+    mergeRange?: IRange;
+    cacheItem?: ICacheItem;
+    reuseExisting?: boolean;
+    hasMergeData?: boolean;
+    rowVisible?: boolean;
+    skipFontCache?: boolean;
+}
+
+export interface ISetStylesCacheOptions {
+    scaleY?: number;
 }
 
 export interface IGetPosByRowColOptions {
@@ -148,11 +263,13 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
 
     // private _dataMergeCache: IRange[] = [];
     private _overflowCache: ObjectMatrix<IRange> = new ObjectMatrix();
+
+    private _incrementalFontRenderRanges: IRange[] = [];
     private _stylesCache: IStylesCache = {
         background: {},
         backgroundPositions: new ObjectMatrix<ICellWithCoord>(),
         fontMatrix: new ObjectMatrix<IFontCacheItem>(),
-        border: new ObjectMatrix<BorderCache>(),
+        border: new ObjectMatrix<IBorderCache>(),
     };
 
     private _clearTaskId: Nullable<number> = null;
@@ -161,6 +278,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
     private _handleBorderMatrix = new ObjectMatrix<boolean>();
     private _showGridlines: BooleanNumber = BooleanNumber.TRUE;
     private _gridlinesColor: string | undefined = undefined;
+    private _defaultGridlinesColor!: string;
     private _scene: Nullable<Scene> = null;
 
     constructor(
@@ -172,6 +290,14 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         @Inject(Injector) _injector: Injector
     ) {
         super(worksheet, _styles, _localeService, _contextService, _configService, _injector);
+        const themeService = _injector.get(ThemeService);
+        this.disposeWithMe(themeService.currentTheme$.subscribe(() => {
+            const gray200 = themeService.getColorFromTheme('gray.200');
+            const gray900 = themeService.getColorFromTheme('gray.900');
+            this._defaultGridlinesColor = ColorKit.mix(gray200, gray900, 0.07).toHexString();
+            this._scene?.getViewports().forEach((viewport) => viewport.markDirty(true));
+            this._scene?.makeDirty(true);
+        }));
         this._updateLayout();
         this.disposeWithMe(
             this._contextService.subscribeContextValue$(RENDER_RAW_FORMULA_KEY).pipe(
@@ -237,12 +363,20 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         return this._overflowCache;
     }
 
+    get incrementalFontRenderRanges(): IRange[] {
+        return this._incrementalFontRenderRanges;
+    }
+
     get showGridlines(): BooleanNumber {
         return this._showGridlines;
     }
 
     get gridlinesColor(): string | undefined {
         return this._gridlinesColor;
+    }
+
+    get defaultGridlinesColor(): string {
+        return this._defaultGridlinesColor;
     }
 
     override dispose(): void {
@@ -258,18 +392,11 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             background: {},
             backgroundPositions: new ObjectMatrix<ICellWithCoord>(),
             fontMatrix: new ObjectMatrix<IFontCacheItem>(),
-            border: new ObjectMatrix<BorderCache>(),
+            border: new ObjectMatrix<IBorderCache>(),
         };
         this._handleBgMatrix.reset();
         this._handleBorderMatrix.reset();
         this._overflowCache.reset();
-    }
-
-    /**
-     * @deprecated should never expose a property that is provided by another module!
-     */
-    getStyles(): Styles {
-        return this._styles;
     }
 
     setOverflowCache(value: ObjectMatrix<IRange>): void {
@@ -345,8 +472,10 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
     /**
      * Set border background and font to this._stylesCache by visible range, which derives from bounds)
      * @param vpInfo viewBounds
+     * @param options screen scale
      */
-    setStylesCache(vpInfo?: IViewportInfo): Nullable<SpreadsheetSkeleton> {
+    // eslint-disable-next-line max-lines-per-function, complexity
+    setStylesCache(vpInfo?: IViewportInfo, options?: ISetStylesCacheOptions): Nullable<SpreadsheetSkeleton> {
         if (!this._worksheetData) return;
         if (!this.rowHeightAccumulation || !this.columnWidthAccumulation) return;
 
@@ -354,67 +483,121 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
 
         const rowColumnSegment = this._drawingRange;
         const columnWidthAccumulation = this.columnWidthAccumulation;
-        const { startRow: visibleStartRow, endRow: visibleEndRow, startColumn: visibleStartColumn, endColumn: visibleEndColumn } = rowColumnSegment;
+        const isIncrementalScroll = !!vpInfo && !vpInfo.isDirty && !vpInfo.isForceDirty && (
+            !!vpInfo.diffBounds?.length ||
+            !!vpInfo.diffCacheBounds?.length ||
+            !!vpInfo.diffX ||
+            !!vpInfo.diffY
+        );
+        const hasMergeData = this.worksheet.getMergeData().length > 0;
+        const shouldRefreshCacheForScroll = isIncrementalScroll && !!vpInfo.shouldCacheUpdate && !!vpInfo.diffX;
+        const shouldUseIncrementalStyleRange = isIncrementalScroll && !shouldRefreshCacheForScroll;
+        const styleRanges = shouldUseIncrementalStyleRange
+            ? (vpInfo.shouldCacheUpdate ? (vpInfo.diffCacheBounds?.map((bound) => this.getRangeByViewBound(bound)) ?? []) : [])
+            : [rowColumnSegment];
+        const visibleCellOptions: ISetStylesCacheForOneCellOptions = { cacheItem: { bg: true, border: true }, reuseExisting: isIncrementalScroll, hasMergeData, rowVisible: true };
+        const shortRowVisibleCellOptions: ISetStylesCacheForOneCellOptions = { ...visibleCellOptions, skipFontCache: true };
+        const overflowCellOptions: ISetStylesCacheForOneCellOptions = { cacheItem: { bg: false, border: false }, reuseExisting: isIncrementalScroll, hasMergeData, rowVisible: true };
+        const scaleY = options?.scaleY ?? 1;
+        const hasRenderContext = options !== undefined;
+        this._incrementalFontRenderRanges = [];
 
         // clear cache out of visible range
         // this._clearCacheOutOfVisibleRange(visibleStartRow, visibleEndRow, visibleStartColumn, visibleEndColumn);
 
-        if (visibleEndColumn === -1 || visibleEndRow === -1) return;
+        for (const styleRange of styleRanges) {
+            const { startRow: visibleStartRow, endRow: visibleEndRow, startColumn: visibleStartColumn, endColumn: visibleEndColumn } = styleRange;
 
-        const mergeVisibleRanges: IRange[] = [];
-        let mergeVisibleRangeStartRow = visibleStartRow;
+            if (visibleEndColumn === -1 || visibleEndRow === -1) continue;
 
-        // expandStartCol & expandEndCol is slightly expand curr col range. This is for calculating text for overflow situations.
-        const expandStartCol = Math.max(0, visibleStartColumn - EXPAND_SIZE_FOR_RENDER_OVERFLOW);
-        const expandEndCol = Math.min(columnWidthAccumulation.length - 1, visibleEndColumn + EXPAND_SIZE_FOR_RENDER_OVERFLOW);
-        for (let r = visibleStartRow; r <= visibleEndRow; r++) {
-            if (this.worksheet.getRowVisible(r) === false) {
-                if (mergeVisibleRangeStartRow < r) {
+            const mergeVisibleRanges: IRange[] = [];
+            let mergeVisibleRangeStartRow = visibleStartRow;
+
+            // expandStartCol & expandEndCol is slightly expand curr col range. This is for calculating text for overflow situations.
+            const expandStartCol = Math.max(0, visibleStartColumn - EXPAND_SIZE_FOR_RENDER_OVERFLOW);
+            const expandEndCol = Math.min(columnWidthAccumulation.length - 1, visibleEndColumn + EXPAND_SIZE_FOR_RENDER_OVERFLOW);
+            for (let r = visibleStartRow; r <= visibleEndRow; r++) {
+                if (this.worksheet.getRowVisible(r) === false) {
+                    if (mergeVisibleRangeStartRow < r) {
+                        mergeVisibleRanges.push({
+                            startRow: mergeVisibleRangeStartRow,
+                            endRow: r - 1,
+                            startColumn: visibleStartColumn,
+                            endColumn: visibleEndColumn,
+                        });
+                    }
+                    mergeVisibleRangeStartRow = r + 1;
+                    continue;
+                };
+
+                if (r === visibleEndRow) {
                     mergeVisibleRanges.push({
                         startRow: mergeVisibleRangeStartRow,
-                        endRow: r - 1,
+                        endRow: r,
                         startColumn: visibleStartColumn,
                         endColumn: visibleEndColumn,
                     });
                 }
-                mergeVisibleRangeStartRow = r + 1;
-                continue;
-            };
 
-            if (r === visibleEndRow) {
-                mergeVisibleRanges.push({
-                    startRow: mergeVisibleRangeStartRow,
-                    endRow: r,
-                    startColumn: visibleStartColumn,
-                    endColumn: visibleEndColumn,
+                const rowStartPosition = this.rowHeightAccumulation[r - 1] ?? 0;
+                const rowEndPosition = this.rowHeightAccumulation[r] ?? rowStartPosition;
+                const rowGap = this.gapConfig?.rowGaps?.[r]?.size ?? 0;
+                const rowHeight = Math.max(0, rowEndPosition - rowStartPosition - rowGap);
+                // Merged-cell fonts are cached by the dedicated merge pass below.
+                const skipFontCacheForRow = hasRenderContext && !shouldRenderRowText(rowHeight, scaleY);
+                const cellOptions = skipFontCacheForRow ? shortRowVisibleCellOptions : visibleCellOptions;
+                for (let c = visibleStartColumn; c <= visibleEndColumn; c++) {
+                    this._setStylesCacheForOneCell(r, c, cellOptions);
+                }
+                if (shouldUseIncrementalStyleRange && !skipFontCacheForRow) {
+                    pushRowRange(this._incrementalFontRenderRanges, r, visibleStartColumn, visibleEndColumn);
+                }
+
+                if (skipFontCacheForRow) {
+                    continue;
+                }
+
+                // Calculate text length for overflow cells just outside the visible range.
+                for (let c = visibleStartColumn - 1; c >= expandStartCol; c--) {
+                    this._setStylesCacheForOneCell(r, c, overflowCellOptions);
+                    if (shouldUseIncrementalStyleRange) {
+                        pushRowRange(this._incrementalFontRenderRanges, r, c, c);
+                    }
+                    const cell = this.worksheet.getCell(r, c);
+                    if (!isCellCoverable(cell) || (hasMergeData && this.intersectMergeRange(r, c))) {
+                        break;
+                    }
+                }
+                if (visibleEndColumn === 0) continue;
+
+                // Calculate text length for overflow cells just outside the visible range.
+                for (let c = visibleEndColumn + 1; c <= expandEndCol; c++) {
+                    this._setStylesCacheForOneCell(r, c, overflowCellOptions);
+                    if (shouldUseIncrementalStyleRange) {
+                        pushRowRange(this._incrementalFontRenderRanges, r, c, c);
+                    }
+                    const cell = this.worksheet.getCell(r, c);
+                    if (!isCellCoverable(cell) || (hasMergeData && this.intersectMergeRange(r, c))) {
+                        break;
+                    }
+                }
+            }
+
+            const mergeRanges: IRange[] = [];
+            for (const mergeVisibleRange of mergeVisibleRanges) {
+                const mergeRangeInVisible = this.getCurrentRowColumnSegmentMergeData(mergeVisibleRange);
+                mergeRanges.push(...mergeRangeInVisible);
+            }
+            for (const mergeRange of mergeRanges) {
+                this._setStylesCacheForOneCell(mergeRange.startRow, mergeRange.startColumn, {
+                    mergeRange,
+                    reuseExisting: isIncrementalScroll,
+                    hasMergeData,
                 });
+                if (shouldUseIncrementalStyleRange) {
+                    pushRowRange(this._incrementalFontRenderRanges, mergeRange.startRow, mergeRange.startColumn, mergeRange.startColumn);
+                }
             }
-
-            for (let c = visibleStartColumn; c <= visibleEndColumn; c++) {
-                this._setStylesCacheForOneCell(r, c, { cacheItem: { bg: true, border: true } });
-            }
-
-            // Calculate the text length for overflow situations, focusing on the leftmost column within the visible range.
-            for (let c = expandStartCol; c < visibleEndColumn; c++) {
-                this._setStylesCacheForOneCell(r, c, { cacheItem: { bg: false, border: false } });
-            }
-            if (visibleEndColumn === 0) continue;
-
-            // Calculate the text length for overflow situations, focusing on the rightmost column within the visible range.
-            for (let c = visibleEndColumn + 1; c < expandEndCol; c++) {
-                this._setStylesCacheForOneCell(r, c, { cacheItem: { bg: false, border: false } });
-            }
-        }
-
-        const mergeRanges: IRange[] = [];
-        for (const mergeVisibleRange of mergeVisibleRanges) {
-            const mergeRangeInVisible = this.getCurrentRowColumnSegmentMergeData(mergeVisibleRange);
-            mergeRanges.push(...mergeRangeInVisible);
-        }
-        for (const mergeRange of mergeRanges) {
-            this._setStylesCacheForOneCell(mergeRange.startRow, mergeRange.startColumn, {
-                mergeRange,
-            });
         }
 
         return this;
@@ -546,7 +729,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         colWidth -= sideGap;
 
         if (isRichText) {
-            const modelObject = cell && this.worksheet.getCellDocumentModel(cell, style);
+            const modelObject = cell && this.worksheet.getCellDocumentModel(cell, style, { isDeepClone: true });
             if (modelObject == null) {
                 return undefined;
             }
@@ -600,7 +783,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
 
             if (style?.tb === WrapStrategy.WRAP) {
                 const skeleton = new DocSimpleSkeleton(
-                    `${cell!.v!}`,
+                    getDisplayValueFromCell(cell),
                     getFontStyleString(style).fontCache,
                     style?.tb === WrapStrategy.WRAP,
                     colWidth - paddingLeft - paddingRight,
@@ -774,7 +957,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             }
         }
         const style = this.worksheet.getComposedCellStyleByCellData(row, column, cell);
-        const modelObject = this.worksheet.getCellDocumentModel(cell, style);
+        const modelObject = this.worksheet.getCellDocumentModel(cell, style, { isDeepClone: true });
         if (modelObject == null) {
             return measuredWidth;
         }
@@ -820,14 +1003,6 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         return measuredWidth;
     };
     //#endregion
-
-    /**
-     * @deprecated use `getRangeByViewport` instead.
-     * @param bounds
-     */
-    getRangeByBounding(bounds?: IViewportInfo): IRange {
-        return this._getRangeByViewBounding(this.rowHeightAccumulation, this.columnWidthAccumulation, bounds?.cacheBound);
-    }
 
     getRangeByViewport(vpInfo?: IViewportInfo): IRange {
         return this._getRangeByViewBounding(this.rowHeightAccumulation, this.columnWidthAccumulation, vpInfo?.viewBound);
@@ -876,35 +1051,35 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         };
     }
 
-    /**
-     * Get cell by pos(offsetX, offsetY).
-     * @deprecated Please use `getCellWithCoordByOffset` instead.
-     */
-    calculateCellIndexByPosition(
-        offsetX: number,
-        offsetY: number,
-        scaleX: number,
-        scaleY: number,
-        scrollXY: { x: number; y: number }
-    ): Nullable<ICellWithCoord> {
-        return this.getCellWithCoordByOffset(offsetX, offsetY, scaleX, scaleY, scrollXY);
+    private _isOverflowBlockedByAdjacentCell(row: number, column: number, horizontalAlign: HorizontalAlign, hasMergeData = true): boolean {
+        const leftBlocked = () => this._isOverflowSideBlocked(row, column, -1, hasMergeData);
+        const rightBlocked = () => this._isOverflowSideBlocked(row, column, 1, hasMergeData);
+
+        if (horizontalAlign === HorizontalAlign.CENTER) {
+            return leftBlocked() && rightBlocked();
+        }
+
+        if (horizontalAlign === HorizontalAlign.RIGHT) {
+            return leftBlocked();
+        }
+
+        return rightBlocked();
     }
 
-    /**
-     * This method has the same implementation as `getCellIndexByOffset`,
-     * but uses a different name to maintain backward compatibility with previous calls.
-     *
-     * @deprecated Please use `getCellIndexByOffset` method instead.
-     */
-    getCellPositionByOffset(
-        offsetX: number,
-        offsetY: number,
-        scaleX: number,
-        scaleY: number,
-        scrollXY: { x: number; y: number },
-        options?: IGetRowColByPosOptions
-    ): { row: number; column: number } {
-        return this.getCellIndexByOffset(offsetX, offsetY, scaleX, scaleY, scrollXY, options);
+    private _isOverflowSideBlocked(row: number, column: number, direction: -1 | 1, hasMergeData = true): boolean {
+        const adjacentColumn = column + direction;
+        if (adjacentColumn < 0 || adjacentColumn >= this.getColumnCount()) {
+            return true;
+        }
+
+        const rawAdjacentCell = this._cellData.getValue(row, adjacentColumn);
+        if (rawAdjacentCell && !isCellCoverable(rawAdjacentCell)) {
+            return true;
+        }
+
+        const cachedAdjacentCell = this._stylesCache.fontMatrix.getValue(row, adjacentColumn)?.cellData;
+        const adjacentCell = cachedAdjacentCell ?? this.worksheet.getCell(row, adjacentColumn);
+        return !isCellCoverable(adjacentCell) || (hasMergeData && this.intersectMergeRange(row, adjacentColumn));
     }
 
     getCellWithMergeInfoByIndex(row: number, column: number): Nullable<ICellInfo> {
@@ -913,203 +1088,12 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
     }
 
     /**
-     * Same as getColumnIndexByOffsetX
-     * @deprecated Please use `getColumnIndexByOffsetX` method instead.
-     */
-    getColumnPositionByOffsetX(offsetX: number, scaleX: number, scrollXY: { x: number; y: number }, options?: IGetRowColByPosOptions): number {
-        return this.getColumnIndexByOffsetX(offsetX, scaleX, scrollXY, options);
-    }
-
-    /**
-     * Same as getRowIndexByOffsetY
-     * @deprecated Please use `getRowIndexByOffsetY` method instead.
-     */
-    getRowPositionByOffsetY(offsetY: number, scaleY: number, scrollXY: { x: number; y: number }, options?: IGetRowColByPosOptions): number {
-        return this.getRowIndexByOffsetY(offsetY, scaleY, scrollXY, options);
-    }
-
-    /**
-     * Same as getCellWithCoordByIndex, but uses a different name to maintain backward compatibility with previous calls.
-     * @deprecated Please use `getCellWithCoordByIndex` instead.
-     */
-    getCellByIndex(row: number, column: number): ICellWithCoord {
-        return this.getCellWithCoordByIndex(row, column);
-    }
-
-    /**
-     * @deprecated Please use `getCellWithCoordByIndex(row, col, false)` instead.
-     * @param row
-     * @param column
-     */
-    getCellByIndexWithNoHeader(row: number, column: number) {
-        return this.getCellWithCoordByIndex(row, column, false);
-    }
-
-    /**
-     * Only used for cell edit, and no need to rotate text when edit cell content!
-     * @deprecated use same method in worksheet.
-     * @param cell
-     */
-    getBlankCellDocumentModel(cell: Nullable<ICellData>): IDocumentLayoutObject {
-        const documentModelObject = this._getCellDocumentModel(cell, { ignoreTextRotation: true });
-
-        const style = this._styles.getStyleByCell(cell);
-        const textStyle = getFontFormat(style);
-
-        if (documentModelObject != null) {
-            if (documentModelObject.documentModel == null) {
-                documentModelObject.documentModel = createDocumentModelWithStyle('', textStyle);
-            }
-            return documentModelObject;
-        }
-
-        const content = '';
-
-        let fontString = 'document';
-
-        const textRotation: ITextRotation = DEFAULT_STYLES.tr;
-        const horizontalAlign: HorizontalAlign = DEFAULT_STYLES.ht;
-        const verticalAlign: VerticalAlign = DEFAULT_STYLES.vt;
-        const wrapStrategy: WrapStrategy = DEFAULT_STYLES.tb;
-        const paddingData: IPaddingData = DEFAULT_PADDING_DATA;
-
-        fontString = getFontStyleString({}).fontCache;
-
-        const documentModel = createDocumentModelWithStyle(content, textStyle);
-
-        return {
-            documentModel,
-            fontString,
-            textRotation,
-            wrapStrategy,
-            verticalAlign,
-            horizontalAlign,
-            paddingData,
-        };
-    }
-
-    /**
-     * Only used for cell edit, and no need to rotate text when edit cell content!
-     * @deprecated use same method in worksheet.
-     * @param cell
-     */
-    getCellDocumentModelWithFormula(cell: ICellData): Nullable<IDocumentLayoutObject> {
-        return this._getCellDocumentModel(cell, {
-            isDeepClone: true,
-            displayRawFormula: true,
-            ignoreTextRotation: true,
-        });
-    }
-
-    /**
-     * This method generates a document model based on the cell's properties and handles the associated styles and configurations.
-     * If the cell does not exist, it will return null.
-     *
-     * @deprecated use same method in worksheet.
-     * PS: This method has significant impact on performance.
-     * @param cell
-     * @param options
-     */
-    // eslint-disable-next-line complexity, max-lines-per-function
-    private _getCellDocumentModel(
-        cell: Nullable<ICellDataForSheetInterceptor>,
-        options: ICellDocumentModelOption = DEFAULT_CELL_DOCUMENT_MODEL_OPTION
-    ): Nullable<IDocumentLayoutObject> {
-        const { isDeepClone, displayRawFormula, ignoreTextRotation } = {
-            ...DEFAULT_CELL_DOCUMENT_MODEL_OPTION,
-            ...options,
-        };
-
-        const style = this._styles.getStyleByCell(cell);
-
-        if (!cell) return;
-
-        let documentModel: Nullable<DocumentDataModel>;
-        let fontString = 'document';
-        const cellOtherConfig = extractOtherStyle(style);
-
-        const textRotation: ITextRotation = ignoreTextRotation
-            ? DEFAULT_STYLES.tr
-            : cellOtherConfig.textRotation || DEFAULT_STYLES.tr;
-        let horizontalAlign: HorizontalAlign = cellOtherConfig.horizontalAlign || DEFAULT_STYLES.ht;
-        const verticalAlign: VerticalAlign = cellOtherConfig.verticalAlign || DEFAULT_STYLES.vt;
-        const wrapStrategy: WrapStrategy = cellOtherConfig.wrapStrategy || DEFAULT_STYLES.tb;
-        const paddingData: IPaddingData = cellOtherConfig.paddingData || DEFAULT_PADDING_DATA;
-
-        if (cell.f && displayRawFormula) {
-            // The formula does not detect horizontal alignment and rotation.
-            documentModel = createDocumentModelWithStyle(cell.f.toString(), {}, { verticalAlign });
-            horizontalAlign = DEFAULT_STYLES.ht;
-        } else if (cell.p) {
-            const { centerAngle, vertexAngle } = convertTextRotation(textRotation);
-            documentModel = this._updateConfigAndGetDocumentModel(
-                isDeepClone ? Tools.deepClone(cell.p) : cell.p,
-                horizontalAlign,
-                paddingData,
-                {
-                    horizontalAlign,
-                    verticalAlign,
-                    centerAngle,
-                    vertexAngle,
-                    wrapStrategy,
-                    zeroWidthParagraphBreak: 1,
-                }
-            );
-        } else if (cell.v != null) {
-            const textStyle = getFontFormat(style);
-            fontString = getFontStyleString(textStyle).fontCache;
-
-            let cellText = extractPureTextFromCell(cell);
-
-            // Add a single quotation mark to the force string type. Don't add single quotation mark in extractPureTextFromCell, because copy and paste will be affected.
-            // edit mode when displayRawFormula is true
-            if (cell.t === CellValueType.FORCE_STRING && displayRawFormula) {
-                cellText = `'${cellText}`;
-            }
-            documentModel = createDocumentModelWithStyle(cellText, textStyle, {
-                ...cellOtherConfig,
-                textRotation,
-                cellValueType: cell.t!,
-            });
-        }
-
-        // This is a compatible code. cc @weird94
-        if (documentModel && cell.linkUrl && cell.linkId) {
-            addLinkToDocumentModel(documentModel, cell.linkUrl, cell.linkId);
-        }
-
-        /**
-         * the alignment mode is returned with respect to the offset of the sheet cell,
-         * because the document needs to render the layout for cells and
-         * support alignment across multiple cells (e.g., horizontal alignment of long text in overflow mode).
-         * The alignment mode of the document itself cannot meet this requirement,
-         * so an additional renderConfig needs to be added during the rendering of the document component.
-         * This means that there are two coexisting alignment modes.
-         * In certain cases, such as in an editor, conflicts may arise,
-         * requiring only one alignment mode to be retained.
-         * By removing the relevant configurations in renderConfig,
-         * the alignment mode of the sheet cell can be modified.
-         * The alternative alignment mode is applied to paragraphs within the document.
-         */
-        return {
-            documentModel,
-            fontString,
-            textRotation,
-            wrapStrategy,
-            verticalAlign,
-            horizontalAlign,
-            paddingData,
-            fill: style?.bg?.rgb,
-        };
-    }
-
-    /**
      * Calculate the overflow of cell text. If there is no value on either side of the cell,
      * the text content of this cell can be drawn to both sides, not limited by the cell's width.
      * Overflow on the left or right is aligned according to the text's horizontal alignment.
      */
     // eslint-disable-next-line complexity, max-lines-per-function
-    private _calculateOverflowCell(row: number, column: number, docsConfig: IFontCacheItem): boolean {
+    private _calculateOverflowCell(row: number, column: number, docsConfig: IFontCacheItem, hasMergeData = true): boolean {
         // wrap and angle handler
         const { documentSkeleton, vertexAngle = 0, centerAngle = 0, horizontalAlign, wrapStrategy } = docsConfig;
         const cell = this._cellData.getValue(row, column);
@@ -1126,7 +1110,6 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
                 horizontalAlignPos = HorizontalAlign.RIGHT;
             }
         }
-
         /**
          * Numerical and Boolean values are not displayed with overflow.
          */
@@ -1136,8 +1119,18 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             cellValueType !== CellValueType.BOOLEAN &&
             horizontalAlign !== HorizontalAlign.JUSTIFIED
         ) {
+            docsConfig.textFitsCurrentCell = false;
             // Merged cells do not support overflow.
-            if (this.intersectMergeRange(row, column)) {
+            if (hasMergeData && this.intersectMergeRange(row, column)) {
+                return true;
+            }
+
+            const columnStart = this.columnWidthAccumulation[column - 1] || 0;
+            const columnEnd = this.columnWidthAccumulation[column] || columnStart;
+            const currentColumnWidth = columnEnd - columnStart;
+            const rawText = docsConfig.cellData?.p?.body?.dataStream ?? docsConfig.cellData?.v;
+            const mayOverflowCurrentColumn = Boolean(documentSkeleton) || `${rawText ?? ''}`.length * 4 > currentColumnWidth;
+            if (mayOverflowCurrentColumn && this._isOverflowBlockedByAdjacentCell(row, column, horizontalAlignPos, hasMergeData)) {
                 return true;
             }
 
@@ -1173,6 +1166,11 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
                 }
             }
 
+            if (contentSize.width < currentColumnWidth) {
+                docsConfig.textFitsCurrentCell = true;
+                return true;
+            }
+
             const position = this.getOverflowPosition(contentSize, horizontalAlignPos, row, column, this.getColumnCount());
 
             const { startColumn, endColumn } = position;
@@ -1184,7 +1182,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             this.appendToOverflowCache(row, column, startColumn, endColumn);
         } else if (wrapStrategy === WrapStrategy.WRAP && vertexAngle !== 0) {
             // Merged cells do not support overflow.
-            if (this.intersectMergeRange(row, column)) {
+            if (hasMergeData && this.intersectMergeRange(row, column)) {
                 return true;
             }
 
@@ -1250,7 +1248,8 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         const endY = Math.round(viewBound.bottom) - this.columnHeaderHeightAndMarginTop;
         let endRow = searchArray(rowHeightAccumulation, endY);
         // If the endY is exactly on the boundary, need to minus 1 to get the correct endRow.
-        if (endRow < lenOfRowData && rowHeightAccumulation[endRow - 1] === endY) {
+        const isEndYOnBoundary = endRow < lenOfRowData && rowHeightAccumulation[endRow - 1] === endY;
+        if (isEndYOnBoundary) {
             endRow -= 1;
         }
 
@@ -1259,17 +1258,19 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         const endX = Math.round(viewBound.right) - this.rowHeaderWidthAndMarginLeft;
         let endColumn = searchArray(columnWidthAccumulation, endX);
         // If the endX is exactly on the boundary, need to minus 1 to get the correct endColumn.
-        if (endColumn < lenOfColData && columnWidthAccumulation[endColumn - 1] === endX) {
+        const isEndXOnBoundary = endColumn < lenOfColData && columnWidthAccumulation[endColumn - 1] === endX;
+        if (isEndXOnBoundary) {
             endColumn -= 1;
         }
 
-        // If the get range is used for visible range, the endRow and endColumn need to minus 1.
+        // Printing excludes a row or column reached only by a small viewport overlap.
+        // An exact boundary was already adjusted above and must not be decremented twice.
         if (isPrinting) {
             return {
                 startRow,
-                endRow: endRow === lenOfRowData - 1 ? endRow : endRow - 1,
+                endRow: endRow === lenOfRowData - 1 || isEndYOnBoundary ? endRow : endRow - 1,
                 startColumn,
-                endColumn: endColumn === lenOfColData - 1 ? endColumn : endColumn - 1,
+                endColumn: endColumn === lenOfColData - 1 || isEndXOnBoundary ? endColumn : endColumn - 1,
             };
         }
 
@@ -1314,7 +1315,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             background: {},
             backgroundPositions: new ObjectMatrix<ICellWithCoord>(),
             fontMatrix: new ObjectMatrix<IFontCacheItem>(),
-            border: new ObjectMatrix<BorderCache>(),
+            border: new ObjectMatrix<IBorderCache>(),
         };
 
         this._handleBgMatrix?.reset();
@@ -1327,17 +1328,21 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             const range = ranges[i];
             Range.foreach(range, (row, col) => {
                 this._stylesCache.fontMatrix.realDeleteValue(row, col);
+                this._stylesCache.border?.realDeleteValue(row, col);
+                this._stylesCache.backgroundPositions?.realDeleteValue(row, col);
+                this._handleBgMatrix.realDeleteValue(row, col);
+                this._handleBorderMatrix.realDeleteValue(row, col);
+                Object.values(this._stylesCache.background ?? {}).forEach((backgroundMatrix) => {
+                    backgroundMatrix.realDeleteValue(row, col);
+                });
             });
         }
         this.makeDirty(true);
     }
 
-    _setBorderStylesCache(row: number, col: number, style: Nullable<IStyleData>, options: {
-        mergeRange?: IRange;
-        cacheItem?: ICacheItem;
-    } | undefined) {
+    _setBorderStylesCache(row: number, col: number, style: Nullable<IStyleData>, options: ISetStylesCacheForOneCellOptions | undefined) {
         const handledThisCell = Tools.isDefine(this._handleBorderMatrix.getValue(row, col));
-        if (handledThisCell) return;
+        if (handledThisCell && !options?.mergeRange) return;
         // by default, style cache should includes border and background info.
         const cacheItem = options?.cacheItem || { bg: true, border: true };
         if (!cacheItem.border) return;
@@ -1346,30 +1351,27 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         if (style && style.bd) {
             const mergeRange = options?.mergeRange;
             if (mergeRange) {
-                this._setMergeBorderProps(BORDER_LTRB.TOP, this._stylesCache, mergeRange);
-                this._setMergeBorderProps(BORDER_LTRB.BOTTOM, this._stylesCache, mergeRange);
-                this._setMergeBorderProps(BORDER_LTRB.LEFT, this._stylesCache, mergeRange);
-                this._setMergeBorderProps(BORDER_LTRB.RIGHT, this._stylesCache, mergeRange);
+                this._setMergeBorderProps(BORDER_TYPE.TOP, this._stylesCache, mergeRange);
+                this._setMergeBorderProps(BORDER_TYPE.BOTTOM, this._stylesCache, mergeRange);
+                this._setMergeBorderProps(BORDER_TYPE.LEFT, this._stylesCache, mergeRange);
+                this._setMergeBorderProps(BORDER_TYPE.RIGHT, this._stylesCache, mergeRange);
             } else if (!this.intersectMergeRange(row, col)) {
-                this._setBorderProps(row, col, BORDER_LTRB.TOP, style, this._stylesCache);
-                this._setBorderProps(row, col, BORDER_LTRB.BOTTOM, style, this._stylesCache);
-                this._setBorderProps(row, col, BORDER_LTRB.LEFT, style, this._stylesCache);
-                this._setBorderProps(row, col, BORDER_LTRB.RIGHT, style, this._stylesCache);
+                this._setBorderProps(row, col, BORDER_TYPE.TOP, style, this._stylesCache);
+                this._setBorderProps(row, col, BORDER_TYPE.BOTTOM, style, this._stylesCache);
+                this._setBorderProps(row, col, BORDER_TYPE.LEFT, style, this._stylesCache);
+                this._setBorderProps(row, col, BORDER_TYPE.RIGHT, style, this._stylesCache);
             }
 
-            this._setBorderProps(row, col, BORDER_LTRB.TL_BR, style, this._stylesCache);
-            this._setBorderProps(row, col, BORDER_LTRB.TL_BC, style, this._stylesCache);
-            this._setBorderProps(row, col, BORDER_LTRB.TL_MR, style, this._stylesCache);
-            this._setBorderProps(row, col, BORDER_LTRB.BL_TR, style, this._stylesCache);
-            this._setBorderProps(row, col, BORDER_LTRB.ML_TR, style, this._stylesCache);
-            this._setBorderProps(row, col, BORDER_LTRB.BC_TR, style, this._stylesCache);
+            this._setBorderProps(row, col, BORDER_TYPE.TL_BR, style, this._stylesCache);
+            this._setBorderProps(row, col, BORDER_TYPE.TL_BC, style, this._stylesCache);
+            this._setBorderProps(row, col, BORDER_TYPE.TL_MR, style, this._stylesCache);
+            this._setBorderProps(row, col, BORDER_TYPE.BL_TR, style, this._stylesCache);
+            this._setBorderProps(row, col, BORDER_TYPE.ML_TR, style, this._stylesCache);
+            this._setBorderProps(row, col, BORDER_TYPE.BC_TR, style, this._stylesCache);
         }
     }
 
-    _setBgStylesCache(row: number, col: number, style: Nullable<IStyleData>, options: {
-        mergeRange?: IRange;
-        cacheItem?: ICacheItem;
-    } | undefined) {
+    _setBgStylesCache(row: number, col: number, style: Nullable<IStyleData>, options: ISetStylesCacheForOneCellOptions | undefined) {
         const handledThisCell = Tools.isDefine(this._handleBgMatrix.getValue(row, col));
         if (handledThisCell) return;
         // by default, style cache should includes border and background info.
@@ -1390,7 +1392,85 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         }
     }
 
-    _setFontStylesCache(row: number, col: number, cellData: Nullable<ICellDataForSheetInterceptor>, style: IStyleData) {
+    private _applyShrinkToFit(row: number, col: number, fontCache: IFontCacheItem, style: IStyleData): void {
+        if (style.stf !== BooleanNumber.TRUE) {
+            return;
+        }
+
+        const cellInfo = this.getCellWithCoordByIndex(row, col, false);
+        const startX = cellInfo.isMergedMainCell ? cellInfo.mergeInfo.startX : cellInfo.startX;
+        const endX = cellInfo.isMergedMainCell ? cellInfo.mergeInfo.endX : cellInfo.endX;
+        const padding = style.pd ?? DEFAULT_PADDING_DATA;
+        const extension = fontCache.cellData?.fontRenderExtension;
+        const availableWidth = endX - startX
+            - (padding.l ?? DEFAULT_PADDING_DATA.l)
+            - (padding.r ?? DEFAULT_PADDING_DATA.r)
+            - (extension?.leftOffset ?? 0)
+            - (extension?.rightOffset ?? 0);
+        const fallbackFontSize = style.fs ?? DEFAULT_STYLES.fs;
+        const contentWidth = fontCache.documentSkeleton
+            ? (getDocsSkeletonPageSize(fontCache.documentSkeleton, fontCache.vertexAngle) ?? { width: 0 }).width
+            : FontCache.getMeasureText(
+                fontCache.displayText ?? getDisplayValueFromCell(fontCache.cellData),
+                fontCache.fontString
+            ).width;
+        const scale = getShrinkToFitScale(contentWidth, availableWidth, fallbackFontSize);
+
+        if (scale >= 1) {
+            return;
+        }
+
+        fontCache.shrinkScale = scale;
+        if (fontCache.documentSkeleton) {
+            const snapshot = fontCache.documentSkeleton.getViewModel().getDataModel().getSnapshot();
+            const documentModel = new DocumentDataModel(scaleDocumentDataForShrinkToFit(snapshot, scale, fallbackFontSize));
+            const documentSkeleton = DocumentSkeleton.create(new DocumentViewModel(documentModel), this._localeService);
+            documentSkeleton.calculate();
+            fontCache.documentSkeleton = documentSkeleton;
+        } else {
+            fontCache.fontString = getFontStyleString({
+                ...style,
+                fs: fallbackFontSize * scale,
+            }).fontCache;
+        }
+    }
+
+    private _applyGeneralNumberDisplay(row: number, col: number, fontCache: IFontCacheItem, style: IStyleData): void {
+        const cellData = fontCache.cellData;
+        if (!cellData || style.stf === BooleanNumber.TRUE || fontCache.documentSkeleton) {
+            return;
+        }
+        if (!isDefaultFormat(style.n?.pattern)) {
+            return;
+        }
+        if (cellData.t !== CellValueType.NUMBER && (Tools.isDefine(cellData.t) || typeof cellData.v !== 'number')) {
+            return;
+        }
+
+        const value = Number(cellData.v);
+        if (!Number.isFinite(value)) {
+            return;
+        }
+
+        const cellInfo = this.getCellWithCoordByIndex(row, col, false);
+        const startX = cellInfo.isMergedMainCell ? cellInfo.mergeInfo.startX : cellInfo.startX;
+        const endX = cellInfo.isMergedMainCell ? cellInfo.mergeInfo.endX : cellInfo.endX;
+        const padding = style.pd ?? DEFAULT_PADDING_DATA;
+        const extension = cellData.fontRenderExtension;
+        const availableWidth = endX - startX
+            - (padding.l ?? DEFAULT_PADDING_DATA.l)
+            - (padding.r ?? DEFAULT_PADDING_DATA.r)
+            - (extension?.leftOffset ?? 0)
+            - (extension?.rightOffset ?? 0);
+        fontCache.displayText = getGeneralNumberDisplayText(
+            value,
+            fontCache.displayText ?? getDisplayValueFromCell(cellData),
+            fontCache.fontString,
+            availableWidth
+        );
+    }
+
+    _setFontStylesCache(row: number, col: number, cellData: Nullable<ICellDataForSheetInterceptor>, style: IStyleData, hasMergeData = true) {
         if (isNullCell(cellData)) return;
 
         let config: Partial<IFontCacheItem> = {
@@ -1404,6 +1484,8 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         } else {
             const cacheItem = cacheValue as IFontCacheItem;
             cacheItem.cellData = cellData;
+            setRenderTextCache(cacheItem, cellData);
+            this._applyGeneralNumberDisplay(row, col, cacheItem, style);
             this._stylesCache.fontMatrix.setValue(row, col, cacheValue as IFontCacheItem);
             return;
         }
@@ -1411,7 +1493,10 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         const isRichText = cellData?.p || vertexAngle || centerAngle;
 
         const modelObject = isRichText ?
-            this.worksheet.getCellDocumentModel(cellData, style, { displayRawFormula: this._renderRawFormula })
+            this.worksheet.getCellDocumentModel(cellData, style, {
+                isDeepClone: true,
+                displayRawFormula: this._renderRawFormula,
+            })
             : null;
 
         if (modelObject) {
@@ -1453,8 +1538,12 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
                 style,
             };
         }
-        this._calculateOverflowCell(row, col, config as IFontCacheItem);
-        this._stylesCache.fontMatrix.setValue(row, col, config as IFontCacheItem);
+        const fontCacheItem = config as IFontCacheItem;
+        setRenderTextCache(fontCacheItem, cellData);
+        this._applyGeneralNumberDisplay(row, col, fontCacheItem, style);
+        this._applyShrinkToFit(row, col, fontCacheItem, style);
+        this._calculateOverflowCell(row, col, fontCacheItem, hasMergeData);
+        this._stylesCache.fontMatrix.setValue(row, col, fontCacheItem);
     }
 
     /**
@@ -1463,7 +1552,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
      * @param col {number}
      * @param options {{ mergeRange: IRange; cacheItem: ICacheItem } | undefined}
      */
-    private _setStylesCacheForOneCell(row: number, col: number, options: { mergeRange?: IRange; cacheItem?: ICacheItem }): void {
+    private _setStylesCacheForOneCell(row: number, col: number, options: ISetStylesCacheForOneCellOptions): void {
         // when row/col would be negative ?
         if (row === -1 || col === -1) {
             return;
@@ -1481,13 +1570,26 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             options = { cacheItem: { bg: true, border: true } };
         }
 
-        const { isMerged, isMergedMainCell, startRow, startColumn, endRow, endColumn } = this.worksheet.getCellInfoInMergeData(row, col);
-
-        if (isMerged) {
-            options.mergeRange = { startRow, startColumn, endRow, endColumn };
+        const cacheItem = options.cacheItem;
+        if (options.reuseExisting && cacheItem && !options.mergeRange) {
+            const bgHandled = !cacheItem.bg || Tools.isDefine(this._handleBgMatrix.getValue(row, col));
+            const borderHandled = !cacheItem.border || Tools.isDefine(this._handleBorderMatrix.getValue(row, col));
+            if (bgHandled && borderHandled && (options.skipFontCache || this._stylesCache.fontMatrix.getValue(row, col))) {
+                return;
+            }
         }
 
-        const hidden = this.worksheet.getColVisible(col) === false || this.worksheet.getRowVisible(row) === false;
+        const hasMergeData = options.hasMergeData ?? true;
+        let isMerged = false;
+        let isMergedMainCell = false;
+        if (hasMergeData) {
+            const mergeInfo = this.worksheet.getCellInfoInMergeData(row, col);
+            isMerged = mergeInfo.isMerged;
+            isMergedMainCell = mergeInfo.isMergedMainCell;
+        }
+
+        const rowVisible = options.rowVisible ?? this.worksheet.getRowVisible(row);
+        const hidden = this.worksheet.getColVisible(col) === false || rowVisible === false;
 
         // hidden and not in mergeRange return.
         if (hidden) {
@@ -1506,14 +1608,16 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
 
         this._setBgStylesCache(row, col, style, options);
         this._setBorderStylesCache(row, col, style, options);
-        this._setFontStylesCache(row, col, { ...cell, ...{ s: style } }, style);
+        if (!options.skipFontCache) {
+            this._setFontStylesCache(row, col, { ...cell, s: style }, style, options.hasMergeData ?? true);
+        }
     }
 
     /**
      * pro/issues/344
      * In Excel, for the border rendering of merged cells to take effect, the outermost cells need to have the same border style.
      */
-    private _setMergeBorderProps(type: BORDER_LTRB, cache: IStylesCache, mergeRange: IRange): void {
+    private _setMergeBorderProps(type: BORDER_TYPE, cache: IStylesCache, mergeRange: IRange): void {
         if (!this.worksheet || !cache.border) return;
 
         const borders: Array<{ style: BorderStyleTypes; color: string; r: number; c: number }> = [];
@@ -1523,32 +1627,32 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         let row = mergeRange.startRow;
         let column = mergeRange.startColumn;
 
-        if (type === BORDER_LTRB.TOP) {
+        if (type === BORDER_TYPE.TOP) {
             row = mergeRange.startRow;
             forStart = mergeRange.startColumn;
             forEnd = mergeRange.endColumn;
-        } else if (type === BORDER_LTRB.BOTTOM) {
+        } else if (type === BORDER_TYPE.BOTTOM) {
             row = mergeRange.endRow;
             forStart = mergeRange.startColumn;
             forEnd = mergeRange.endColumn;
-        } else if (type === BORDER_LTRB.LEFT) {
+        } else if (type === BORDER_TYPE.LEFT) {
             column = mergeRange.startColumn;
             forStart = mergeRange.startRow;
             forEnd = mergeRange.endRow;
-        } else if (type === BORDER_LTRB.RIGHT) {
+        } else if (type === BORDER_TYPE.RIGHT) {
             column = mergeRange.endColumn;
             forStart = mergeRange.startRow;
             forEnd = mergeRange.endRow;
         }
 
         for (let i = forStart; i <= forEnd; i++) {
-            if (type === BORDER_LTRB.TOP) {
+            if (type === BORDER_TYPE.TOP) {
                 column = i;
-            } else if (type === BORDER_LTRB.BOTTOM) {
+            } else if (type === BORDER_TYPE.BOTTOM) {
                 column = i;
-            } else if (type === BORDER_LTRB.LEFT) {
+            } else if (type === BORDER_TYPE.LEFT) {
                 row = i;
-            } else if (type === BORDER_LTRB.RIGHT) {
+            } else if (type === BORDER_TYPE.RIGHT) {
                 row = i;
             }
 
@@ -1594,7 +1698,7 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
         });
     }
 
-    private _setBorderProps(r: number, c: number, type: BORDER_LTRB, style: IStyleData, cache: IStylesCache): void {
+    private _setBorderProps(r: number, c: number, type: BORDER_TYPE, style: IStyleData, cache: IStylesCache): void {
         const props: Nullable<IBorderStyleData> = style.bd?.[type];
         if (!props || !cache.border) {
             return;
@@ -1613,13 +1717,13 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
          * When the top border of a cell and the bottom border of the cell above it (r-1) overlap,
          * if the top border of cell r is white, then the rendering is ignored.
          */
-        if (type === BORDER_LTRB.TOP) {
-            const borderBottom = borderCache.getValue(r - 1, c)?.[BORDER_LTRB.BOTTOM];
+        if (type === BORDER_TYPE.TOP) {
+            const borderBottom = borderCache.getValue(r - 1, c)?.[BORDER_TYPE.BOTTOM];
             if (borderBottom && isWhiteColor(rgb)) {
                 return;
             }
-        } else if (type === BORDER_LTRB.LEFT) {
-            const borderRight = borderCache.getValue(r, c - 1)?.[BORDER_LTRB.RIGHT];
+        } else if (type === BORDER_TYPE.LEFT) {
+            const borderRight = borderCache.getValue(r, c - 1)?.[BORDER_TYPE.RIGHT];
             if (borderRight && isWhiteColor(rgb)) {
                 return;
             }
@@ -1671,30 +1775,6 @@ export class SpreadsheetSkeleton extends SheetSkeleton {
             }
         }
         return hiddenCols;
-    }
-
-    /**
-     * @deprecated use function `convertTransformToOffsetX` in same package.
-     */
-    convertTransformToOffsetX(
-        offsetX: number,
-        scaleX: number,
-        scrollXY: { x: number; y: number }
-    ): number {
-        const { x: scrollX } = scrollXY;
-        return (offsetX - scrollX) * scaleX;
-    }
-
-    /**
-     * @deprecated use function `convertTransformToOffsetY` in same package.
-     */
-    convertTransformToOffsetY(
-        offsetY: number,
-        scaleY: number,
-        scrollXY: { x: number; y: number }
-    ): number {
-        const { y: scrollY } = scrollXY;
-        return (offsetY - scrollY) * scaleY;
     }
 }
 

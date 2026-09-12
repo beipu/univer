@@ -60,7 +60,7 @@ describe('SheetTableFormulaController', () => {
                 sheetId: 's1',
                 range: { startRow: 0, endRow: 5, startColumn: 0, endColumn: 2 },
             }),
-        }));
+        }), { onlyLocal: true });
 
         const titleMap = executeCommand.mock.calls[0][1].reference.titleMap as Map<string, number>;
         expect(titleMap.get('id')).toBe(0);
@@ -73,14 +73,24 @@ describe('SheetTableFormulaController', () => {
         expect(executeCommand).toHaveBeenNthCalledWith(3, RemoveSuperTableMutation.id, {
             unitId: 'u1',
             tableName: 'Orders_Old',
-        });
+        }, { onlyLocal: true });
         expect(executeCommand).toHaveBeenCalledTimes(4);
 
-        tableDelete$.next({ unitId: 'u1', tableName: 'Orders' });
+        tableDelete$.next({
+            unitId: 'u1',
+            subUnitId: 's1',
+            tableName: 'Orders',
+            range: { startRow: 0, endRow: 5, startColumn: 0, endColumn: 2 },
+        });
         expect(executeCommand).toHaveBeenLastCalledWith(RemoveSuperTableMutation.id, {
             unitId: 'u1',
             tableName: 'Orders',
-        });
+            reference: {
+                sheetId: 's1',
+                range: { startRow: 0, endRow: 5, startColumn: 0, endColumn: 2 },
+            },
+        }, { onlyLocal: true });
+        expect(executeCommand.mock.calls.every((call) => call[2]?.onlyLocal === true)).toBe(true);
 
         controller.dispose();
     });

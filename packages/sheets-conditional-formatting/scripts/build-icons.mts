@@ -17,17 +17,17 @@
 import fs from 'node:fs';
 
 const progress = [
-    ['progress0', '@univerjs/icons-svg/single/progress-0-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
-    ['progress25', '@univerjs/icons-svg/single/progress-25-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
-    ['progress50', '@univerjs/icons-svg/single/progress-50-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
-    ['progress75', '@univerjs/icons-svg/single/progress-75-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
-    ['progress100', '@univerjs/icons-svg/single/progress-100-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
+    ['progress0', '@univerjs/icons-svg/double/progress-0-double-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
+    ['progress25', '@univerjs/icons-svg/double/progress-25-double-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
+    ['progress50', '@univerjs/icons-svg/double/progress-50-double-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
+    ['progress75', '@univerjs/icons-svg/double/progress-75-double-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
+    ['progress100', '@univerjs/icons-svg/double/progress-100-double-icon.svg', { black: '#7A7A7A', '#E5E5E5': '#7A7A7A' }],
 ];
 
 const star = [
-    ['starEmpty', '@univerjs/icons-svg/double/star-empty-double-icon.svg', { black: '#FFBD37', '#E5E5E5': '#fff' }],
-    ['starIncomplete', '@univerjs/icons-svg/double/star-incomplete-double-icon.svg', { black: '#FFBD37', '#E5E5E5': '#fff' }],
-    ['starFull', '@univerjs/icons-svg/double/star-full-double-icon.svg', { black: '#FFBD37', '#E5E5E5': '#fff' }],
+    ['starEmpty', '@univerjs/icons-svg/double/star-empty-double-icon.svg', { black: '#FFBD37' }],
+    ['starIncomplete', '@univerjs/icons-svg/double/star-incomplete-double-icon.svg', { black: '#FFBD37' }],
+    ['starFull', '@univerjs/icons-svg/double/star-full-double-icon.svg', { black: '#FFBD37' }],
 ];
 
 const feeling = [
@@ -53,9 +53,9 @@ const feedback = [
 ];
 
 const feedback2 = [
-    ['mistake2', '@univerjs/icons-svg/single/mistake-icon.svg', { black: '#FE4B4B' }],
-    ['warn2', '@univerjs/icons-svg/single/warn-icon.svg', { black: '#FFBD37' }],
-    ['correct2', '@univerjs/icons-svg/single/correct-icon.svg', { black: '#59D01E' }],
+    ['mistake2', '@univerjs/icons-svg/single/close-icon.svg', { black: '#FE4B4B' }],
+    ['warn2', '@univerjs/icons-svg/single/exclamation-icon.svg', { black: '#FFBD37' }],
+    ['correct2', '@univerjs/icons-svg/single/check-mark-icon.svg', { black: '#59D01E' }],
 ];
 
 const arrow = [

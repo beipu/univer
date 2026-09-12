@@ -14,18 +14,61 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, IParagraph, ISectionBreak } from '@univerjs/core';
+import type { DocumentDataModel, IDocumentBody, IDocumentStyle, IParagraph } from '@univerjs/core';
 import type { IDocParagraphSettingCommandParams } from '../../../commands/commands/doc-paragraph-setting.command';
-import { BuildTextUtils, ICommandService, IUniverInstanceService, SpacingRule, UniverInstanceType } from '@univerjs/core';
+import {
+    BuildTextUtils,
+    DEFAULT_DOCUMENT_PARAGRAPH_LINE_SPACING,
+    DEFAULT_DOCUMENT_PARAGRAPH_SPACE_ABOVE,
+    DEFAULT_DOCUMENT_PARAGRAPH_SPACE_BELOW,
+    DocumentBlockRangeType,
+    ICommandService,
+    IUniverInstanceService,
+    resolveDocumentParagraphStyle,
+    SpacingRule,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSelectionManagerService, DocSkeletonManagerService } from '@univerjs/docs';
 import { getNumberUnitValue, IRenderManagerService } from '@univerjs/engine-render';
 import { useDependency } from '@univerjs/ui';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BehaviorSubject } from 'rxjs';
 import { bufferTime, filter, map } from 'rxjs/operators';
 import { DocParagraphSettingCommand } from '../../../commands/commands/doc-paragraph-setting.command';
-import { findNearestSectionBreak } from '../../../commands/commands/list.command';
 import { DocParagraphSettingController } from '../../../controllers/doc-paragraph-setting.controller';
+import {
+    convertDisplayLineSpacingToStoredValue,
+    convertLineSpacingForRuleChange,
+    convertStoredLineSpacingToDisplayValue,
+    getLineSpacingMetrics,
+} from '../line-spacing';
+
+const PARAGRAPH_LAYOUT_BLOCK_TYPES = new Set([
+    DocumentBlockRangeType.CALLOUT,
+    DocumentBlockRangeType.CODE,
+    DocumentBlockRangeType.QUOTE,
+]);
+
+export function resolveParagraphsForSettingPanel(
+    paragraphs: IParagraph[],
+    body: IDocumentBody,
+    documentStyle: IDocumentStyle
+) {
+    return paragraphs.map((paragraph) => {
+        const hasLayoutBlockRange = body.blockRanges?.some((range) =>
+            PARAGRAPH_LAYOUT_BLOCK_TYPES.has(range.blockType) &&
+            paragraph.startIndex > range.startIndex &&
+            paragraph.startIndex < range.endIndex
+        ) ?? false;
+
+        return {
+            ...paragraph,
+            paragraphStyle: resolveDocumentParagraphStyle(documentStyle, paragraph.paragraphStyle, {
+                excludeDocumentOuterSpacing: hasLayoutBlockRange,
+            }),
+        };
+    });
+}
 
 const useDocRanges = () => {
     const docSelectionManagerService = useDependency(DocSelectionManagerService);
@@ -49,7 +92,7 @@ const useDocRanges = () => {
 
 export const useCurrentParagraph = () => {
     const univerInstanceService = useDependency(IUniverInstanceService);
-    const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+    const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
     const docRanges = useDocRanges();
 
     if (!docDataModel || docRanges.length === 0) {
@@ -59,42 +102,14 @@ export const useCurrentParagraph = () => {
     const segmentId = docRanges[0].segmentId;
 
     const segment = docDataModel.getSelfOrHeaderFooterModel(segmentId);
-    const paragraphs = segment.getBody()?.paragraphs ?? [];
-    const dataStream = segment.getBody()?.dataStream ?? '';
+    const body = segment?.getBody();
+    const paragraphs = body?.paragraphs ?? [];
+    const dataStream = body?.dataStream ?? '';
     const currentParagraphs = BuildTextUtils.range.getParagraphsInRanges(docRanges, paragraphs, dataStream) ?? [];
 
-    return currentParagraphs;
-};
-
-export const useCurrentSections = (currentParagraphs: IParagraph[]) => {
-    const univerInstanceService = useDependency(IUniverInstanceService);
-    const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
-    const docRanges = useDocRanges();
-
-    if (!docDataModel || docRanges.length === 0) {
-        return [];
-    }
-
-    const segmentId = docRanges[0].segmentId;
-
-    const sectionBreaks = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody()?.sectionBreaks ?? [];
-    const currentSectionBreaks = currentParagraphs
-        .map((item) => findNearestSectionBreak(item.startIndex, sectionBreaks))
-        .reduce((a, b, index, list) => {
-            const isEnd = list.length - 1 === index;
-            if (b) {
-                a.map[b.startIndex] = b;
-            }
-            if (isEnd) {
-                for (const key in a.map) {
-                    const v = a.map[key];
-                    a.result.push(v);
-                }
-            }
-            return a;
-        }, { map: {}, result: [] } as { map: Record<string, ISectionBreak>; result: ISectionBreak[] })
-        .result;
-    return currentSectionBreaks;
+    return body == null
+        ? currentParagraphs
+        : resolveParagraphsForSettingPanel(currentParagraphs, body, docDataModel.getDocumentStyle());
 };
 
 export const useFirstParagraphHorizontalAlign = (paragraph: IParagraph[], defaultValue: string) => {
@@ -200,7 +215,7 @@ export const useFirstParagraphIndentSpaceAbove = (paragraph: IParagraph[]) => {
         if (!firstParagraph) {
             return 0;
         }
-        return getNumberUnitValue(firstParagraph.paragraphStyle?.spaceAbove, 0);
+        return getNumberUnitValue(firstParagraph.paragraphStyle?.spaceAbove, DEFAULT_DOCUMENT_PARAGRAPH_SPACE_ABOVE);
     });
     const setSpaceAbove = (v: number) => {
         setSpaceAboveInternal(v);
@@ -219,7 +234,7 @@ export const useFirstParagraphSpaceBelow = (paragraph: IParagraph[]) => {
         if (!firstParagraph) {
             return 0;
         }
-        return getNumberUnitValue(firstParagraph.paragraphStyle?.spaceBelow, 0);
+        return getNumberUnitValue(firstParagraph.paragraphStyle?.spaceBelow, DEFAULT_DOCUMENT_PARAGRAPH_SPACE_BELOW);
     });
     const setSpaceBelow = (v: number) => {
         setSpaceBelowInternal(v);
@@ -237,24 +252,14 @@ export const useFirstParagraphLineSpacing = (paragraph: IParagraph[]) => {
     const univerInstanceService = useDependency(IUniverInstanceService);
 
     const skeleton = useMemo(() => {
-        const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
         if (!docDataModel) {
             return undefined;
         }
-        return renderManagerService.getRenderById(docDataModel?.getUnitId())?.with(DocSkeletonManagerService).getSkeleton();
+        return renderManagerService.getRenderUnitById(docDataModel?.getUnitId())?.with(DocSkeletonManagerService).getSkeleton();
     }, []);
 
     const stateChange$ = useMemo(() => new BehaviorSubject<{ spacingRule?: SpacingRule; lineSpacing?: number }>({}), []);
-
-    const [lineSpacing, setLineSpacingInternal] = useState(() => {
-        const firstParagraph = paragraph[0];
-        if (!firstParagraph) {
-            return 1;
-        }
-        return firstParagraph.paragraphStyle?.lineSpacing ?? 1;
-    });
-
-    const lineSpacingCache = useRef<number>(lineSpacing);
 
     const [spacingRule, setSpacingRuleInternal] = useState<SpacingRule>(() => {
         const firstParagraph = paragraph[0];
@@ -264,33 +269,45 @@ export const useFirstParagraphLineSpacing = (paragraph: IParagraph[]) => {
         return firstParagraph.paragraphStyle?.spacingRule ?? SpacingRule.AUTO;
     });
 
+    const [lineSpacing, setLineSpacingInternal] = useState(() => {
+        const firstParagraph = paragraph[0];
+        if (!firstParagraph) {
+            return DEFAULT_DOCUMENT_PARAGRAPH_LINE_SPACING;
+        }
+        const currentSpacingRule = firstParagraph.paragraphStyle?.spacingRule ?? SpacingRule.AUTO;
+        const storedLineSpacing = firstParagraph.paragraphStyle?.lineSpacing ?? DEFAULT_DOCUMENT_PARAGRAPH_LINE_SPACING;
+
+        return convertStoredLineSpacingToDisplayValue(storedLineSpacing, currentSpacingRule);
+    });
+
     const setLineSpacing = async (v: number) => {
         setLineSpacingInternal(v);
-        stateChange$.next({ lineSpacing: v, spacingRule });
+        stateChange$.next({
+            lineSpacing: convertDisplayLineSpacingToStoredValue(v, spacingRule),
+            spacingRule,
+        });
     };
 
     const setSpacingRule = async (v: SpacingRule) => {
         if (v !== spacingRule) {
-            let cache = lineSpacingCache.current;
-            if (v === SpacingRule.AT_LEAST) {
-                const glyphNode = skeleton?.findNodeByCharIndex(paragraph[0].startIndex);
-                const divideNode = glyphNode?.parent;
-                const lineNode = divideNode?.parent;
-                if (lineNode?.contentHeight !== undefined) {
-                    cache = Math.max(lineNode.contentHeight, cache);
-                }
-            } else {
-                // If the paragraph is set to fixed-spacing by default,
-                // the first time you enter the panel,
-                // you will set the fixed-spacing value to the initial value of multiple-spacing
-                if (cache > 5) {
-                    cache = 2;
-                }
-            }
-            lineSpacingCache.current = lineSpacing;
-            setLineSpacing(cache);
+            const glyphNode = skeleton?.findNodeByCharIndex(paragraph[0].startIndex);
+            const divideNode = glyphNode?.parent;
+            const lineNode = divideNode?.parent;
+            const metrics = getLineSpacingMetrics(lineNode);
+            const nextStoredLineSpacing = convertLineSpacingForRuleChange(
+                convertDisplayLineSpacingToStoredValue(lineSpacing, spacingRule),
+                spacingRule,
+                v,
+                metrics
+            );
+            const nextDisplayLineSpacing = convertStoredLineSpacingToDisplayValue(nextStoredLineSpacing, v);
+
+            setLineSpacingInternal(nextDisplayLineSpacing);
             setSpacingRuleInternal(v);
-            stateChange$.next({ spacingRule: v });
+            stateChange$.next({
+                spacingRule: v,
+                lineSpacing: nextStoredLineSpacing,
+            });
         }
     };
 

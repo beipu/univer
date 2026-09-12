@@ -55,16 +55,18 @@ export function getSheetObject(
     univerInstanceService: IUniverInstanceService | Workbook,
     renderManagerService: IRenderManagerService | IRenderContext
 ): Nullable<ISheetObjectParam> {
+    if (!univerInstanceService || !renderManagerService) return null;
+
     const workbook = univerInstanceService instanceof Workbook
         ? univerInstanceService
-        : univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        : univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
     if (!workbook) return null;
 
     const unitId = workbook.getUnitId();
 
     let components, mainComponent, scene, engine;
     if (isRenderManagerService(renderManagerService)) {
-        const currentRender = renderManagerService.getRenderById(unitId);
+        const currentRender = renderManagerService.getRenderUnitById(unitId);
         if (currentRender == null) return null;
         components = currentRender.components;
         components = currentRender.components;

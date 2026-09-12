@@ -16,16 +16,17 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { UniverInstanceType } from '@univerjs/core';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { SlideAddTextCommand } from '../commands/operations/insert-text.operation';
 
-export function SlideAddTextMenuItemFactory(_accessor: IAccessor): IMenuButtonItem {
+export function SlideAddTextMenuItemFactory(_accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SlideAddTextCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'TextIcon',
-        tooltip: 'slide.text.insert.title',
+        tooltip: 'slides-ui.text.insert.title',
         hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_SLIDE),
     };
 }

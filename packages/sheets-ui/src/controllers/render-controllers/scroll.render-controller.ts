@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { IFreeze, IRange, IWorksheetData, Nullable, Workbook } from '@univerjs/core';
+import type { IFreeze, IRange, Nullable, Workbook } from '@univerjs/core';
 import type { IRenderContext, IRenderModule, IScrollObserverParam, IWheelEvent, Viewport } from '@univerjs/engine-render';
 import type { IScrollToCellOperationParams, ISetSelectionsOperationParams, SheetsSelectionsService } from '@univerjs/sheets';
 import type { IScrollCommandParams } from '../../commands/commands/set-scroll.command';
@@ -41,10 +41,15 @@ import { SheetSkeletonManagerService } from '../../services/sheet-skeleton-manag
 import { getSheetObject } from '../utils/component-tools';
 
 const MOUSE_WHEEL_SPEED_SMOOTHING_FACTOR = 3;
+const WHEEL_CROSS_AXIS_LOCK_RATIO = 2;
 /**
  * This controller handles scroll logic in sheet interaction.
  */
 export class SheetsScrollRenderController extends Disposable implements IRenderModule {
+    private _pendingWheelOffsetX = 0;
+    private _pendingWheelOffsetY = 0;
+    private _pendingWheelFrameId: number | null = null;
+
     constructor(
         private readonly _context: IRenderContext<Workbook>,
         @Inject(Injector) private readonly _injector: Injector,
@@ -69,6 +74,12 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
         const viewMain = scene.getViewport(SHEET_VIEWPORT_KEY.VIEW_MAIN);
         if (!viewMain) return;
 
+        this.disposeWithMe(toDisposable(() => {
+            if (this._pendingWheelFrameId != null) {
+                cancelAnimationFrame(this._pendingWheelFrameId);
+                this._pendingWheelFrameId = null;
+            }
+        }));
         this.disposeWithMe(
             scene.onMouseWheel$.subscribeEvent((evt: IWheelEvent, state) => {
                 if (evt.ctrlKey || !this._contextService.getContextValue(FOCUSING_SHEET)) {
@@ -77,25 +88,47 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
 
                 let offsetX = 0;
                 let offsetY = 0;
+                const scaleX = Math.abs(scene.scaleX) || 1;
+                const scaleY = Math.abs(scene.scaleY) || 1;
 
                 // what????
                 // const scrollNum = Math.abs(evt.deltaX);
                 // offsetX = evt.deltaX > 0 ? scrollNum : -scrollNum;
-                offsetX = evt.deltaX;
+                offsetX = evt.deltaX / scaleX;
 
                 // with shift, scrollY will be scrollX
                 if (evt.shiftKey) {
                     // mac is weird, when using track pad, scroll vertical with shift key, should get delta value from deltaY.
                     // but when using with mousewheel, scroll with shift key, only deltaX has value.
-                    offsetX = (evt.deltaY || evt.deltaX) * MOUSE_WHEEL_SPEED_SMOOTHING_FACTOR;
+                    offsetX = ((evt.deltaY || evt.deltaX) * MOUSE_WHEEL_SPEED_SMOOTHING_FACTOR) / scaleX;
                 } else {
-                    offsetY = evt.deltaY;
-                }
-                this._commandService.executeCommand(SetScrollRelativeCommand.id, { offsetX, offsetY });
-                this._context.scene.makeDirty(true);
+                    offsetY = evt.deltaY / scaleY;
 
+                    const absOffsetX = Math.abs(offsetX);
+                    const absOffsetY = Math.abs(offsetY);
+                    if (absOffsetY >= absOffsetX * WHEEL_CROSS_AXIS_LOCK_RATIO) {
+                        offsetX = 0;
+                    } else if (absOffsetX >= absOffsetY * WHEEL_CROSS_AXIS_LOCK_RATIO) {
+                        offsetY = 0;
+                    }
+                }
                 // add offset on scroll position to check whether scrolling is reaching limit
-                const isLimitedStore = viewMain.limitedScroll(viewMain.scrollX + offsetX, viewMain.scrollY + offsetY);
+                this._pendingWheelOffsetX += offsetX;
+                this._pendingWheelOffsetY += offsetY;
+                if (this._pendingWheelFrameId == null) {
+                    this._pendingWheelFrameId = requestAnimationFrame(() => {
+                        this._pendingWheelFrameId = null;
+                        this._flushPendingWheelScroll();
+                    });
+                }
+                const targetViewportScrollX = viewMain.viewportScrollX + this._pendingWheelOffsetX;
+                const targetViewportScrollY = viewMain.viewportScrollY + this._pendingWheelOffsetY;
+                const { x: targetScrollX, y: targetScrollY } = viewMain.transViewportScroll2ScrollValue(
+                    targetViewportScrollX,
+                    targetViewportScrollY
+                );
+
+                const isLimitedStore = viewMain.limitedScroll(targetScrollX, targetScrollY);
 
                 // if viewport still have space to scroll, prevent default event. (DO NOT move canvas element)
                 // if scrolling is reaching limit, let scrolling event do the default behavior.
@@ -111,6 +144,44 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
                 }
             })
         );
+    }
+
+    private _flushPendingWheelScroll() {
+        const offsetX = this._pendingWheelOffsetX;
+        const offsetY = this._pendingWheelOffsetY;
+        if (offsetX === 0 && offsetY === 0) {
+            return;
+        }
+
+        this._pendingWheelOffsetX = 0;
+        this._pendingWheelOffsetY = 0;
+        const canUseScrollFastPath = this._canUseScrollFastPath();
+        this._commandService.executeCommand(SetScrollRelativeCommand.id, { offsetX, offsetY });
+        this._markSceneDirtyForScrolling(canUseScrollFastPath);
+    }
+
+    private _canUseScrollFastPath() {
+        const { scene } = this._context;
+        const spreadsheet = this._getSheetObject()?.spreadsheet;
+        return scene.getParent().classType === RENDER_CLASS_TYPE.ENGINE &&
+            !scene.isDirty() &&
+            spreadsheet != null &&
+            !spreadsheet.isDirty() &&
+            !spreadsheet.isForceDirty() &&
+            spreadsheet.getSkeleton()?.worksheet.getMergeData().length === 0 &&
+            scene.getViewports().every((viewport) =>
+                !viewport.shouldIntoRender() || (!viewport.isDirty && !viewport.isForceDirty)
+            ) &&
+            scene.getLayers().every((layer) => layer.getObjectsByOrder().every((object) => !object.isDirty()));
+    }
+
+    private _markSceneDirtyForScrolling(canUseScrollFastPath: boolean) {
+        const { scene } = this._context;
+        if (canUseScrollFastPath) {
+            scene.makeDirtyForScrolling();
+        } else {
+            scene.makeDirty(true);
+        }
     }
 
     // eslint-disable-next-line max-lines-per-function
@@ -217,7 +288,7 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
             // get scrollByBar event from viewport and exec ScrollCommand.id.
             viewportMain.onScrollByBar$.subscribeEvent((param) => {
                 const skeleton = this._sheetSkeletonManagerService.getCurrentParam()?.skeleton;
-                if (skeleton == null || param.isTrigger === false) {
+                if (skeleton == null || param.isTrigger === false || (param.isBarDragging && !param.isBarDragEnd)) {
                     return;
                 }
 
@@ -234,6 +305,8 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
 
                 // NOT same as SetScrollRelativeCommand. that was exec in sheetRenderController
                 this._commandService.executeCommand(ScrollCommand.id, {
+                    unitId: this._context.unitId,
+                    sheetId: skeleton.getLocation()[1],
                     sheetViewStartRow: row,
                     sheetViewStartColumn: column,
                     offsetX: columnOffset,
@@ -358,6 +431,8 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
             xSplit: freezeXSplit,
         } = worksheet.getFreeze();
         return this._commandService.syncExecuteCommand(ScrollCommand.id, {
+            unitId: this._context.unitId,
+            sheetId: worksheet.getSheetId(),
             sheetViewStartRow: row - freezeYSplit,
             sheetViewStartColumn: column - freezeXSplit,
             offsetX: 0,
@@ -451,12 +526,7 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
     }
 
     private _getFreeze(): Nullable<IFreeze> {
-        const snapshot: IWorksheetData | undefined = this._sheetSkeletonManagerService.getCurrentParam()?.skeleton.getWorksheetConfig();
-        if (snapshot == null) {
-            return;
-        }
-
-        return snapshot.freeze;
+        return this._sheetSkeletonManagerService.getCurrentParam()?.skeleton.worksheet.getFreeze();
     }
 
     private _getSheetObject() {
@@ -644,6 +714,8 @@ export class SheetsScrollRenderController extends Disposable implements IRenderM
         }
 
         return this._commandService.syncExecuteCommand(ScrollCommand.id, {
+            unitId: this._context.unitId,
+            sheetId: worksheet.getSheetId(),
             // sheetViewStartRow & offsetX should never be undefined, it's rendering, there should always be a value!
 
             // sheetViewStartRow: forceTop ? Math.max(0, row - freezeYSplit) : ((startSheetViewRow ?? 0) - freezeYSplit),

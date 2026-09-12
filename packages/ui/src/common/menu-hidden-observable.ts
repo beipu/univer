@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import type { IAccessor, UniverInstanceType } from '@univerjs/core';
-import { DocumentFlavor, IUniverInstanceService } from '@univerjs/core';
+import type { DocumentDataModel, IAccessor } from '@univerjs/core';
+import { DocumentFlavor, IUniverInstanceService, SHEET_EDITOR_UNITS, UniverInstanceType } from '@univerjs/core';
 import { Observable } from 'rxjs';
 
 export function getMenuHiddenObservable(
@@ -25,6 +25,9 @@ export function getMenuHiddenObservable(
     needHideUnitId?: string | string[]
 ): Observable<boolean> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
+    const getUnitType = (unitId: string) => SHEET_EDITOR_UNITS.includes(unitId)
+        ? UniverInstanceType.UNIVER_SHEET
+        : univerInstanceService.getUnitType(unitId);
 
     return new Observable((subscriber) => {
         const subscription = univerInstanceService.focused$.subscribe((unitId) => {
@@ -38,7 +41,7 @@ export function getMenuHiddenObservable(
             if (needHideUnitId && (Array.isArray(needHideUnitId) ? needHideUnitId.includes(unitId) : needHideUnitId === unitId)) {
                 return subscriber.next(true);
             }
-            const univerType = univerInstanceService.getUnitType(unitId);
+            const univerType = getUnitType(unitId);
 
             subscriber.next(univerType !== targetUniverType);
         });
@@ -46,11 +49,12 @@ export function getMenuHiddenObservable(
         const focusedUniverInstance = univerInstanceService.getFocusedUnit();
 
         if (focusedUniverInstance == null) {
-            return subscriber.next(true);
+            const currentUnit = univerInstanceService.getCurrentUnitOfType(targetUniverType);
+            subscriber.next(currentUnit == null);
+        } else {
+            const univerType = getUnitType(focusedUniverInstance.getUnitId());
+            subscriber.next(univerType !== targetUniverType);
         }
-
-        const univerType = univerInstanceService.getUnitType(focusedUniverInstance.getUnitId());
-        subscriber.next(univerType !== targetUniverType);
 
         return () => subscription.unsubscribe();
     });
@@ -66,20 +70,20 @@ export function getHeaderFooterMenuHiddenObservable(
             if (unitId == null) {
                 return subscriber.next(true);
             }
-            const docDataModel = univerInstanceService.getUniverDocInstance(unitId);
+            const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
             const documentFlavor = docDataModel?.getSnapshot().documentStyle.documentFlavor;
 
             subscriber.next(documentFlavor !== DocumentFlavor.TRADITIONAL);
         });
 
-        const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
 
         if (docDataModel == null) {
-            return subscriber.next(true);
+            subscriber.next(true);
+        } else {
+            const documentFlavor = docDataModel?.getSnapshot().documentStyle.documentFlavor;
+            subscriber.next(documentFlavor !== DocumentFlavor.TRADITIONAL);
         }
-
-        const documentFlavor = docDataModel?.getSnapshot().documentStyle.documentFlavor;
-        subscriber.next(documentFlavor !== DocumentFlavor.TRADITIONAL);
 
         return () => subscription.unsubscribe();
     });

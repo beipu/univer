@@ -16,7 +16,8 @@
 
 import type { Nullable, Workbook } from '@univerjs/core';
 import type { IDefinedNamesServiceParam, ISetDefinedNameMutationParam } from '@univerjs/engine-formula';
-import { generateRandomId, ICommandService, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
+import { generateRandomId, ICommandService, IPermissionService, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
 import { Button, clsx, Confirm, scrollbarClassName, Tooltip } from '@univerjs/design';
 import { IDefinedNamesService, serializeRangeWithSheet } from '@univerjs/engine-formula';
 import { DeleteIcon, IncreaseIcon, PenIcon } from '@univerjs/icons';
@@ -26,18 +27,32 @@ import {
     SCOPE_WORKBOOK_VALUE_DEFINED_NAME,
     SetDefinedNameCommand,
     SetWorksheetShowCommand,
+    SheetPermissionCheckController,
     SheetsSelectionsService,
+    WorkbookEditablePermission,
+    WorksheetEditPermission,
 } from '@univerjs/sheets';
-import { useDependency, useVirtualList } from '@univerjs/ui';
-import { useEffect, useRef, useState } from 'react';
+import { useDependency, useObservable, useVirtualList } from '@univerjs/ui';
+import { useRef, useState } from 'react';
+import { map, startWith } from 'rxjs';
 import { DefinedNameInput } from './DefinedNameInput';
 
-export const DefinedNameContainer = () => {
+export interface IDefinedNameContainerProps {
+    ConfirmComponent?: typeof Confirm;
+    DefinedNameInputComponent?: typeof DefinedNameInput;
+}
+
+export const DefinedNameContainer = ({
+    ConfirmComponent = Confirm,
+    DefinedNameInputComponent = DefinedNameInput,
+}: IDefinedNameContainerProps = {}) => {
     const commandService = useDependency(ICommandService);
     const univerInstanceService = useDependency(IUniverInstanceService);
     const localeService = useDependency(LocaleService);
     const definedNamesService = useDependency(IDefinedNamesService);
     const selectionManagerService = useDependency(SheetsSelectionsService);
+    const permissionService = useDependency(IPermissionService);
+    const sheetPermissionCheckController = useDependency(SheetPermissionCheckController);
 
     const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
     const unitId = workbook?.getUnitId();
@@ -47,13 +62,18 @@ export const DefinedNameContainer = () => {
         }
         const definedNameMap = definedNamesService.getDefinedNameMap(unitId);
         if (definedNameMap) {
-            return Array.from(Object.values(definedNameMap));
+            return Object.values(definedNameMap);
         }
         return [];
     };
 
     const [editState, setEditState] = useState(false);
-    const [definedNames, setDefinedNames] = useState<IDefinedNamesServiceParam[]>([]);
+    const definedNames = useObservable(
+        () => definedNamesService.update$.pipe(map(getDefinedNameMap), startWith(getDefinedNameMap())),
+        getDefinedNameMap(),
+        false,
+        [definedNamesService, unitId]
+    );
     const [editorKey, setEditorKey] = useState<Nullable<string>>(null);
     const [deleteConformKey, setDeleteConformKey] = useState<Nullable<string>>();
 
@@ -69,21 +89,50 @@ export const DefinedNameContainer = () => {
         overscan: 6,
     });
 
-    useEffect(() => {
-        setDefinedNames(getDefinedNameMap());
+    const resolvePermissionState = () => {
+        if (!unitId) {
+            return { workbook: false, worksheets: new Map<string, boolean>() };
+        }
 
-        const definedNamesSubscription = definedNamesService.update$.subscribe(() => {
-            setDefinedNames(getDefinedNameMap());
-        });
-
-        return () => {
-            definedNamesSubscription.unsubscribe();
+        return {
+            workbook: sheetPermissionCheckController.permissionCheckWithoutRange(
+                { workbookTypes: [WorkbookEditablePermission] },
+                unitId
+            ),
+            worksheets: new Map(definedNames.map((definedName) => [
+                definedName.id,
+                !definedName.localSheetId || definedName.localSheetId === SCOPE_WORKBOOK_VALUE_DEFINED_NAME
+                    ? sheetPermissionCheckController.permissionCheckWithoutRange(
+                        { workbookTypes: [WorkbookEditablePermission] },
+                        unitId
+                    )
+                    : sheetPermissionCheckController.permissionCheckWithoutRange(
+                        { worksheetTypes: [WorksheetEditPermission] },
+                        unitId,
+                        definedName.localSheetId
+                    ),
+            ])),
         };
-    }, []);
+    };
+    const permissionState = useObservable(
+        () => permissionService.permissionPointUpdate$.pipe(
+            map(resolvePermissionState),
+            startWith(resolvePermissionState())
+        ),
+        resolvePermissionState(),
+        false,
+        [definedNames, permissionService, sheetPermissionCheckController, unitId]
+    );
 
     if (!workbook || !unitId) {
         return;
     }
+
+    // check defined name permission
+    const checkWorkbookPermission = permissionState.workbook;
+    const checkDefinedNamePermission = (definedName: IDefinedNamesServiceParam): boolean => {
+        return permissionState.worksheets.get(definedName.id) ?? checkWorkbookPermission;
+    };
 
     const insertConfirm = (param: IDefinedNamesServiceParam) => {
         const { name, formulaOrRefString, comment, localSheetId, hidden } = param;
@@ -133,14 +182,14 @@ export const DefinedNameContainer = () => {
 
     const getInsertDefinedName = () => {
         const count = definedNames.length + 1;
-        const name = localeService.t('definedName.defaultName') + count;
+        const name = localeService.t<LocaleKey>('sheets-ui.definedName.defaultName') + count;
         if (definedNamesService.getValueByName(unitId, name) == null) {
             return name;
         }
 
         let i = count + 1;
         while (true) {
-            const newName = localeService.t('definedName.defaultName') + i;
+            const newName = localeService.t<LocaleKey>('sheets-ui.definedName.defaultName') + i;
             if (definedNamesService.getValueByName(unitId, newName) == null) {
                 return newName;
             }
@@ -193,7 +242,10 @@ export const DefinedNameContainer = () => {
     return (
         <div
             data-u-comp="defined-name-container"
-            className="univer-relative univer-box-border univer-flex univer-h-full univer-w-full univer-flex-col"
+            className="
+              univer-relative univer-box-border univer-flex univer-h-full univer-w-full univer-flex-col
+              univer-overflow-hidden
+            "
         >
             <div key="insertDefinedName" className="univer-mb-4">
                 <Button
@@ -203,13 +255,14 @@ export const DefinedNameContainer = () => {
                             'univer-hidden': editState,
                         }
                     )}
+                    disabled={!checkWorkbookPermission}
                     onClick={openInsertCloseKeyEditor}
                 >
                     <IncreaseIcon />
-                    <span className="univer-ml-1">{localeService.t('definedName.addButton')}</span>
+                    <span className="univer-ml-1">{localeService.t<LocaleKey>('sheets-ui.definedName.addButton')}</span>
                 </Button>
                 {editState && (
-                    <DefinedNameInput
+                    <DefinedNameInputComponent
                         confirm={insertConfirm}
                         cancel={closeInput}
                         state={editState}
@@ -253,7 +306,7 @@ export const DefinedNameContainer = () => {
                                             className={`
                                               univer-my-1 univer-max-h-[100px] univer-max-w-[190px] univer-truncate
                                               univer-text-sm univer-font-medium univer-text-gray-900
-                                              dark:!univer-text-white
+                                              dark:!univer-text-gray-0
                                             `}
                                         >
                                             {definedName.name}
@@ -271,57 +324,64 @@ export const DefinedNameContainer = () => {
                                             {definedName.formulaOrRefString}
                                         </div>
                                     </div>
-                                    <div
-                                        className={`
-                                          univer-absolute univer-right-5 univer-top-1/2 univer-hidden
-                                          -univer-translate-y-1/2 univer-cursor-pointer univer-items-center
-                                          univer-justify-end univer-gap-7 univer-text-xs univer-text-primary-600
-                                          group-hover:univer-flex
-                                          dark:hover:!univer-bg-gray-600
-                                        `}
-                                    >
-                                        <Tooltip title={localeService.t('definedName.updateButton')} placement="top">
-                                            <a
-                                                className={`
-                                                  univer-rounded univer-p-1
-                                                  hover:univer-bg-gray-100
-                                                `}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    closeInsertOpenKeyEditor(definedName.id);
-                                                }}
+                                    {checkDefinedNamePermission(definedName) && (
+                                        <div
+                                            className={`
+                                              univer-absolute univer-right-5 univer-top-1/2 univer-hidden
+                                              -univer-translate-y-1/2 univer-cursor-pointer univer-items-center
+                                              univer-justify-end univer-gap-7 univer-text-xs univer-text-primary-600
+                                              group-hover:univer-flex
+                                              dark:hover:!univer-bg-gray-600
+                                            `}
+                                        >
+                                            <Tooltip
+                                                title={localeService.t<LocaleKey>('sheets-ui.definedName.updateButton')}
+                                                placement="top"
                                             >
-                                                <PenIcon />
-                                            </a>
-                                        </Tooltip>
-                                        <Tooltip title={localeService.t('definedName.deleteButton')} placement="top">
-                                            <a
-                                                className={`
-                                                  univer-rounded univer-p-1 univer-text-red-600
-                                                  hover:univer-bg-gray-100
-                                                `}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    deleteDefinedName(definedName.id);
-                                                }}
+                                                <a
+                                                    className={`
+                                                      univer-rounded univer-p-1
+                                                      hover:univer-bg-gray-100
+                                                    `}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        closeInsertOpenKeyEditor(definedName.id);
+                                                    }}
+                                                >
+                                                    <PenIcon />
+                                                </a>
+                                            </Tooltip>
+                                            <Tooltip
+                                                title={localeService.t<LocaleKey>('sheets-ui.definedName.deleteButton')}
+                                                placement="top"
                                             >
-                                                <DeleteIcon />
-                                            </a>
-                                        </Tooltip>
-                                    </div>
-
+                                                <a
+                                                    className={`
+                                                      univer-rounded univer-p-1 univer-text-red-600
+                                                      hover:univer-bg-gray-100
+                                                    `}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        deleteDefinedName(definedName.id);
+                                                    }}
+                                                >
+                                                    <DeleteIcon />
+                                                </a>
+                                            </Tooltip>
+                                        </div>
+                                    )}
                                 </div>
 
-                                <Confirm
+                                <ConfirmComponent
                                     visible={deleteConformKey === definedName.id}
                                     onClose={handleDeleteClose}
                                     onConfirm={() => { handleDeleteConfirm(definedName.id); }}
                                 >
-                                    {localeService.t('definedName.deleteConfirmText')}
-                                </Confirm>
+                                    {localeService.t<LocaleKey>('sheets-ui.definedName.deleteConfirmText')}
+                                </ConfirmComponent>
 
                                 {definedName.id === editorKey && (
-                                    <DefinedNameInput
+                                    <DefinedNameInputComponent
                                         confirm={insertConfirm}
                                         cancel={closeInput}
                                         state={definedName.id === editorKey}

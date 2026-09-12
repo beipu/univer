@@ -16,8 +16,8 @@
 
 import type { IDocumentData, Nullable } from '@univerjs/core';
 import type { RefObject } from 'react';
-import type { Editor } from '../../../services/editor/editor';
-import { Tools } from '@univerjs/core';
+import type { Editor, IEditorCanvasStyle } from '../../../services/editor/editor';
+import { createParagraphId, RichTextBuilder, Tools } from '@univerjs/core';
 import { useDependency } from '@univerjs/ui';
 import { useLayoutEffect, useMemo, useState } from 'react';
 import { IEditorService } from '../../../services/editor/editor-manager.service';
@@ -26,19 +26,24 @@ export interface IUseEditorProps {
     editorId: string;
     initialValue: Nullable<IDocumentData | string>;
     container: RefObject<HTMLDivElement>;
+    preserveHostFocus?: boolean;
     autoFocus?: boolean;
     isSingle?: boolean;
+    canvasStyle?: IEditorCanvasStyle;
 }
 
 export function useEditor(opts: IUseEditorProps) {
-    const { editorId, initialValue, container, autoFocus: _autoFocus, isSingle } = opts;
+    const { editorId, initialValue, container, preserveHostFocus, autoFocus: _autoFocus, isSingle, canvasStyle } = opts;
     const autoFocus = useMemo(() => _autoFocus ?? false, []);
     const [editor, setEditor] = useState<Editor>();
     const editorService = useDependency(IEditorService);
 
     useLayoutEffect(() => {
         if (container.current) {
-            const initialDoc = typeof initialValue === 'string' ? undefined : Tools.deepClone(initialValue);
+            let focusFrame: number | undefined;
+            const initialDoc = typeof initialValue === 'string'
+                ? RichTextBuilder.create().insertText(initialValue).getData()
+                : Tools.deepClone(initialValue);
             const snapshot: IDocumentData = {
                 body: {
                     dataStream: typeof initialValue === 'string' ? `${initialValue}\r\n` : '\r\n',
@@ -48,6 +53,7 @@ export function useEditor(opts: IUseEditorProps) {
                     customRanges: [],
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: createParagraphId(new Set()),
                     }],
                 },
                 ...initialDoc,
@@ -63,8 +69,10 @@ export function useEditor(opts: IUseEditorProps) {
             const dispose = editorService.register(
                 {
                     autofocus: true,
+                    canvasStyle,
                     editorUnitId: editorId,
                     initialSnapshot: snapshot,
+                    preserveHostFocus,
                 },
                 container.current
             );
@@ -74,10 +82,15 @@ export function useEditor(opts: IUseEditorProps) {
             if (autoFocus) {
                 editorService.focus(editorId);
                 const end = (snapshot.body?.dataStream.length ?? 2) - 2;
-                editor.setSelectionRanges([{ startOffset: end, endOffset: end }]);
+                focusFrame = requestAnimationFrame(() => {
+                    editor.setSelectionRanges([{ startOffset: end, endOffset: end }]);
+                });
             }
 
             return () => {
+                if (focusFrame !== undefined) {
+                    cancelAnimationFrame(focusFrame);
+                }
                 dispose?.dispose();
             };
         }

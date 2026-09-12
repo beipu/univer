@@ -16,13 +16,20 @@
 
 import type { IRange, LocaleType, Nullable } from '@univerjs/core';
 import type { IFunctionNames } from '../basics/function';
-import type { BaseReferenceObject, FunctionVariantType, NodeValueType } from '../engine/reference-object/base-reference-object';
+import type { BaseAstNode } from '../engine/ast-node/base-ast-node';
+import type {
+    BaseReferenceObject,
+    FunctionVariantType,
+    NodeValueType,
+} from '../engine/reference-object/base-reference-object';
 import type { ArrayBinarySearchType } from '../engine/utils/compare';
 import type { ArrayValueObject } from '../engine/value-object/array-value-object';
 import type { BaseValueObject } from '../engine/value-object/base-value-object';
 import type { FormulaFunctionResultValueType, FormulaFunctionValueType } from '../engine/value-object/primitive-object';
 import type { FormulaDataModel } from '../models/formula-data.model';
 import type { IDefinedNameMapItem } from '../services/defined-names.service';
+import type { IFormulaUnitReferenceResolver } from '../services/unit-reference-resolver.service';
+import { DateSystem } from '@univerjs/core';
 import { ErrorType } from '../basics/error-type';
 import { regexTestSingeRange, regexTestSingleColumn, regexTestSingleRow } from '../basics/regex';
 import { compareToken } from '../basics/token';
@@ -42,11 +49,15 @@ export class BaseFunction {
     private _subUnitId: Nullable<string>;
     private _row: number = -1;
     private _column: number = -1;
+    private _currentFormulaRowCount: number = 1;
+    private _currentFormulaColumnCount: number = 1;
     private _definedNames: Nullable<IDefinedNameMapItem>;
     private _locale: LocaleType;
+    private _dateSystem = DateSystem.Date1900;
     private _sheetOrder: string[];
     private _sheetNameMap: { [sheetId: string]: string };
     protected _formulaDataModel: Nullable<FormulaDataModel>;
+    protected _unitReferenceResolver: Nullable<IFormulaUnitReferenceResolver>;
     protected _rowCount: number = -1;
     protected _columnCount: number = -1;
 
@@ -75,6 +86,9 @@ export class BaseFunction {
      */
     needsFormulaDataModel: boolean = false;
 
+    /** Whether the function resolves external Unit qualifiers. */
+    needsUnitReferenceResolver: boolean = false;
+
     /**
      * Whether the function needs the number of rows and columns in the sheet
      */
@@ -84,6 +98,22 @@ export class BaseFunction {
      * Whether the function needs to filter out rows
      */
     needsFilteredOutRows: boolean = false;
+
+    /**
+     * Whether the function needs unevaluated AST children.
+     */
+    needsAstChildren: boolean = false;
+
+    /**
+     * Arguments that preserve a selected lazy IF branch as a reference array.
+     */
+    lazyIfReferenceArrayArgumentIndexes: readonly number[] = [];
+
+    /**
+     * Legacy CSE-style array functions should write only the first result cell
+     * when they are used as a top-level normal formula.
+     */
+    returnsLegacyArrayAsScalar: boolean = false;
 
     /**
      * Minimum number of parameters
@@ -119,6 +149,14 @@ export class BaseFunction {
         return this._column;
     }
 
+    get currentFormulaRowCount() {
+        return this._currentFormulaRowCount;
+    }
+
+    get currentFormulaColumnCount() {
+        return this._currentFormulaColumnCount;
+    }
+
     dispose() {
 
     }
@@ -134,9 +172,10 @@ export class BaseFunction {
         if (nameMap == null) {
             return null;
         }
-        return Array.from(Object.values(nameMap)).filter((value) => {
-            return value.name === name;
-        })?.[0];
+        const normalizedName = name.toLowerCase();
+        return Object.values(nameMap).find((value) => {
+            return value.name.toLowerCase() === normalizedName;
+        });
     }
 
     setDefinedNames(definedNames: IDefinedNameMapItem) {
@@ -149,6 +188,14 @@ export class BaseFunction {
 
     setLocale(locale: LocaleType) {
         this._locale = locale;
+    }
+
+    getDateSystem() {
+        return this._dateSystem;
+    }
+
+    setDateSystem(dateSystem: DateSystem) {
+        this._dateSystem = dateSystem;
     }
 
     getSheetsInfo() {
@@ -173,6 +220,10 @@ export class BaseFunction {
         this._formulaDataModel = _formulaDataModel;
     }
 
+    setUnitReferenceResolver(unitReferenceResolver: IFormulaUnitReferenceResolver) {
+        this._unitReferenceResolver = unitReferenceResolver;
+    }
+
     setSheetRowColumnCount(rowCount: number, columnCount: number) {
         this._rowCount = rowCount;
         this._columnCount = columnCount;
@@ -194,11 +245,13 @@ export class BaseFunction {
         return false;
     }
 
-    setRefInfo(unitId: string, subUnitId: string, row: number, column: number) {
+    setRefInfo(unitId: string, subUnitId: string, row: number, column: number, rowCount: number = 1, columnCount: number = 1) {
         this._unitId = unitId;
         this._subUnitId = subUnitId;
         this._row = row;
         this._column = column;
+        this._currentFormulaRowCount = rowCount;
+        this._currentFormulaColumnCount = columnCount;
     }
 
     calculateCustom(
@@ -208,6 +261,13 @@ export class BaseFunction {
     }
 
     calculate(...arg: BaseValueObject[]): NodeValueType {
+        return ErrorValueObject.create(ErrorType.VALUE);
+    }
+
+    calculateAst(
+        _children: BaseAstNode[],
+        _getVariant: (node: BaseAstNode) => Nullable<FunctionVariantType>
+    ): NodeValueType {
         return ErrorValueObject.create(ErrorType.VALUE);
     }
 
@@ -393,9 +453,10 @@ export class BaseFunction {
         searchArray: ArrayValueObject,
         resultArray: ArrayValueObject,
         searchType: ArrayOrderSearchType = ArrayOrderSearchType.MIN,
-        isDesc = false
+        isDesc = false,
+        keepFirstNearest = false
     ) {
-        const position = searchArray.orderSearch(value, searchType, isDesc);
+        const position = searchArray.orderSearch(value, searchType, isDesc, false, keepFirstNearest);
 
         if (position == null) {
             return ErrorValueObject.create(ErrorType.NA);
@@ -490,9 +551,10 @@ export class BaseFunction {
         resultArray: ArrayValueObject,
         searchType: ArrayOrderSearchType = ArrayOrderSearchType.MIN,
         isDesc = false,
-        axis = 0
+        axis = 0,
+        keepFirstNearest = false
     ) {
-        const position = searchArray.orderSearch(value, searchType, isDesc);
+        const position = searchArray.orderSearch(value, searchType, isDesc, false, keepFirstNearest);
 
         if (position == null) {
             return ErrorValueObject.create(ErrorType.NA);

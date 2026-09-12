@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Upraviť odkaz',
             addTitle: 'Vložiť odkaz',
             label: 'Popisok',
             type: 'Typ',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'Vložiť odkaz',
         },
+        permission: {
+            hyperLinkErr: 'Nemáte povolenie vložiť odkaz.',
+        },
         message: {
             noSheet: 'Cieľový hárok bol odstránený',
             refError: 'Neplatný rozsah',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'Odkaz skopírovaný do schránky',
         },
         popup: {
+            title: 'Hypertextový odkaz',
+            open: 'Otvoriť odkaz',
             copy: 'Kopírovať odkaz',
             edit: 'Upraviť odkaz',
             cancel: 'Zrušiť odkaz',

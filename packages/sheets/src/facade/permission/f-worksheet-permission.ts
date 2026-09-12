@@ -30,9 +30,18 @@ import type {
     WorksheetMode,
     WorksheetPermissionSnapshot,
 } from './permission-types';
-import { cellToRange, generateRandomId, IAuthzIoService, ICommandService, Inject, Injector, IPermissionService, Rectangle } from '@univerjs/core';
+import {
+    cellToRange,
+    generateRandomId,
+    IAuthzIoService,
+    ICommandService,
+    Inject,
+    Injector,
+    IPermissionService,
+    Rectangle,
+} from '@univerjs/core';
 import { FBase } from '@univerjs/core/facade';
-import { UnitAction, UnitRole } from '@univerjs/protocol';
+import { UnitAction, UnitObject, UnitRole } from '@univerjs/protocol';
 import {
     AddRangeProtectionMutation,
     AddWorksheetProtectionMutation,
@@ -44,7 +53,6 @@ import {
     RangeProtectionPermissionEditPoint,
     RangeProtectionPermissionViewPoint,
     RangeProtectionRuleModel,
-    UnitObject,
     ViewStateEnum,
     WorksheetProtectionPointModel,
     WorksheetProtectionRuleModel,
@@ -52,7 +60,13 @@ import {
 import { FRangeProtectionRule } from './f-range-protection-rule';
 import { WORKSHEET_PERMISSION_POINT_MAP } from './permission-point-map';
 import { WorksheetPermissionPoint } from './permission-types';
-import { determineEditState, determineScope, determineViewState, getListRangeProtectionRules, handleWorksheetRangePermissionIsEmpty } from './util';
+import {
+    determineEditState,
+    determineScope,
+    determineViewState,
+    getListRangeProtectionRules,
+    handleWorksheetRangePermissionIsEmpty,
+} from './util';
 
 /**
  * Implementation class for WorksheetPermission
@@ -87,7 +101,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * if (fWorksheet.getWorksheetPermission().isProtected()) {
      *   console.log('Worksheet is protected');
      * }
@@ -101,12 +116,13 @@ export class FWorksheetPermission extends FBase {
     /**
      * Create worksheet protection with collaborators support.
      * This must be called before setting permission points for collaboration to work.
-     * @param {IWorksheetProtectionOptions} options Protection options including allowed users.
+     * @param {IWorksheetProtectionOptions} [options] Protection options including allowed users.
      * @returns {Promise<string>} The permissionId for the created protection.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const permission = fWorksheet.getWorksheetPermission();
      *
      * // Create worksheet protection with collaborators
@@ -190,11 +206,12 @@ export class FWorksheetPermission extends FBase {
     /**
      * Remove worksheet protection.
      * This deletes the protection rule and resets all permission points to allowed.
-     * @returns {Promise<void>} A promise that resolves when protection is removed.
+     * @returns {Promise<boolean>} A promise resolving to whether protection was removed; also resolves to `true` if already unprotected.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * await fWorksheet.getWorksheetPermission().unprotect();
      * ```
      */
@@ -225,7 +242,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * await fWorksheet.getWorksheetPermission().setMode('readOnly');
      * ```
      */
@@ -278,7 +296,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * await fWorksheet.getWorksheetPermission().setReadOnly();
      * ```
      */
@@ -292,7 +311,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * await fWorksheet.getWorksheetPermission().setEditable();
      * ```
      */
@@ -309,7 +329,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const permission = fWorksheet.getWorksheetPermission();
      * await permission.setPoint(univerAPI.Enum.WorksheetPermissionPoint.InsertRow, false);
      * ```
@@ -359,7 +380,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * if (fWorksheet.getWorksheetPermission().canEdit()) {
      *   console.log('Worksheet is editable');
      * }
@@ -377,7 +399,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * // Check if cell C3 can be edited
      * const fRange = fWorksheet.getRange('C3');
      * const canEdit = fWorksheet.getWorksheetPermission().canEditCell(fRange.getRow(), fRange.getColumn());
@@ -421,7 +444,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * if (fWorksheet.getWorksheetPermission().canView()) {
      *   console.log('Worksheet is viewable');
      * }
@@ -438,7 +462,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * // Check if cell C3 can be viewed
      * const fRange = fWorksheet.getRange('C3');
      * const canView = fWorksheet.getWorksheetPermission().canViewCell(fRange.getRow(), fRange.getColumn());
@@ -483,7 +508,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const permission = fWorksheet.getWorksheetPermission();
      * const canInsertRow = permission.getPoint(univerAPI.Enum.WorksheetPermissionPoint.InsertRow);
      * console.log(canInsertRow);
@@ -507,7 +533,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const snapshot = fWorksheet.getWorksheetPermission().getSnapshot();
      * console.log(snapshot);
      * ```
@@ -527,7 +554,8 @@ export class FWorksheetPermission extends FBase {
      * @returns {Promise<void>} A promise that resolves when the configuration is applied.
      * @example
      * ```ts
-     * const worksheet = univerAPI.getActiveWorkbook()?.getActiveSheet();
+     * const worksheet = univerAPI.getActiveWorkbook()?.getSheetByName('Sheet1');
+     * if (!worksheet) return;
      * const permission = worksheet?.getWorksheetPermission();
      * await permission?.applyConfig({
      *   mode: 'readOnly',
@@ -570,7 +598,8 @@ export class FWorksheetPermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = await fWorksheet.getWorksheetPermission().protectRanges([
      *   {
      *     ranges: [fWorksheet.getRange('A1:B2')],
@@ -584,7 +613,6 @@ export class FWorksheetPermission extends FBase {
      * console.log(rules);
      * ```
      */
-    // eslint-disable-next-line max-lines-per-function
     async protectRanges(
         configs: Array<{
             ranges: FRange[];
@@ -704,11 +732,12 @@ export class FWorksheetPermission extends FBase {
     /**
      * Remove multiple protection rules at once.
      * @param {string[]} ruleIds Array of rule IDs to remove.
-     * @returns {Promise<void>} A promise that resolves when the rules are removed.
+     * @returns {Promise<boolean>} A promise resolving to whether the rules were removed; also resolves to `true` for an empty ID list.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const worksheetPermission = fWorksheet.getWorksheetPermission();
      * const rules = await worksheetPermission.listRangeProtectionRules();
      * // Unprotect the first rule as an example
@@ -738,11 +767,14 @@ export class FWorksheetPermission extends FBase {
 
     /**
      * List all range protection rules for the worksheet.
+     * @param {object} [options] Options for listing range protection rules.
+     * @param {boolean} [options.ignoreCollaborators] Whether to skip fetching collaborators for performance.
      * @returns {Promise<FRangeProtectionRule[]>} Array of protection rules.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = await fWorksheet.getWorksheetPermission().listRangeProtectionRules();
      * console.log(rules);
      * ```
@@ -767,11 +799,12 @@ export class FWorksheetPermission extends FBase {
      * Debug cell permission information.
      * @param {number} row Row index.
      * @param {number} col Column index.
-     * @returns {FRangeProtectionRule | undefined} Debug information about which rules affect this cell, or null if no rules apply.
+     * @returns {Promise<FRangeProtectionRule | undefined>} A promise resolving to the protection rule affecting this cell, or `undefined` if no range protection rule applies.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * // Get debug info for cell C3
      * const fRange = fWorksheet.getRange('C3');
      * const debugInfo = await fWorksheet.getWorksheetPermission().debugCellPermission(fRange.getRow(), fRange.getColumn());

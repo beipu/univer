@@ -18,6 +18,20 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: '배지 닫기',
+            close: '닫기',
+            menu: '메뉴',
+            previous: '이전',
+            next: '다음',
+            imageGallery: '이미지 갤러리',
+            image: '이미지 {0}/{1}',
+            zoomIn: '확대',
+            zoomOut: '축소',
+            resetZoom: '확대/축소 초기화',
+            increment: '증가',
+            decrement: '감소',
+        },
         Confirm: {
             cancel: '취소',
             confirm: '확인',
@@ -42,9 +56,12 @@ const locale: typeof enUS = {
                 '11월',
                 '12월',
             ],
-        },
-        Select: {
-            empty: '없음',
+            ariaLabels: {
+                previousMonth: '이전 달',
+                nextMonth: '다음 달',
+                selectYear: '연도 선택',
+                selectMonth: '월 선택',
+            },
         },
         ColorPicker: {
             more: '추가 색상',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: '다이아몬드형',
             offset: '오프셋',
             angle: '각도',
-            flip: '뒤집기',
             delete: '삭제',
+            transparency: '투명도',
         },
     },
 };

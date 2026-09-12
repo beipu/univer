@@ -28,8 +28,9 @@ import {
 import { RenderUnit } from '../render-unit';
 
 describe('render manager service', () => {
-    it('covers render map lifecycle and dark mode listener', () => {
+    it('marks render components dirty when the theme changes', () => {
         const darkMode$ = new Subject<boolean>();
+        const currentTheme$ = new Subject();
         const injector = {
             createInstance: vi.fn(() => new Engine()),
         } as unknown as Injector;
@@ -38,7 +39,7 @@ describe('render manager service', () => {
             getUnitType: vi.fn(() => UniverInstanceType.UNIVER_SHEET),
             getCurrentUnitOfType: vi.fn(() => null),
         } as any;
-        const themeService = { darkMode$ } as any;
+        const themeService = { currentTheme$, darkMode$ } as any;
 
         const service = new RenderManagerService(injector, instanceService, themeService);
         const engine = new Engine('render-service-test', { elementWidth: 100, elementHeight: 80, dpr: 1 });
@@ -63,11 +64,15 @@ describe('render manager service', () => {
 
         service.addRender('u-1', render);
         expect(service.has('u-1')).toBe(true);
-        expect(service.getRenderById('u-1')).toBe(render);
         expect(service.getRenderUnitById('u-1')).toBe(render);
         expect(service.getAllRenderersOfType(UniverInstanceType.UNIVER_SHEET).length).toBe(1);
 
         darkMode$.next(true);
+        expect(component.makeForceDirty).toHaveBeenCalledWith(true);
+        expect(component.makeDirty).toHaveBeenCalledWith(true);
+
+        vi.clearAllMocks();
+        currentTheme$.next({});
         expect(component.makeForceDirty).toHaveBeenCalledWith(true);
         expect(component.makeDirty).toHaveBeenCalledWith(true);
 
@@ -78,6 +83,7 @@ describe('render manager service', () => {
 
     it('covers dependency registration, render creation branches and helper funcs', () => {
         const darkMode$ = new Subject<boolean>();
+        const currentTheme$ = new Subject();
         const createdRenderUnit = {
             unitId: 'u-2',
             type: UniverInstanceType.UNIVER_SHEET,
@@ -110,7 +116,7 @@ describe('render manager service', () => {
             getUnitType: vi.fn(() => UniverInstanceType.UNIVER_SHEET),
             getCurrentUnitOfType: vi.fn(() => null),
         } as any;
-        const themeService = { darkMode$ } as any;
+        const themeService = { currentTheme$, darkMode$ } as any;
 
         const service = new RenderManagerService(injector, instanceService, themeService);
 
@@ -129,7 +135,7 @@ describe('render manager service', () => {
             dpr: 1,
         }));
         expect(thumbnailRender.isThumbNail).toBe(true);
-        expect(service.getRenderById('slide-unit')).toBe(thumbnailRender);
+        expect(service.getRenderUnitById('slide-unit')).toBe(thumbnailRender);
 
         const current = getCurrentTypeOfRenderer(
             UniverInstanceType.UNIVER_SHEET,
@@ -152,6 +158,68 @@ describe('render manager service', () => {
 
         disposableA.dispose();
         disposableB.dispose();
+        service.dispose();
+    });
+
+    it('deduplicates render dependencies by identifier', () => {
+        const darkMode$ = new Subject<boolean>();
+        const currentTheme$ = new Subject();
+        const injector = {
+            createInstance: vi.fn(() => new Engine()),
+        } as unknown as Injector;
+        const instanceService = {
+            getUnit: vi.fn(() => null),
+            getUnitType: vi.fn(() => UniverInstanceType.UNIVER_SHEET),
+            getCurrentUnitOfType: vi.fn(() => null),
+        } as any;
+        const service = new RenderManagerService(injector, instanceService, { currentTheme$, darkMode$ } as any);
+        const token = Symbol('render-dep') as any;
+        const otherToken = Symbol('other-render-dep') as any;
+        const firstDep = [token, { useClass: class FirstRenderModule {} }] as any;
+        const duplicateDep = [token, { useClass: class SecondRenderModule {} }] as any;
+
+        const firstDisposable = service.registerRenderModule(UniverInstanceType.UNIVER_SHEET, firstDep);
+        const duplicateDisposable = service.registerRenderModule(UniverInstanceType.UNIVER_SHEET, duplicateDep);
+        const mixedDisposable = service.registerRenderModules(UniverInstanceType.UNIVER_SHEET, [
+            duplicateDep,
+            otherToken,
+        ]);
+
+        const dependencies = (service as any)._renderDependencies.get(UniverInstanceType.UNIVER_SHEET);
+        expect(dependencies).toEqual([firstDep, otherToken]);
+
+        firstDisposable.dispose();
+        duplicateDisposable.dispose();
+        mixedDisposable.dispose();
+        expect((service as any)._renderDependencies.get(UniverInstanceType.UNIVER_SHEET)).toEqual([]);
+        service.dispose();
+    });
+
+    it('deduplicates identifier decorators by stable name across module copies', () => {
+        const darkMode$ = new Subject<boolean>();
+        const currentTheme$ = new Subject();
+        const injector = {
+            createInstance: vi.fn(() => new Engine()),
+        } as unknown as Injector;
+        const instanceService = {
+            getUnit: vi.fn(() => null),
+            getUnitType: vi.fn(() => UniverInstanceType.UNIVER_SHEET),
+            getCurrentUnitOfType: vi.fn(() => null),
+        } as any;
+        const service = new RenderManagerService(injector, instanceService, { currentTheme$, darkMode$ } as any);
+        const tokenA = Object.assign(() => undefined, { decoratorName: 'univer.sheet.selection-render-service' }) as any;
+        const tokenB = Object.assign(() => undefined, { decoratorName: 'univer.sheet.selection-render-service' }) as any;
+        const firstDep = [tokenA, { useClass: class FirstRenderModule {} }] as any;
+        const duplicateDep = [tokenB, { useClass: class SecondRenderModule {} }] as any;
+
+        const firstDisposable = service.registerRenderModule(UniverInstanceType.UNIVER_SHEET, firstDep);
+        const duplicateDisposable = service.registerRenderModule(UniverInstanceType.UNIVER_SHEET, duplicateDep);
+
+        expect((service as any)._renderDependencies.get(UniverInstanceType.UNIVER_SHEET)).toEqual([firstDep]);
+
+        firstDisposable.dispose();
+        duplicateDisposable.dispose();
+        expect((service as any)._renderDependencies.get(UniverInstanceType.UNIVER_SHEET)).toEqual([]);
         service.dispose();
     });
 });

@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: '링크 편집',
             addTitle: '링크 삽입',
             label: '표시 텍스트',
             type: '유형',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: '링크 삽입',
         },
+        permission: {
+            hyperLinkErr: '링크를 삽입할 권한이 없습니다.',
+        },
         message: {
             noSheet: '대상 워크시트가 삭제되었습니다',
             refError: '잘못된 범위입니다',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: '링크가 클립보드에 복사되었습니다',
         },
         popup: {
+            title: '하이퍼링크',
+            open: '링크 열기',
             copy: '링크 복사',
             edit: '링크 편집',
             cancel: '링크 취소',

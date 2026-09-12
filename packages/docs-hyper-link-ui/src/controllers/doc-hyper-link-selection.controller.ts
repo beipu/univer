@@ -16,7 +16,14 @@
 
 import type { DocumentDataModel } from '@univerjs/core';
 import type { ISetTextSelectionsOperationParams } from '@univerjs/docs';
-import { Disposable, ICommandService, Inject, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import {
+    CustomRangeType,
+    Disposable,
+    ICommandService,
+    Inject,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { SetTextSelectionsOperation } from '@univerjs/docs';
 import { DocHyperLinkPopupService } from '../services/hyper-link-popup.service';
 
@@ -40,23 +47,39 @@ export class DocHyperLinkSelectionController extends Disposable {
 
                     const doc = this._univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
                     const primary = ranges[0];
-                    if (primary && doc) {
-                        const { startOffset, endOffset, collapsed, segmentPage } = primary;
+                    const editing = this._docHyperLinkService.editing;
+                    // Opening the editor selects its own link; that is not a user dismissal.
+                    if (editing?.unitId === unitId &&
+                        (editing.segmentId ?? '') === (segmentId ?? '') &&
+                        primary?.startOffset === editing.startIndex && primary.endOffset === editing.endIndex + 1) {
+                        return;
+                    }
+                    if (primary?.collapsed && doc) {
+                        const { startOffset, endOffset, segmentPage } = primary;
                         const customRanges = doc.getSelfOrHeaderFooterModel(segmentId)?.getBody()?.customRanges;
-                        if (collapsed) {
-                            // cursor
-                            const index = customRanges?.findIndex((value) => (value.startIndex) < startOffset && value.endIndex > endOffset - 1) ?? -1;
-                            if (index > -1) {
-                                const customRange = customRanges![index];
-                                this._docHyperLinkService.showInfoPopup({ unitId, linkId: customRange.rangeId, segmentId, segmentPage, startIndex: customRange.startIndex, endIndex: customRange.endIndex });
-                                return;
-                            }
-                        } else {
-                            // range
-                            const range = customRanges?.find((value) => value.startIndex <= startOffset && value.endIndex >= (endOffset - 1));
-                            if (range) {
-                                return;
-                            }
+                        const showing = this._docHyperLinkService.showing;
+                        // Pointer-up opens the clicked link before selection completes.
+                        // Preserve that link at its trailing edge without claiming the
+                        // leading edge of an adjacent link for a fresh caret selection.
+                        const trailingLink = showing?.unitId === unitId &&
+                            (showing.segmentId ?? '') === segmentId &&
+                            showing.segmentPage === segmentPage &&
+                            showing.endIndex === endOffset - 1
+                            ? customRanges?.find((value) => (
+                                value.rangeId === showing.linkId &&
+                                value.rangeType === CustomRangeType.HYPERLINK &&
+                                value.startIndex <= startOffset &&
+                                value.endIndex === endOffset - 1
+                            ))
+                            : undefined;
+                        const customRange = trailingLink ?? customRanges?.find((value) => (
+                            value.rangeType === CustomRangeType.HYPERLINK &&
+                            value.startIndex <= startOffset &&
+                            value.endIndex > endOffset - 1
+                        ));
+                        if (customRange) {
+                            this._docHyperLinkService.showInfoPopup({ unitId, linkId: customRange.rangeId, segmentId, segmentPage, startIndex: customRange.startIndex, endIndex: customRange.endIndex });
+                            return;
                         }
                     }
 

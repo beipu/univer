@@ -17,6 +17,7 @@
 import type { ICommandInfo } from '@univerjs/core';
 import type { MenuConfig } from '@univerjs/ui';
 import type { IOpenFilterPanelOperationParams } from '../commands/operations/sheets-filter.operation';
+import type { LocaleKey } from '../locale/types';
 import { Disposable, ICommandService, Inject, Injector, IUniverInstanceService, LocaleService, Tools } from '@univerjs/core';
 import { expandToContinuousRange, getSheetCommandTarget, RangeProtectionPermissionViewPoint, SheetPermissionCheckController, SheetsSelectionsService, WorksheetFilterPermission, WorksheetViewPermission } from '@univerjs/sheets';
 import { SheetsFilterService, SmartToggleSheetsFilterCommand } from '@univerjs/sheets-filter';
@@ -27,8 +28,6 @@ export interface IUniverSheetsFilterUIConfig {
 }
 
 export const DefaultSheetFilterUiConfig = {};
-
-export const FILTER_PANEL_POPUP_KEY = 'FILTER_PANEL_POPUP';
 
 /**
  * This controller controls the UI of "filter" features. Menus, commands and filter panel etc. Except for the rendering.
@@ -82,7 +81,7 @@ export class SheetsFilterPermissionController extends Disposable {
                     }
 
                     if (!permission) {
-                        this._sheetPermissionCheckPermission.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.filterErr'));
+                        this._sheetPermissionCheckPermission.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-filter-ui.permission.filterErr'));
                     }
                 }
                 if (command.id === OpenFilterPanelOperation.id) {
@@ -98,7 +97,7 @@ export class SheetsFilterPermissionController extends Disposable {
                             worksheetTypes: [WorksheetFilterPermission, WorksheetViewPermission],
                         }, [colRange], unitId, subUnitId);
                         if (!permission) {
-                            this._sheetPermissionCheckPermission.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.filterErr'));
+                            this._sheetPermissionCheckPermission.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-filter-ui.permission.filterErr'));
                         }
                     }
                 }

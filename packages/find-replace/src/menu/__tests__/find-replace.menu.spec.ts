@@ -14,55 +14,70 @@
  * limitations under the License.
  */
 
-import type { Injector, Univer } from '@univerjs/core';
-import { EDITOR_ACTIVATED, FOCUSING_SHEET, IContextService } from '@univerjs/core';
-import { RibbonDataGroup } from '@univerjs/ui';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createTestBed } from '../../__tests__/create-test-bed';
-import { OpenFindDialogOperation } from '../../commands/operations/find-replace.operation';
+import { EDITOR_ACTIVATED, FOCUSING_SHEET, IContextService, Univer } from '@univerjs/core';
+import { afterEach, describe, expect, it } from 'vitest';
+import { FIND_REPLACE_AVAILABLE } from '../../services/context-keys';
 import { FindReplaceMenuItemFactory } from '../find-replace.menu';
-import { menuSchema } from '../schema';
 
-describe('find-replace.menu', () => {
-    let univer: Univer;
-    let get: Injector['get'];
-
-    beforeEach(() => {
-        const testBed = createTestBed();
-        univer = testBed.univer;
-        get = testBed.get;
-    });
+describe('FindReplaceMenuItemFactory', () => {
+    let univer: Univer | undefined;
 
     afterEach(() => {
-        univer.dispose();
+        univer?.dispose();
+        univer = undefined;
     });
 
-    it('should build menu item and compute disabled state from context values', () => {
-        const contextService = get(IContextService);
+    it.each([
+        { availability: undefined, disabled: true, label: 'not initialized' },
+        { availability: false, disabled: true, label: 'unavailable' },
+        { availability: true, disabled: false, label: 'available' },
+    ])('reflects a $label provider before any context changes', ({ availability, disabled }) => {
+        univer = new Univer();
+        const injector = univer.__getInjector();
+        const contextService = injector.get(IContextService);
         contextService.setContextValue(EDITOR_ACTIVATED, false);
         contextService.setContextValue(FOCUSING_SHEET, true);
+        if (availability !== undefined) {
+            contextService.setContextValue(FIND_REPLACE_AVAILABLE, availability);
+        }
 
-        const menuItem = FindReplaceMenuItemFactory({ get } as never);
-        const states: boolean[] = [];
-        const sub = menuItem.disabled$!.subscribe((value) => states.push(value));
-
-        contextService.setContextValue(EDITOR_ACTIVATED, true);
-        contextService.setContextValue(FOCUSING_SHEET, false);
-        sub.unsubscribe();
-
-        expect(menuItem.id).toBe(OpenFindDialogOperation.id);
-        expect(menuItem.tooltip).toBe('find-replace.toolbar');
-        expect(states[0]).toBe(false);
-        expect(states).toContain(true);
+        const values: boolean[] = [];
+        const subscription = FindReplaceMenuItemFactory(injector).disabled$!.subscribe((value) => values.push(value));
+        try {
+            expect(values.length).toBeGreaterThan(0);
+            expect(values[values.length - 1]).toBe(disabled);
+        } finally {
+            subscription.unsubscribe();
+        }
     });
 
-    it('should expose toolbar schema entry for open-find operation', () => {
-        const schema = menuSchema as Record<string, Record<string, unknown>>;
-        expect(schema[RibbonDataGroup.ORGANIZATION][OpenFindDialogOperation.id]).toEqual(
-            expect.objectContaining({
-                order: 2,
-                menuItemFactory: FindReplaceMenuItemFactory,
-            })
-        );
+    it('tracks provider readiness and removal while preserving editor and focus restrictions', () => {
+        univer = new Univer();
+        const injector = univer.__getInjector();
+        const contextService = injector.get(IContextService);
+        contextService.setContextValue(EDITOR_ACTIVATED, false);
+        contextService.setContextValue(FOCUSING_SHEET, true);
+        const values: boolean[] = [];
+        const subscription = FindReplaceMenuItemFactory(injector).disabled$!.subscribe((value) => values.push(value));
+        try {
+            expect(values[values.length - 1]).toBe(true);
+            contextService.setContextValue(FIND_REPLACE_AVAILABLE, true);
+            expect(values[values.length - 1]).toBe(false);
+            contextService.setContextValue(EDITOR_ACTIVATED, true);
+            expect(values[values.length - 1]).toBe(true);
+            contextService.setContextValue(EDITOR_ACTIVATED, false);
+            expect(values[values.length - 1]).toBe(false);
+            contextService.setContextValue(FOCUSING_SHEET, false);
+            expect(values[values.length - 1]).toBe(true);
+            contextService.setContextValue(FOCUSING_SHEET, true);
+            expect(values[values.length - 1]).toBe(false);
+            contextService.setContextValue(FIND_REPLACE_AVAILABLE, false);
+            expect(values[values.length - 1]).toBe(true);
+        } finally {
+            subscription.unsubscribe();
+        }
+        const finalCount = values.length;
+        contextService.setContextValue(FIND_REPLACE_AVAILABLE, true);
+        expect(values).toHaveLength(finalCount);
     });
 });

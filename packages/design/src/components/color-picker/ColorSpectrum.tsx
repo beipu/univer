@@ -46,7 +46,7 @@ export function ColorSpectrum({ hsv, onChange, onChanged }: IColorSpectrumProps)
         gradientV.addColorStop(1, 'rgba(0, 0, 0, 1)');
         ctx.fillStyle = gradientV;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }, [hsv]);
+    }, [hsv[0]]);
 
     const handlePointerEvent = (e: PointerEvent) => {
         e.stopPropagation();
@@ -66,7 +66,7 @@ export function ColorSpectrum({ hsv, onChange, onChanged }: IColorSpectrumProps)
 
     const handlePointerUp = useCallback(() => {
         setIsDragging(false);
-    }, [hsv]);
+    }, []);
 
     function handleChange() {
         onChanged?.(hsv[0], hsv[1], hsv[2]);
@@ -86,18 +86,11 @@ export function ColorSpectrum({ hsv, onChange, onChanged }: IColorSpectrumProps)
 
     // Calculate the position of the indicator
     const getIndicatorStyles = () => {
-        const indicatorSize = 16; // 4rem = 16px
-        const halfIndicatorSize = indicatorSize / 2;
-
-        const w = containerRef.current?.clientWidth ?? 0;
-        const h = containerRef.current?.clientHeight ?? 0;
-
-        const x = (hsv[1] / 100) * w - halfIndicatorSize;
-        const y = (100 - hsv[2]) / 100 * h - halfIndicatorSize;
-
         return {
-            transform: `translate(${x}px, ${y}px)`,
-            transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+            left: `${hsv[1]}%`,
+            top: `${100 - hsv[2]}%`,
+            transform: 'translate(-50%, -50%)',
+            transition: isDragging ? 'none' : 'left 0.1s ease-out, top 0.1s ease-out',
         };
     };
 
@@ -119,10 +112,11 @@ export function ColorSpectrum({ hsv, onChange, onChanged }: IColorSpectrumProps)
         <div
             data-u-comp="color-picker-spectrum"
             ref={containerRef}
-            className="univer-relative univer-overflow-hidden"
+            className="univer-relative univer-size-full univer-overflow-hidden"
         >
             <canvas
                 ref={canvasRef}
+                data-u-comp="color-picker-spectrum-canvas"
                 className="univer-size-full univer-cursor-crosshair univer-rounded"
                 onPointerDown={(e) => {
                     setIsDragging(true);
@@ -135,8 +129,8 @@ export function ColorSpectrum({ hsv, onChange, onChanged }: IColorSpectrumProps)
             <div
                 className={`
                   univer-pointer-events-none univer-absolute univer-left-0 univer-top-0 univer-size-4
-                  univer-rounded-full univer-border-2 univer-border-white univer-shadow-md univer-ring-2
-                  univer-ring-white univer-will-change-transform
+                  univer-rounded-full univer-border-2 univer-border-gray-0 univer-shadow-md univer-ring-2
+                  univer-ring-gray-0 univer-will-change-transform
                 `}
                 style={getIndicatorStyles()}
             />

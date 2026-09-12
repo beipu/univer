@@ -15,7 +15,8 @@
  */
 
 import type { ICommand, IRange } from '@univerjs/core';
-import { CommandType, ICommandService, IConfirmService, IUniverInstanceService, LocaleService, Rectangle } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
+import { CommandType, getIntersectRange, ICommandService, IConfirmService, IUniverInstanceService, LocaleService } from '@univerjs/core';
 import { getSheetCommandTarget, InsertRangeMoveRightCommand, SheetsSelectionsService } from '@univerjs/sheets';
 
 export const InsertRangeMoveRightConfirmCommand: ICommand = {
@@ -48,7 +49,7 @@ export const InsertRangeMoveRightConfirmCommand: ICommand = {
         const getRowLength = (range: IRange) => range.endRow - range.startRow;
 
         const mergeData = worksheet.getMergeData().find((mergeRange) => {
-            const interSectedRange = Rectangle.getIntersects(mergeRange, range);
+            const interSectedRange = getIntersectRange(mergeRange, range);
             return interSectedRange ? getRowLength(mergeRange) > getRowLength(interSectedRange) : false;
         });
 
@@ -58,10 +59,10 @@ export const InsertRangeMoveRightConfirmCommand: ICommand = {
 
         const result = await confirmService.confirm({
             id: InsertRangeMoveRightConfirmCommand.id,
-            title: { title: localeService.t('merge.confirm.warning') },
-            children: { title: localeService.t('merge.confirm.dismantleMergeCellWarning') },
-            cancelText: localeService.t('button.cancel'),
-            confirmText: localeService.t('button.confirm'),
+            title: { title: localeService.t<LocaleKey>('sheets-ui.merge.confirm.warning') },
+            children: { title: localeService.t<LocaleKey>('sheets-ui.merge.confirm.dismantleMergeCellWarning') },
+            cancelText: localeService.t<LocaleKey>('sheets-ui.button.cancel'),
+            confirmText: localeService.t<LocaleKey>('sheets-ui.button.confirm'),
         });
         if (result) {
             return commandService.executeCommand(InsertRangeMoveRightCommand.id);

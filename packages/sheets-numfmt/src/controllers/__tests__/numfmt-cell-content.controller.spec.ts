@@ -14,20 +14,21 @@
  * limitations under the License.
  */
 
-import type { Dependency, Injector, IWorkbookData, Workbook, Worksheet } from '@univerjs/core';
+import type { Dependency, IWorkbookData, Workbook, Worksheet } from '@univerjs/core';
 import {
     cellToRange,
     CellValueType,
+    DateSystem,
     ICommandService,
     IConfigService,
     ILogService,
     Inject,
+    Injector,
     InterceptorEffectEnum,
     IUniverInstanceService,
     LocaleType,
     LogLevel,
     Plugin,
-    Injector as RediInjector,
     Univer,
     UniverInstanceType,
 } from '@univerjs/core';
@@ -44,11 +45,16 @@ import { SHEETS_NUMFMT_PLUGIN_CONFIG_KEY } from '../../config/config';
 import * as patternUtils from '../../utils/pattern';
 import { SheetsNumfmtCellContentController } from '../numfmt-cell-content.controller';
 
-function createWorkbookData(): IWorkbookData {
+function createWorkbookData(
+    id = 'test',
+    locale = LocaleType.ZH_CN,
+    dateSystem = DateSystem.Date1900
+): IWorkbookData {
     return {
-        id: 'test',
+        id,
         appVersion: '3.0.0-alpha',
-        locale: LocaleType.ZH_CN,
+        locale,
+        dateSystem,
         name: '',
         sheetOrder: ['sheet1', 'sheet2'],
         styles: {
@@ -74,6 +80,8 @@ function createWorkbookData(): IWorkbookData {
                         0: { v: '123', t: CellValueType.STRING, s: 'textStyle' },
                         1: { v: '1234.5', t: CellValueType.STRING },
                         2: { v: -12.3, t: CellValueType.NUMBER },
+                        3: { v: '20%', t: CellValueType.STRING, s: 'textStyle' },
+                        4: { v: 0, t: CellValueType.NUMBER },
                     },
                 },
             },
@@ -102,7 +110,7 @@ function createControllerTestBed(workbookData?: IWorkbookData) {
 
         constructor(
             _config: undefined,
-            @Inject(RediInjector) override readonly _injector: Injector
+            @Inject(Injector) override readonly _injector: Injector
         ) {
             super();
         }
@@ -196,10 +204,27 @@ describe('SheetsNumfmtCellContentController', () => {
             },
         });
 
+        expect(getInterceptedCell(worksheet, workbook, 1, 3, get)).toEqual({
+            v: '20%',
+            t: CellValueType.STRING,
+            s: 'textStyle',
+            markers: {
+                tl: {
+                    size: 6,
+                    color: '#409f11',
+                },
+            },
+        });
+
         get(IConfigService).setConfig(SHEETS_NUMFMT_PLUGIN_CONFIG_KEY, { disableTextFormatMark: true });
 
         expect(getInterceptedCell(worksheet, workbook, 1, 0, get)).toEqual({
             v: '123',
+            t: CellValueType.STRING,
+            s: 'textStyle',
+        });
+        expect(getInterceptedCell(worksheet, workbook, 1, 3, get)).toEqual({
+            v: '20%',
             t: CellValueType.STRING,
             s: 'textStyle',
         });
@@ -267,6 +292,41 @@ describe('SheetsNumfmtCellContentController', () => {
 
         getInterceptedCell(worksheet, workbook, 1, 1, get);
         expect(previewSpy).toHaveBeenCalledTimes(previewCallsAfterFirstRender + 2);
+    });
+
+    it('formats each workbook with its own locale and date system', () => {
+        const date1900Sheet = workbook.getSheetBySheetId('sheet1')!;
+        const date1904Workbook = univer.createUnit<IWorkbookData, Workbook>(
+            UniverInstanceType.UNIVER_SHEET,
+            createWorkbookData('date1904', LocaleType.FR_FR, DateSystem.Date1904)
+        );
+        const date1904Sheet = date1904Workbook.getSheetBySheetId('sheet1')!;
+        const previewSpy = vi.spyOn(patternUtils, 'getPatternPreviewIgnoreGeneral');
+
+        numfmtService.setValues('test', 'sheet1', [{ pattern: 'yyyy-mm-dd', ranges: [cellToRange(1, 4)] }]);
+        numfmtService.setValues('date1904', 'sheet1', [{ pattern: 'yyyy-mm-dd', ranges: [cellToRange(1, 4)] }]);
+
+        expect(getInterceptedCell(date1900Sheet, workbook, 1, 4, get)).toMatchObject({ v: '1900-01-00' });
+        expect(getInterceptedCell(date1904Sheet, date1904Workbook, 1, 4, get)).toMatchObject({ v: '1904-01-01' });
+        expect(previewSpy).toHaveBeenLastCalledWith('yyyy-mm-dd', 0, 'fr', DateSystem.Date1904);
+    });
+
+    it('applies and caches a legitimate empty number-format result', () => {
+        const worksheet = workbook.getSheetBySheetId('sheet1')!;
+        const previewSpy = vi.spyOn(patternUtils, 'getPatternPreviewIgnoreGeneral');
+
+        numfmtService.setValues('test', 'sheet1', [{ pattern: ';;;', ranges: [cellToRange(1, 1)] }]);
+
+        expect(getInterceptedCell(worksheet, workbook, 1, 1, get)).toMatchObject({
+            v: '',
+            t: CellValueType.NUMBER,
+            coverable: false,
+        });
+        expect(worksheet.getCellRaw(1, 1)).toMatchObject({ v: '1234.5', t: CellValueType.STRING });
+
+        const previewCallsAfterFirstRender = previewSpy.mock.calls.length;
+        getInterceptedCell(worksheet, workbook, 1, 1, get);
+        expect(previewSpy).toHaveBeenCalledTimes(previewCallsAfterFirstRender);
     });
 
     it('resets cached rendering when active sheet changes and supports locale override', () => {

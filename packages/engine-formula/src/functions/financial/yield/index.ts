@@ -15,9 +15,16 @@
  */
 
 import type { BaseValueObject } from '../../../engine/value-object/base-value-object';
+import { DateSystem } from '@univerjs/core';
 import { getDateSerialNumberByObject, getTwoDateDaysByBasis } from '../../../basics/date';
 import { ErrorType } from '../../../basics/error-type';
-import { calculateCoupdaybs, calculateCoupdays, calculateCoupnum, calculatePrice, validCouppcdIsGte0ByTwoDate } from '../../../basics/financial';
+import {
+    calculateCoupdaybs,
+    calculateCoupdays,
+    calculateCoupnum,
+    calculatePrice,
+    validCouppcdIsGte0ByTwoDate,
+} from '../../../basics/financial';
 import { checkVariantsErrorIsNullorArrayOrBoolean } from '../../../engine/utils/check-variant-error';
 import { ErrorValueObject } from '../../../engine/value-object/base-value-object';
 import { NumberValueObject } from '../../../engine/value-object/primitive-object';
@@ -51,13 +58,13 @@ export class Yield extends BaseFunction {
 
         const [settlementObject, maturityObject, rateObject, prObject, redemptionObject, frequencyObject, basisObject] = variants as BaseValueObject[];
 
-        const settlementSerialNumber = getDateSerialNumberByObject(settlementObject);
+        const settlementSerialNumber = getDateSerialNumberByObject(settlementObject, this.getDateSystem());
 
         if (typeof settlementSerialNumber !== 'number') {
             return settlementSerialNumber;
         }
 
-        const maturitySerialNumber = getDateSerialNumberByObject(maturityObject);
+        const maturitySerialNumber = getDateSerialNumberByObject(maturityObject, this.getDateSystem());
 
         if (typeof maturitySerialNumber !== 'number') {
             return maturitySerialNumber;
@@ -73,6 +80,7 @@ export class Yield extends BaseFunction {
             return ErrorValueObject.create(ErrorType.VALUE);
         }
 
+        // Excel treats serial zero as an invalid settlement date in the 1900 date system.
         if (
             rateValue < 0 ||
             prValue <= 0 ||
@@ -81,7 +89,8 @@ export class Yield extends BaseFunction {
             basisValue < 0 ||
             basisValue > 4 ||
             settlementSerialNumber >= maturitySerialNumber ||
-            !validCouppcdIsGte0ByTwoDate(settlementSerialNumber, maturitySerialNumber, frequencyValue)
+            (this.getDateSystem() === DateSystem.Date1900 && settlementSerialNumber <= 0) ||
+            !validCouppcdIsGte0ByTwoDate(settlementSerialNumber, maturitySerialNumber, frequencyValue, this.getDateSystem())
         ) {
             return ErrorValueObject.create(ErrorType.NUM);
         }
@@ -100,29 +109,29 @@ export class Yield extends BaseFunction {
         frequency: number,
         basis: number
     ): number {
-        const N = calculateCoupnum(settlementSerialNumber, maturitySerialNumber, frequency);
+        const N = calculateCoupnum(settlementSerialNumber, maturitySerialNumber, frequency, this.getDateSystem());
 
         if (N > 1) {
             const g_Eps = 1e-7;
 
             let yld = rate || 0.01;
-            let price = calculatePrice(settlementSerialNumber, maturitySerialNumber, rate, yld, redemption, frequency, basis);
+            let price = calculatePrice(settlementSerialNumber, maturitySerialNumber, rate, yld, redemption, frequency, basis, this.getDateSystem());
             let eps = price - pr;
 
             for (let i = 0; i < 100 && Math.abs(eps) > g_Eps; i++) {
-                price = calculatePrice(settlementSerialNumber, maturitySerialNumber, rate, 1.01 * yld, redemption, frequency, basis);
+                price = calculatePrice(settlementSerialNumber, maturitySerialNumber, rate, 1.01 * yld, redemption, frequency, basis, this.getDateSystem());
                 yld += -eps / (price - pr - eps) * yld * 0.01;
 
-                const priceN = calculatePrice(settlementSerialNumber, maturitySerialNumber, rate, yld, redemption, frequency, basis);
+                const priceN = calculatePrice(settlementSerialNumber, maturitySerialNumber, rate, yld, redemption, frequency, basis, this.getDateSystem());
                 eps = priceN - pr;
             }
 
             return yld;
         }
 
-        const A = calculateCoupdaybs(settlementSerialNumber, maturitySerialNumber, frequency, basis);
-        const E = calculateCoupdays(settlementSerialNumber, maturitySerialNumber, frequency, basis);
-        const { days: DSR } = getTwoDateDaysByBasis(settlementSerialNumber, maturitySerialNumber, basis);
+        const A = calculateCoupdaybs(settlementSerialNumber, maturitySerialNumber, frequency, basis, this.getDateSystem());
+        const E = calculateCoupdays(settlementSerialNumber, maturitySerialNumber, frequency, basis, this.getDateSystem());
+        const { days: DSR } = getTwoDateDaysByBasis(settlementSerialNumber, maturitySerialNumber, basis, this.getDateSystem());
 
         const temp = pr / 100 + (A / E * rate / frequency);
         const result = ((redemption / 100 + rate / frequency) - temp) / temp * frequency * E / DSR;

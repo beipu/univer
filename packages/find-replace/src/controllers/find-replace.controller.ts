@@ -15,6 +15,7 @@
  */
 
 import type { IDisposable, Nullable } from '@univerjs/core';
+import type { LocaleKey } from '../locale/types';
 import {
     ICommandService,
     Inject,
@@ -23,11 +24,11 @@ import {
     RxDisposable,
     toDisposable,
 } from '@univerjs/core';
-import { SearchIcon } from '@univerjs/icons';
-import { ComponentManager, IDialogService, ILayoutService, IMenuManagerService, IShortcutService } from '@univerjs/ui';
+import { IDialogService, ILayoutService, IMenuManagerService, IShortcutService } from '@univerjs/ui';
 import { takeUntil } from 'rxjs';
 import { ReplaceAllMatchesCommand, ReplaceCurrentMatchCommand } from '../commands/commands/replace.command';
 import {
+    CloseFindDialogOperation,
     FocusSelectionOperation,
     GoToNextMatchOperation,
     GoToPreviousMatchOperation,
@@ -36,7 +37,6 @@ import {
 } from '../commands/operations/find-replace.operation';
 import { menuSchema } from '../menu/schema';
 import { IFindReplaceService } from '../services/find-replace.service';
-import { FindReplaceDialog } from '../views/dialog/FindReplaceDialog';
 import {
     FocusSelectionShortcutItem,
     GoToNextFindMatchShortcutItem,
@@ -49,7 +49,7 @@ import {
 const FIND_REPLACE_DIALOG_ID = 'DESKTOP_FIND_REPLACE_DIALOG';
 
 const FIND_REPLACE_PANEL_WIDTH = 350;
-const FIND_REPLACE_PANEL_RIGHT_PADDING = 20;
+const FIND_REPLACE_PANEL_HORIZONTAL_PADDING = 20;
 const FIND_REPLACE_PANEL_TOP_PADDING = 64;
 
 export class FindReplaceController extends RxDisposable {
@@ -61,8 +61,7 @@ export class FindReplaceController extends RxDisposable {
         @IFindReplaceService private readonly _findReplaceService: IFindReplaceService,
         @IDialogService private readonly _dialogService: IDialogService,
         @ILayoutService private readonly _layoutService: ILayoutService,
-        @Inject(LocaleService) private readonly _localeService: LocaleService,
-        @Inject(ComponentManager) private readonly _componentManager: ComponentManager
+        @Inject(LocaleService) private readonly _localeService: LocaleService
     ) {
         super();
 
@@ -82,6 +81,7 @@ export class FindReplaceController extends RxDisposable {
         [
             OpenFindDialogOperation,
             OpenReplaceDialogOperation,
+            CloseFindDialogOperation,
             GoToNextMatchOperation,
             GoToPreviousMatchOperation,
             ReplaceAllMatchesCommand,
@@ -104,49 +104,48 @@ export class FindReplaceController extends RxDisposable {
     }
 
     private _initUI(): void {
-        ([
-            ['FindReplaceDialog', FindReplaceDialog],
-            ['SearchIcon', SearchIcon],
-        ] as const).forEach(([key, comp]) => {
-            this.disposeWithMe(
-                this._componentManager.register(key, comp)
-            );
-        });
-
         this._menuManagerService.mergeMenu(menuSchema);
 
         // this controller is also responsible for toggling the FindReplaceDialog
         this._findReplaceService.stateUpdates$.pipe(takeUntil(this.dispose$)).subscribe((newState) => {
             if (newState.revealed === true) {
                 this._openPanel();
+            } else if (newState.revealed === false) {
+                this._closePanel(false);
             }
         });
     }
 
     private _openPanel(): void {
+        const sessionUnitId = this._univerInstanceService.getFocusedUnit()?.getUnitId();
         this._dialogService.open({
             id: FIND_REPLACE_DIALOG_ID,
             draggable: true,
             width: FIND_REPLACE_PANEL_WIDTH,
-            title: { title: this._localeService.t('find-replace.dialog.title') },
+            title: { title: this._localeService.t<LocaleKey>('find-replace.dialog.title') },
             children: { label: 'FindReplaceDialog' },
-            destroyOnClose: true,
             mask: false,
             maskClosable: false,
-            defaultPosition: getFindReplaceDialogDefaultPosition(),
+            defaultPosition: getFindReplaceDialogDefaultPosition(this._localeService.getDirection()),
             preservePositionOnDestroy: true,
             onClose: () => this.closePanel(),
         });
 
-        this._closingListenerDisposable = toDisposable(this._univerInstanceService.focused$.pipe(takeUntil(this.dispose$)).subscribe((focused) => {
-            if (!focused || !this._univerInstanceService.getUniverSheetInstance(focused)) {
-                this.closePanel();
-            }
-        }));
+        this._closingListenerDisposable = toDisposable(
+            this._univerInstanceService.focused$.pipe(takeUntil(this.dispose$)).subscribe((focused) => {
+                if (!focused || focused !== sessionUnitId) {
+                    this.closePanel();
+                }
+            })
+        );
     }
 
     private _closingListenerDisposable: Nullable<IDisposable>;
     closePanel(): void {
+        this._closePanel(true);
+    }
+
+    private _closePanel(terminateSession: boolean): void {
         if (!this._closingListenerDisposable) {
             return;
         }
@@ -155,15 +154,19 @@ export class FindReplaceController extends RxDisposable {
         this._closingListenerDisposable = null;
 
         this._dialogService.close(FIND_REPLACE_DIALOG_ID);
-        this._findReplaceService.terminate();
+        if (terminateSession) {
+            this._findReplaceService.terminate();
+        }
 
         queueMicrotask(() => this._layoutService.focus());
     }
 }
 
-function getFindReplaceDialogDefaultPosition(): { x: number; y: number } {
+export function getFindReplaceDialogDefaultPosition(direction: 'ltr' | 'rtl'): { x: number; y: number } {
     const { innerWidth } = window;
-    const x = (innerWidth - FIND_REPLACE_PANEL_WIDTH) - FIND_REPLACE_PANEL_RIGHT_PADDING;
+    const x = direction === 'rtl'
+        ? FIND_REPLACE_PANEL_HORIZONTAL_PADDING
+        : (innerWidth - FIND_REPLACE_PANEL_WIDTH) - FIND_REPLACE_PANEL_HORIZONTAL_PADDING;
     const y = FIND_REPLACE_PANEL_TOP_PADDING;
 
     return { x, y };

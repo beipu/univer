@@ -17,9 +17,16 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    sheetThreadComment: {
+    'sheets-thread-comment-ui': {
+        panel: {
+            title: 'Quản lý bình luận',
+        },
+        permission: {
+            commentErr: 'Bạn không có quyền sử dụng bình luận.',
+        },
         menu: {
             addComment: 'Thêm bình luận',
+            openComments: 'Mở bình luận',
             commentManagement: 'Quản lý bình luận',
         },
     },

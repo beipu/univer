@@ -15,15 +15,39 @@
  */
 
 import type { Nullable } from '../../shared';
-import type { BaselineOffset, HorizontalAlign, TextDecoration, TextDirection } from '../../types/enum';
-import type { IBorderData, IColorStyle, IDocumentBody, IDocumentData, INumberUnit, IParagraphBorder, IParagraphStyle, IShading, ITabStop, ITextDecoration, ITextStyle, NamedStyleType, SpacingRule } from '../../types/interfaces';
-import { generateRandomId, Tools } from '../../shared';
+import type { BaselineOffset, HorizontalAlign, TextDecoration, TextDirection, VerticalAlign } from '../../types/enum';
+import type { IBorderData, IColorStyle, IDocumentBody, IDocumentData, INumberUnit, IParagraphBorder, IParagraphStyle, ISectionColumnProperties, IShading, ITabStop, ITextDecoration, ITextStyle, NamedStyleType, SpacingRule } from '../../types/interfaces';
+import { Tools } from '../../shared';
+import { generateRandomId } from '../../shared/random-id';
 import { BooleanNumber } from '../../types/enum';
-import { CustomRangeType } from '../../types/interfaces';
+import {
+    CustomRangeType,
+
+} from '../../types/interfaces';
+import { createParagraphId } from '../paragraph-id';
+import { createSectionId } from '../section-break-id';
 import { DocumentDataModel } from './document-data-model';
-import { BuildTextUtils } from './text-x/build-utils';
+import { PresetListType } from './preset-list-type';
+import { BuildTextUtils, getParagraphContentStartOffsets } from './text-x/build-utils';
 import { TextX } from './text-x/text-x';
 import { getBodySlice } from './text-x/utils';
+import { DataStreamTreeTokenType } from './types';
+
+/** A half-open range in a rich-text document data stream. */
+export interface IRichTextRange {
+    /** Inclusive offset of the first character. */
+    startOffset: number;
+    /** Exclusive offset immediately after the last character. */
+    endOffset: number;
+}
+
+type IMutableRichTextRange = IRichTextRange;
+
+const NON_EDITABLE_RICH_TEXT_TOKENS = new Set<string>(
+    Object.values(DataStreamTreeTokenType).filter((token) =>
+        token !== DataStreamTreeTokenType.LETTER && token !== DataStreamTreeTokenType.SPACE
+    )
+);
 
 export function normalizeBody(body: IDocumentBody) {
     if (!body.customRanges) {
@@ -32,9 +56,10 @@ export function normalizeBody(body: IDocumentBody) {
 
     if (!body.paragraphs) {
         body.paragraphs = [];
+        const existingParagraphIds = new Set<string>();
         for (let i = 0; i < body.dataStream.length; i++) {
             if (body.dataStream[i] === '\r') {
-                body.paragraphs.push({ startIndex: i });
+                body.paragraphs.push({ startIndex: i, paragraphId: createParagraphId(existingParagraphIds) });
             }
         }
     }
@@ -53,6 +78,12 @@ export function normalizeBody(body: IDocumentBody) {
 
     if (!body.sectionBreaks) {
         body.sectionBreaks = [];
+        const existingSectionIds = new Set<string>();
+        for (let i = 0; i < body.dataStream.length; i++) {
+            if (body.dataStream[i] === '\n') {
+                body.sectionBreaks.push({ startIndex: i, sectionId: createSectionId(existingSectionIds) });
+            }
+        }
     }
 
     if (!body.tables) {
@@ -77,6 +108,231 @@ export function normalizeData(data: IDocumentData) {
     }
 
     return data;
+}
+
+/**
+ * Agent-friendly text style aliases accepted by `RichTextBuilder.span()`.
+ *
+ * The readable aliases can be combined in one object and apply only to the appended span. Native `ITextStyle` fields
+ * remain available for advanced document integrations. Drawing effects such as `glow` and `outerShadow` are
+ * especially useful when the resulting rich text is attached to a Shape; standalone document products may not expose
+ * dedicated controls for them.
+ *
+ * @example
+ * ```ts
+ * const text = univerAPI.newRichText()
+ *   .text('Status: ')
+ *   .span('Blocked', {
+ *     bold: true,
+ *     italic: true,
+ *     color: '#dc2626',
+ *     background: '#fee2e2',
+ *     glow: { color: '#f97316', radius: 6 },
+ *     outerShadow: {
+ *       color: '#000000',
+ *       opacity: 0.35,
+ *       blurRadius: 4,
+ *       distance: 3,
+ *       direction: 45,
+ *     },
+ *   });
+ * ```
+ */
+export interface IRichTextSpanStyle extends ITextStyle {
+    /**
+     * Agent-friendly alias for `bl`.
+     */
+    bold?: boolean;
+    /**
+     * Agent-friendly alias for `it`.
+     */
+    italic?: boolean;
+    /**
+     * Agent-friendly alias for `ff`.
+     */
+    fontFamily?: string;
+    /**
+     * Agent-friendly alias for `fs`.
+     */
+    fontSize?: number;
+    /**
+     * Agent-friendly alias for `cl`. A string is treated as an RGB color.
+     */
+    color?: string | IColorStyle | null;
+    /**
+     * Agent-friendly alias for `bg`. A string is treated as an RGB color.
+     */
+    background?: string | IColorStyle | null;
+}
+
+/**
+ * Agent-friendly paragraph options accepted by `RichTextBuilder.paragraph()`.
+ *
+ * Numeric lengths use document points. Pass an `INumberUnit` when another supported unit is required. `lineHeight`
+ * behaves as a multiplier with `SpacingRule.AUTO`, and as an absolute document size with `AT_LEAST` or `EXACT`.
+ *
+ * @example
+ * ```ts
+ * const text = univerAPI.newRichText()
+ *   .paragraph({
+ *     align: univerAPI.Enum.HorizontalAlign.LEFT,
+ *     lineHeight: 1.4,
+ *     lineHeightRule: univerAPI.Enum.SpacingRule.AUTO,
+ *     firstLineIndent: 12,
+ *     spaceAfter: 6,
+ *   })
+ *   .text('Agent-friendly paragraph');
+ * ```
+ */
+export interface IRichTextParagraphStyle {
+    /** Horizontal paragraph alignment. Use `univerAPI.Enum.HorizontalAlign`. */
+    align?: HorizontalAlign;
+    /** Line-height multiplier or absolute size, depending on `lineHeightRule`. */
+    lineHeight?: number;
+    /** Line-height interpretation. Defaults to `SpacingRule.AUTO`. */
+    lineHeightRule?: SpacingRule;
+    /** First-line indent. A number is interpreted as document points. */
+    firstLineIndent?: number | INumberUnit;
+    /** Hanging indent. A number is interpreted as document points. */
+    hangingIndent?: number | INumberUnit;
+    /** Leading-side indent. A number is interpreted as document points. */
+    indentStart?: number | INumberUnit;
+    /** Trailing-side indent. A number is interpreted as document points. */
+    indentEnd?: number | INumberUnit;
+    /** Space before the paragraph. A number is interpreted as document points. */
+    spaceBefore?: number | INumberUnit;
+    /** Space after the paragraph. A number is interpreted as document points. */
+    spaceAfter?: number | INumberUnit;
+    /** Text direction. Use `univerAPI.Enum.TextDirection`. */
+    direction?: TextDirection;
+    /** Whether lines may wrap at character boundaries. */
+    wordWrap?: boolean;
+    /** Keeps all paragraph lines together when pagination applies. */
+    keepLines?: boolean;
+    /** Keeps this paragraph with the following paragraph when pagination applies. */
+    keepNext?: boolean;
+}
+
+/**
+ * Portable text-container alignment accepted by `RichTextBuilder.align()`.
+ *
+ * Unlike `paragraph({ align })`, which styles one paragraph, this alignment is a document-level presentation hint that
+ * can be consumed consistently by shapes, table cells, and other rich-text hosts.
+ */
+export interface IRichTextAlignment {
+    /** Horizontal alignment for the rich-text block. */
+    horizontal?: HorizontalAlign;
+    /** Vertical alignment inside the host text container. */
+    vertical?: VerticalAlign;
+}
+
+export interface IRichTextColumnsOptions {
+    /** Number of text-flow columns. Use 1 to clear multi-column layout. */
+    count: number;
+    /** Spacing between columns in px. Defaults to 0. */
+    spacing?: number;
+}
+
+/**
+ * Agent-friendly options for one paragraph list item.
+ *
+ * @example
+ * ```ts
+ * const text = univerAPI.newRichText()
+ *   .listItem('Plan', {
+ *     type: univerAPI.Enum.PresetListType.ORDER_LIST,
+ *     listId: 'agent.release-steps',
+ *   })
+ *   .listItem('Build', {
+ *     type: univerAPI.Enum.PresetListType.ORDER_LIST,
+ *     listId: 'agent.release-steps',
+ *     level: 1,
+ *   });
+ * ```
+ */
+export interface IRichTextListItemOptions {
+    /** Preset ordered, unordered, or checklist style. Defaults to `PresetListType.BULLET_LIST`. */
+    type?: PresetListType;
+    /** Stable list identity. Consecutive compatible items reuse the previous id when omitted. */
+    listId?: string;
+    /** Zero-based nesting level. Defaults to `0`. */
+    level?: number;
+    /** Optional paragraph layout for this item. */
+    paragraphStyle?: ParagraphStyleBuilder | IRichTextParagraphStyle;
+}
+
+function normalizeColorStyle(color: string | IColorStyle | null | undefined): IColorStyle | null | undefined {
+    return typeof color === 'string' ? { rgb: color } : color;
+}
+
+function normalizeRichTextSpanStyle(style: IRichTextSpanStyle): ITextStyle {
+    const {
+        bold,
+        italic,
+        fontFamily,
+        fontSize,
+        color,
+        background,
+        ...rawStyle
+    } = style;
+    const normalized: ITextStyle = { ...rawStyle };
+
+    if (bold !== undefined) {
+        normalized.bl = bold ? BooleanNumber.TRUE : BooleanNumber.FALSE;
+    }
+    if (italic !== undefined) {
+        normalized.it = italic ? BooleanNumber.TRUE : BooleanNumber.FALSE;
+    }
+    if (fontFamily !== undefined) {
+        normalized.ff = fontFamily;
+    }
+    if (fontSize !== undefined) {
+        normalized.fs = fontSize;
+    }
+    if (color !== undefined) {
+        normalized.cl = normalizeColorStyle(color);
+    }
+    if (background !== undefined) {
+        normalized.bg = normalizeColorStyle(background);
+    }
+
+    return normalized;
+}
+
+function normalizeRichTextLength(value: number | INumberUnit | undefined): INumberUnit | undefined {
+    return typeof value === 'number' ? { v: value } : value;
+}
+
+function normalizeRichTextParagraphStyle(
+    style: ParagraphStyleBuilder | IRichTextParagraphStyle | undefined
+): IParagraphStyle | undefined {
+    if (!style) {
+        return undefined;
+    }
+    if (style instanceof ParagraphStyleBuilder) {
+        return style.build();
+    }
+
+    return {
+        horizontalAlign: style.align,
+        lineSpacing: style.lineHeight,
+        spacingRule: style.lineHeightRule,
+        indentFirstLine: normalizeRichTextLength(style.firstLineIndent),
+        hanging: normalizeRichTextLength(style.hangingIndent),
+        indentStart: normalizeRichTextLength(style.indentStart),
+        indentEnd: normalizeRichTextLength(style.indentEnd),
+        spaceAbove: normalizeRichTextLength(style.spaceBefore),
+        spaceBelow: normalizeRichTextLength(style.spaceAfter),
+        direction: style.direction,
+        wordWrap: style.wordWrap === undefined ? undefined : style.wordWrap ? BooleanNumber.TRUE : BooleanNumber.FALSE,
+        keepLines: style.keepLines === undefined ? undefined : style.keepLines ? BooleanNumber.TRUE : BooleanNumber.FALSE,
+        keepNext: style.keepNext === undefined ? undefined : style.keepNext ? BooleanNumber.TRUE : BooleanNumber.FALSE,
+    };
+}
+
+function hasRichTextContent(data: IDocumentData): boolean {
+    const dataStream = data.body?.dataStream ?? '';
+    return dataStream.replace(/\r|\n/g, '').length > 0;
 }
 
 /**
@@ -1631,14 +1887,20 @@ export class RichTextValue {
      * ```
      */
     getParagraphs(): RichTextValue[] {
-        const paragraphs = this._data.body?.paragraphs ?? [];
+        const body = this._data.body;
+        if (!body) {
+            return [];
+        }
 
-        let start = 0;
-        return paragraphs.map((paragraph) => {
-            const sub = this.slice(start, paragraph.startIndex);
-            start = paragraph.startIndex;
-            return sub;
-        });
+        const startOffsets = getParagraphContentStartOffsets(body);
+        return (body.paragraphs ?? []).map((paragraph) => RichTextBuilder.create(createParagraphSnapshot(
+            this._data,
+            paragraph.paragraphId,
+            {
+                startOffset: startOffsets.get(paragraph.startIndex) ?? 0,
+                endOffset: paragraph.startIndex,
+            }
+        )));
     }
 
     /**
@@ -1688,6 +1950,22 @@ export class RichTextValue {
  * Represents a rich text builder
  */
 export class RichTextBuilder extends RichTextValue {
+    /**
+     * Allows optional feature packages to add semantic builder methods.
+     * @internal
+     */
+    static extend(source: typeof RichTextBuilder): void {
+        Object.getOwnPropertyNames(source.prototype).forEach((name) => {
+            if (name === 'constructor') {
+                return;
+            }
+            const descriptor = Object.getOwnPropertyDescriptor(source.prototype, name);
+            if (descriptor) {
+                Object.defineProperty(this.prototype, name, descriptor);
+            }
+        });
+    }
+
     public static newEmptyData(): IDocumentData {
         return normalizeData({
             id: 'd',
@@ -1698,7 +1976,7 @@ export class RichTextBuilder extends RichTextValue {
                 dataStream: '\r\n',
                 customBlocks: [],
                 customRanges: [],
-                paragraphs: [{ startIndex: 0 }],
+                paragraphs: [{ startIndex: 0, paragraphId: createParagraphId(new Set()) }],
                 textRuns: [],
                 tables: [],
                 sectionBreaks: [],
@@ -1716,10 +1994,573 @@ export class RichTextBuilder extends RichTextValue {
     }
 
     private _doc: DocumentDataModel;
+    private readonly _trackedRanges = new Set<IMutableRichTextRange>();
+    private _childHandleRevision = 0;
 
     constructor(data: IDocumentData) {
         super(data);
         this._doc = new DocumentDataModel(data);
+    }
+
+    /**
+     * Returns editable paragraph handles backed by this detached rich-text builder.
+     *
+     * Paragraph boundaries come from the document model rather than splitting plain text. Handles stay aligned across
+     * edits made through their child run handles, so callers can safely iterate from the first paragraph to the last.
+     * Direct builder edits that change text or run boundaries invalidate previously returned paragraph and run handles;
+     * query them again after calling methods such as `insertText()`, `setStyle()`, `setLink()`, or `delete()`.
+     *
+     * @returns Editable paragraphs in document order.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .text('Quarterly Review')
+     *   .paragraph()
+     *   .text('Revenue increased by 18%.');
+     * for (const paragraph of richText.getParagraphs()) {
+     *   console.log(paragraph.getText());
+     * }
+     * ```
+     */
+    override getParagraphs(): RichTextParagraphBuilder[] {
+        const body = this._data.body;
+        if (!body) {
+            return [];
+        }
+
+        const startOffsets = getParagraphContentStartOffsets(body);
+        return (body.paragraphs ?? []).map((paragraph) => this._createParagraphBuilder(
+            paragraph.paragraphId,
+            startOffsets.get(paragraph.startIndex) ?? 0,
+            paragraph.startIndex
+        ));
+    }
+
+    /**
+     * Returns editable text-run handles for all paragraph text in this builder.
+     *
+     * Unlike the read-only value API, this method also returns unstyled gaps. Paragraph and section markers are never
+     * exposed as text runs. Prefer `getParagraphs()` when paragraph context matters.
+     *
+     * @returns Editable text runs in document order.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .text('Status: ')
+     *   .span('Ready', { bold: true, color: '#16a34a' });
+     * for (const run of richText.getTextRuns()) {
+     *   console.log(run.getText(), run.getTextStyle()?.getValue());
+     * }
+     * ```
+     */
+    override getTextRuns(): RichTextRunBuilder[] {
+        return this.getParagraphs().flatMap((paragraph) => paragraph.getTextRuns());
+    }
+
+    /** @internal */
+    _createTextRunBuilders(range: IRichTextRange): RichTextRunBuilder[] {
+        const body = this._data.body;
+        if (!body || range.startOffset >= range.endOffset) {
+            return [];
+        }
+
+        const boundaries = new Set<number>([range.startOffset, range.endOffset]);
+        const addRangeBoundaries = (startOffset: number, endOffset: number) => {
+            const start = Math.max(startOffset, range.startOffset);
+            const end = Math.min(endOffset, range.endOffset);
+            if (start < end) {
+                boundaries.add(start);
+                boundaries.add(end);
+            }
+        };
+
+        for (const textRun of body.textRuns ?? []) {
+            addRangeBoundaries(textRun.st, textRun.ed);
+        }
+        for (const customRange of body.customRanges ?? []) {
+            addRangeBoundaries(customRange.startIndex, customRange.endIndex + 1);
+        }
+        for (const decoration of body.customDecorations ?? []) {
+            addRangeBoundaries(decoration.startIndex, decoration.endIndex + 1);
+        }
+        for (let offset = range.startOffset; offset < range.endOffset; offset++) {
+            if (NON_EDITABLE_RICH_TEXT_TOKENS.has(body.dataStream[offset])) {
+                boundaries.add(offset);
+                boundaries.add(offset + 1);
+            }
+        }
+
+        const offsets = [...boundaries].sort((left, right) => left - right);
+        const runs: RichTextRunBuilder[] = [];
+        for (let index = 0; index < offsets.length - 1; index++) {
+            const startOffset = offsets[index];
+            const endOffset = offsets[index + 1];
+            if (
+                startOffset >= endOffset ||
+                (endOffset - startOffset === 1 && NON_EDITABLE_RICH_TEXT_TOKENS.has(body.dataStream[startOffset]))
+            ) {
+                continue;
+            }
+
+            const sourceRun = (body.textRuns ?? []).find((textRun) =>
+                textRun.st <= startOffset && textRun.ed >= endOffset
+            );
+            runs.push(new RichTextRunBuilder(
+                this,
+                this._trackRange(startOffset, endOffset),
+                sourceRun?.ts,
+                sourceRun?.sId,
+                Boolean(sourceRun),
+                this._childHandleRevision
+            ));
+        }
+
+        return runs;
+    }
+
+    /** @internal */
+    _replaceTextRun(
+        range: IMutableRichTextRange,
+        text: string,
+        textStyle: ITextStyle | undefined,
+        styleId: string | undefined,
+        hasExplicitTextStyle: boolean
+    ): void {
+        if (
+            text.includes(DataStreamTreeTokenType.PARAGRAPH) ||
+            text.includes(DataStreamTreeTokenType.SECTION_BREAK)
+        ) {
+            throw new RangeError('Rich text run replacement cannot contain paragraph or section breaks.');
+        }
+
+        const body = this._doc.getBody();
+        if (!body) {
+            throw new Error('Rich text body is not available.');
+        }
+
+        const { startOffset, endOffset } = range;
+        if (body.dataStream.slice(startOffset, endOffset) === text) {
+            return;
+        }
+
+        const sourceBody = getBodySlice(body, startOffset, endOffset);
+        const replacementBody: IDocumentBody = { dataStream: text };
+        if (text && hasExplicitTextStyle) {
+            replacementBody.textRuns = [{
+                st: 0,
+                ed: text.length,
+                sId: styleId,
+                ts: Tools.deepClone(textStyle),
+            }];
+        }
+        if (text && sourceBody.customRanges?.length) {
+            replacementBody.customRanges = sourceBody.customRanges.map((customRange) => ({
+                ...Tools.deepClone(customRange),
+                startIndex: 0,
+                endIndex: text.length - 1,
+            }));
+        }
+        if (text && sourceBody.customDecorations?.length) {
+            replacementBody.customDecorations = sourceBody.customDecorations.map((decoration) => ({
+                ...Tools.deepClone(decoration),
+                startIndex: 0,
+                endIndex: text.length - 1,
+            }));
+        }
+
+        const textX = BuildTextUtils.selection.replace({
+            doc: this._doc,
+            selection: {
+                startOffset,
+                endOffset,
+                collapsed: startOffset === endOffset,
+            },
+            body: replacementBody,
+        });
+        if (!textX) {
+            throw new Error('Replace rich text run failed.');
+        }
+
+        TextX.apply(body, textX.serialize());
+        this._rebaseTrackedRanges(startOffset, endOffset, text.length);
+    }
+
+    private _createParagraphBuilder(paragraphId: string, startOffset: number, endOffset: number): RichTextParagraphBuilder {
+        return new RichTextParagraphBuilder(
+            this,
+            paragraphId,
+            this._trackRange(startOffset, endOffset),
+            this._childHandleRevision
+        );
+    }
+
+    /** @internal */
+    _assertChildHandleRevision(revision: number): void {
+        if (revision !== this._childHandleRevision) {
+            throw new Error('Rich text child handle is no longer valid.');
+        }
+    }
+
+    private _trackRange(startOffset: number, endOffset: number): IMutableRichTextRange {
+        const range = { startOffset, endOffset };
+        this._trackedRanges.add(range);
+        return range;
+    }
+
+    private _rebaseTrackedRanges(startOffset: number, endOffset: number, replacementLength: number): void {
+        const delta = replacementLength - (endOffset - startOffset);
+        const mapStart = (offset: number) => {
+            if (offset <= startOffset) return offset;
+            if (offset >= endOffset) return offset + delta;
+            return startOffset;
+        };
+        const mapEnd = (offset: number) => {
+            if (offset <= startOffset) return offset;
+            if (offset >= endOffset) return offset + delta;
+            return startOffset + replacementLength;
+        };
+
+        for (const trackedRange of this._trackedRanges) {
+            trackedRange.startOffset = mapStart(trackedRange.startOffset);
+            trackedRange.endOffset = mapEnd(trackedRange.endOffset);
+        }
+    }
+
+    private _invalidateChildHandles(): void {
+        this._childHandleRevision++;
+        this._trackedRanges.clear();
+    }
+
+    /**
+     * Appends plain text to the rich text.
+     *
+     * This is an agent-friendly alias of `insertText(text)`. Use it when building rich text from left to right for
+     * shapes, comments, table cells, and document fragments.
+     *
+     * @param text Text to append.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .text('Priority: ')
+     *   .bold('High')
+     *   .text(' ')
+     *   .code('P0');
+     * ```
+     */
+    text(text: string): RichTextBuilder {
+        return this.insertText(text);
+    }
+
+    /**
+     * Aligns the rich-text block inside its host container.
+     *
+     * This is the preferred facade-friendly API for alignment shared by shapes and table cells. It keeps callers away
+     * from `IDocumentData.documentStyle.renderConfig`. Use `paragraph({ align })` when individual paragraphs need
+     * different horizontal alignment.
+     *
+     * @param alignment Horizontal and/or vertical container alignment.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const text = univerAPI.newRichText()
+     *   .align({
+     *     horizontal: univerAPI.Enum.HorizontalAlign.CENTER,
+     *     vertical: univerAPI.Enum.VerticalAlign.MIDDLE,
+     *   })
+     *   .text('Centered text');
+     * ```
+     */
+    align(alignment: IRichTextAlignment): RichTextBuilder {
+        const documentStyle = this._data.documentStyle ??= {};
+        const renderConfig = documentStyle.renderConfig ??= {};
+
+        if (alignment.horizontal !== undefined) {
+            renderConfig.horizontalAlign = alignment.horizontal;
+            for (const paragraph of this._data.body?.paragraphs ?? []) {
+                paragraph.paragraphStyle = {
+                    ...paragraph.paragraphStyle,
+                    horizontalAlign: alignment.horizontal,
+                };
+            }
+        }
+
+        if (alignment.vertical !== undefined) {
+            renderConfig.verticalAlign = alignment.vertical;
+        }
+
+        return this;
+    }
+
+    /**
+     * Sets the column layout for this rich-text document.
+     *
+     * Columns are stored in the rich-text document section layout. This creates text-flow columns, not table columns.
+     * The host renderer must support rich-text columns for the layout to be visible.
+     *
+     * @param options The column layout options.
+     * @param options.count The number of text columns. Must be a positive integer. Use `1` to clear multi-column layout.
+     * @param options.spacing The spacing between columns, in px. Defaults to `0`.
+     * @returns The current builder for chaining.
+     *
+     * @example
+     * ```ts
+     * const presentation = univerAPI.getActivePresentation();
+     * if (!presentation) throw new Error('No active presentation');
+     *
+     * const slide = presentation.getSlideByIndex(0);
+     * if (!slide) throw new Error('The presentation has no slides');
+     * const richText = univerAPI.newRichText()
+     *   .columns({ count: 2, spacing: 12 })
+     *   .text('Column text');
+     *
+     * const shapeInfo = slide.newShape()
+     *   .setRichText(richText)
+     *   .setAbsolutePosition(80, 80)
+     *   .setSize(360, 160)
+     *   .build();
+     *
+     * slide.insertShape(shapeInfo);
+     * ```
+     */
+    columns(options: IRichTextColumnsOptions): RichTextBuilder {
+        if (!Number.isInteger(options.count) || options.count < 1) {
+            throw new RangeError('Rich text column count must be a positive integer.');
+        }
+
+        const body = this._data.body ??= { dataStream: '\r\n' };
+        const sectionBreaks = body.sectionBreaks ??= [];
+        if (!sectionBreaks.length) {
+            sectionBreaks.push({
+                sectionId: createSectionId(new Set()),
+                startIndex: Math.max(0, (body.dataStream?.length ?? 0) - 1),
+            });
+        }
+
+        const spacing = Math.max(0, options.spacing ?? 0);
+        const columns: ISectionColumnProperties[] | undefined = options.count === 1
+            ? undefined
+            : Array.from({ length: options.count }, (_, index) => ({
+                width: 0,
+                paddingEnd: index === options.count - 1 ? 0 : spacing,
+            }));
+
+        for (const sectionBreak of sectionBreaks) {
+            if (columns) {
+                sectionBreak.columnProperties = columns.map((column) => ({ ...column }));
+            } else {
+                delete sectionBreak.columnProperties;
+            }
+        }
+
+        return this;
+    }
+
+    /**
+     * Appends one text span with an optional style.
+     *
+     * Prefer this method when combining multiple styles, because the style object is local to the inserted text and does
+     * not leak into following calls.
+     *
+     * @param text Text to append.
+     * @param style Optional text style for this span. When omitted, the span is appended as unstyled text. Agent-friendly
+     * aliases such as `bold`, `italic`, `fontFamily`, `fontSize`, `color`, and `background` are supported alongside native
+     * document text style fields.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .text('Status: ')
+     *   .span('Important', { bold: true, italic: true, color: '#d92d20' });
+     * ```
+     */
+    span(text: string, style?: IRichTextSpanStyle): RichTextBuilder {
+        if (!text) {
+            return this;
+        }
+
+        return style ? this.insertText(text, normalizeRichTextSpanStyle(style)) : this.insertText(text);
+    }
+
+    /**
+     * Appends bold text.
+     *
+     * @param text Text to append.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText().text('This is ').bold('important');
+     * ```
+     */
+    bold(text: string): RichTextBuilder {
+        return this.span(text, { bold: true });
+    }
+
+    /**
+     * Appends italic text.
+     *
+     * @param text Text to append.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText().text('Use ').italic('judgment');
+     * ```
+     */
+    italic(text: string): RichTextBuilder {
+        return this.span(text, { italic: true });
+    }
+
+    /**
+     * Appends inline code-style text.
+     *
+     * This is intentionally an inline text style, not a block range. Use `paragraph().code('...')` when the code should
+     * occupy its own line.
+     *
+     * @param text Text to append as inline code.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .text('Run ')
+     *   .code('pnpm test')
+     *   .text(' before submitting.');
+     * ```
+     */
+    code(text: string): RichTextBuilder {
+        return this.span(text, {
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            background: '#f3f4f6',
+        });
+    }
+
+    /**
+     * Appends linked text.
+     *
+     * This is the agent-friendly alias of `insertLink(text, url)`. Use `setLink(start, end, url)` only when applying a
+     * link to text that is already present and numeric offsets are unavoidable.
+     *
+     * @param text Visible link text to append. An empty string is ignored.
+     * @param url Link destination.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .text('Read ')
+     *   .link('Univer documentation', 'https://docs.univer.ai')
+     *   .text(' for details.');
+     * ```
+     */
+    link(text: string, url: string): RichTextBuilder {
+        return text ? this.insertLink(text, url) : this;
+    }
+
+    /**
+     * Appends one ordered, unordered, or checklist paragraph.
+     *
+     * Consecutive items with the same `type` automatically share a generated list id. Supply a semantic `listId` when
+     * an agent needs stable list identity across regeneration.
+     *
+     * @param text Plain item text.
+     * @param options List type, stable identity, nesting, and optional paragraph layout.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .listItem('Analyze requirements', {
+     *     type: univerAPI.Enum.PresetListType.BULLET_LIST,
+     *     listId: 'agent.tasks',
+     *   })
+     *   .listItem('Implement API', {
+     *     type: univerAPI.Enum.PresetListType.BULLET_LIST,
+     *     listId: 'agent.tasks',
+     *     level: 1,
+     *   });
+     * ```
+     */
+    listItem(text: string, options: IRichTextListItemOptions = {}): RichTextBuilder {
+        const listType = options.type ?? PresetListType.BULLET_LIST;
+        const currentParagraph = this._data.body?.paragraphs?.slice(-1)[0];
+        const currentBullet = currentParagraph?.bullet;
+        const listId = options.listId?.trim() ||
+            (currentBullet?.listType === listType ? currentBullet.listId : generateRandomId());
+
+        if (hasRichTextContent(this._data)) {
+            this.paragraph(options.paragraphStyle);
+        } else if (options.paragraphStyle) {
+            this.paragraph(options.paragraphStyle);
+        }
+
+        const targetParagraph = this._data.body?.paragraphs?.slice(-1)[0];
+        if (targetParagraph) {
+            targetParagraph.bullet = {
+                listId,
+                listType,
+                nestingLevel: Math.max(0, Math.trunc(options.level ?? 0)),
+            };
+        }
+
+        return this.text(text);
+    }
+
+    /**
+     * Starts a new paragraph before the next appended content.
+     *
+     * Calling `paragraph()` on an empty builder is a no-op, so agents can naturally start chains with
+     * `newRichText().paragraph().text('Title')` without creating a leading blank paragraph.
+     *
+     * @param paragraphStyle Optional agent-friendly paragraph options or an advanced paragraph style builder.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .paragraph({ lineHeight: 1.4, firstLineIndent: 16, spaceAfter: 8 })
+     *   .text('First paragraph')
+     *   .paragraph({ align: univerAPI.Enum.HorizontalAlign.CENTER })
+     *   .span('Second paragraph', { bold: true, italic: true });
+     * ```
+     */
+    paragraph(paragraphStyle?: ParagraphStyleBuilder | IRichTextParagraphStyle): RichTextBuilder {
+        const nextParagraphStyle = normalizeRichTextParagraphStyle(paragraphStyle);
+        if (!hasRichTextContent(this._data)) {
+            if (nextParagraphStyle) {
+                const firstParagraph = this._data.body?.paragraphs?.[0];
+                if (firstParagraph) {
+                    firstParagraph.paragraphStyle = nextParagraphStyle;
+                }
+            }
+            return this;
+        }
+
+        const currentParagraph = this._data.body?.paragraphs?.slice(-1)[0];
+        const currentParagraphStyle = Tools.deepClone(currentParagraph?.paragraphStyle);
+        const currentParagraphBullet = Tools.deepClone(currentParagraph?.bullet);
+        const startIndex = Math.max(0, (this._data.body?.dataStream.length ?? 2) - 2);
+        this.insertRichText(startIndex, RichTextValue.create({
+            id: 'd',
+            documentStyle: {},
+            body: {
+                dataStream: '\r',
+                paragraphs: [{
+                    startIndex: 0,
+                    paragraphId: createParagraphId(new Set()),
+                    paragraphStyle: currentParagraphStyle,
+                    bullet: currentParagraphBullet,
+                }],
+            },
+        }));
+        const nextParagraph = this._data.body?.paragraphs?.slice(-1)[0];
+        if (nextParagraphStyle) {
+            if (nextParagraph) {
+                nextParagraph.paragraphStyle = nextParagraphStyle;
+            }
+        } else if (nextParagraph) {
+            delete nextParagraph.paragraphStyle;
+        }
+        if (nextParagraph) {
+            delete nextParagraph.bullet;
+        }
+
+        return this;
     }
 
     /**
@@ -1756,7 +2597,7 @@ export class RichTextBuilder extends RichTextValue {
             insertText = start;
         } else {
             startIndex = Math.min(start, startIndex);
-            insertText = text as string;
+            insertText = typeof text === 'string' ? text : '';
         }
 
         if (typeof text === 'object') {
@@ -1766,14 +2607,16 @@ export class RichTextBuilder extends RichTextValue {
         }
 
         if (!insertText) return this;
+        const plainTextBody = BuildTextUtils.transform.fromPlainText(insertText);
         const newBody: IDocumentBody = {
-            dataStream: insertText,
+            dataStream: plainTextBody.dataStream,
+            paragraphs: plainTextBody.paragraphs,
             textRuns: insertStyle
                 ? [
                     {
                         ts: insertStyle,
-                        st: startIndex,
-                        ed: startIndex + insertText.length,
+                        st: 0,
+                        ed: plainTextBody.dataStream.length,
                     },
                 ]
                 : [],
@@ -1790,6 +2633,7 @@ export class RichTextBuilder extends RichTextValue {
         }
 
         TextX.apply(this._doc.getBody()!, textX.serialize());
+        this._invalidateChildHandles();
         return this;
     }
 
@@ -1837,6 +2681,7 @@ export class RichTextBuilder extends RichTextValue {
         }
 
         TextX.apply(this._doc.getBody()!, textX.serialize());
+        this._invalidateChildHandles();
         return this;
     }
 
@@ -1864,11 +2709,37 @@ export class RichTextBuilder extends RichTextValue {
      */
     delete(start: number, count: number): RichTextBuilder;
     delete(start: number, count?: number): RichTextBuilder {
-        // Implementation logic here
-        if (count !== undefined) {
-            if (!count) return this;
-            const actions = BuildTextUtils.selection.delete([{ startOffset: start, endOffset: start + count, collapsed: true }], this._data.body!);
+        const terminalTokenLength =
+            DataStreamTreeTokenType.PARAGRAPH.length + DataStreamTreeTokenType.SECTION_BREAK.length;
+        const contentLength = Math.max(
+            0,
+            (this._data.body?.dataStream.length ?? terminalTokenLength) - terminalTokenLength
+        );
+        let startOffset: number;
+        let deleteCount: number;
+
+        if (count === undefined) {
+            if (start < 0) {
+                throw new RangeError('Delete count cannot be negative.');
+            }
+            deleteCount = Math.min(start, contentLength);
+            startOffset = contentLength - deleteCount;
+        } else {
+            if (start < 0 || count < 0) {
+                throw new RangeError('Delete range cannot be negative.');
+            }
+            startOffset = Math.min(start, contentLength);
+            deleteCount = Math.min(count, contentLength - startOffset);
+        }
+
+        if (deleteCount > 0) {
+            const actions = BuildTextUtils.selection.delete([{
+                startOffset,
+                endOffset: startOffset + deleteCount,
+                collapsed: true,
+            }], this._data.body!);
             TextX.apply(this._doc.getBody()!, actions);
+            this._invalidateChildHandles();
         }
         return this;
     }
@@ -1896,6 +2767,7 @@ export class RichTextBuilder extends RichTextValue {
         };
         const actions = BuildTextUtils.selection.retain([{ startOffset: start, endOffset: end, collapsed: true }], newBody);
         TextX.apply(this._doc.getBody()!, actions);
+        this._invalidateChildHandles();
         return this;
     }
 
@@ -1925,6 +2797,7 @@ export class RichTextBuilder extends RichTextValue {
             throw new Error('Insert text failed, please check.');
         }
         TextX.apply(this._doc.getBody()!, textX.serialize());
+        this._invalidateChildHandles();
         return this;
     }
 
@@ -1976,6 +2849,7 @@ export class RichTextBuilder extends RichTextValue {
      */
     cancelLink(start: number, end: number): RichTextBuilder;
     cancelLink(start: number | string, end?: number): RichTextBuilder {
+        let changed = false;
         if (typeof start === 'string') {
             const textX = BuildTextUtils.customRange.delete({
                 rangeId: start,
@@ -1985,6 +2859,7 @@ export class RichTextBuilder extends RichTextValue {
                 throw new Error('Insert text failed, please check.');
             }
             TextX.apply(this._doc.getBody()!, textX.serialize());
+            changed = true;
         } else {
             const slice = this.slice(start as number, end as number);
             slice.getLinks().forEach((l) => {
@@ -1996,12 +2871,42 @@ export class RichTextBuilder extends RichTextValue {
                     throw new Error('Insert text failed, please check.');
                 }
                 TextX.apply(this._doc.getBody()!, textX.serialize());
+                changed = true;
             });
+        }
+
+        if (changed) {
+            this._invalidateChildHandles();
         }
 
         return this;
     }
 
+    /**
+     * Removes a link while preserving its visible text.
+     *
+     * Link ids are available from `getLinks()`. This readable alias avoids exposing text offsets for the common case.
+     * Use `cancelLink(start, end)` only when removing every link in a known text range.
+     *
+     * @param id Link range id returned by `getLinks()`.
+     * @returns The current builder for chaining.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText().link('Univer', 'https://univer.ai');
+     * const [link] = richText.getLinks();
+     * if (link) richText.removeLink(link.rangeId);
+     * ```
+     */
+    removeLink(id: string): RichTextBuilder {
+        return this.cancelLink(id);
+    }
+
+    /**
+     * Updates a link destination while preserving its visible text.
+     * @param id Link range id returned by `getLinks()`.
+     * @param url New link destination.
+     * @returns The current builder for chaining.
+     */
     updateLink(id: string, url: string): RichTextBuilder {
         const current = this._data.body?.customRanges?.find((range) => range.rangeId === id);
         if (!current) {
@@ -2043,6 +2948,7 @@ export class RichTextBuilder extends RichTextValue {
                 dataStream: '\r',
                 paragraphs: [{
                     startIndex: 0,
+                    paragraphId: createParagraphId(new Set()),
                     paragraphStyle: start.build(),
                 }],
             };
@@ -2053,6 +2959,7 @@ export class RichTextBuilder extends RichTextValue {
                 dataStream: '\r',
                 paragraphs: [{
                     startIndex: 0,
+                    paragraphId: createParagraphId(new Set()),
                     paragraphStyle: paragraphStyle?.build(),
                 }],
             };
@@ -2063,10 +2970,14 @@ export class RichTextBuilder extends RichTextValue {
     }
 
     /**
-     * Inserts a new link
-     * @param text
-     * @param url
-     * @returns
+     * Inserts linked text at the end of the builder or at an explicit text offset.
+     *
+     * Application and agent code should prefer `link(text, url)` for left-to-right construction. The positional
+     * overload remains available for advanced document-model integrations.
+     *
+     * @param text Visible link text to insert.
+     * @param url Link destination.
+     * @returns The current builder for chaining.
      */
     insertLink(text: string, url: string): RichTextBuilder;
     insertLink(start: number, text: string, url: string): RichTextBuilder;
@@ -2096,4 +3007,243 @@ export class RichTextBuilder extends RichTextValue {
 
         return typeof start === 'number' ? this.insertRichText(start, rich) : this.insertRichText(rich);
     }
+}
+
+/**
+ * An editable paragraph handle owned by a detached {@link RichTextBuilder}.
+ *
+ * The paragraph is resolved by its persisted paragraph id, while its tracked range is rebased after every run edit.
+ * This keeps paragraph traversal safe when earlier translated text becomes longer or shorter.
+ */
+export class RichTextParagraphBuilder extends RichTextValue {
+    /** @hideconstructor */
+    constructor(
+        private readonly _owner: RichTextBuilder,
+        private readonly _paragraphId: string,
+        private readonly _range: IMutableRichTextRange,
+        private readonly _revision: number
+    ) {
+        super(createParagraphSnapshot(_owner.getData(), _paragraphId, _range));
+    }
+
+    /** Returns the persisted paragraph id. */
+    getId(): string {
+        this._assertActive();
+        return this._paragraphId;
+    }
+
+    /** Returns the current paragraph range without its trailing paragraph marker. */
+    getRange(): IRichTextRange {
+        this._assertActive();
+        return { ...this._range };
+    }
+
+    /**
+     * Returns the current paragraph text without its trailing paragraph marker.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText().text('Quarterly Review');
+     * const paragraph = richText.getParagraphs()[0];
+     * console.log(paragraph.getText());
+     * ```
+     */
+    getText(): string {
+        this._assertActive();
+        const dataStream = this._owner.getData().body?.dataStream ?? '';
+        return dataStream.slice(this._range.startOffset, this._range.endOffset);
+    }
+
+    override toPlainText(): string {
+        return this.getText();
+    }
+
+    /**
+     * Returns editable runs that cover all text in this paragraph, including unstyled gaps.
+     * @returns Editable text runs in document order.
+     */
+    override getTextRuns(): RichTextRunBuilder[] {
+        this._assertActive();
+        return this._owner._createTextRunBuilders(this._range);
+    }
+
+    override getParagraphStyle(): ParagraphStyleValue {
+        this._assertActive();
+        return ParagraphStyleValue.create(this._getParagraph().paragraphStyle);
+    }
+
+    override getParagraphBullet() {
+        this._assertActive();
+        return this._getParagraph().bullet;
+    }
+
+    override getLinks() {
+        this._assertActive();
+        return this.getData().body?.customRanges?.filter((range) => range.rangeType === CustomRangeType.HYPERLINK) ?? [];
+    }
+
+    /** Agent-friendly alias of `getParagraphBullet()`. */
+    getBullet() {
+        return this.getParagraphBullet();
+    }
+
+    override getData(): IDocumentData {
+        this._assertActive();
+        return createParagraphSnapshot(this._owner.getData(), this._paragraphId, this._range);
+    }
+
+    override copy(): RichTextBuilder {
+        return RichTextBuilder.create(Tools.deepClone(this.getData()));
+    }
+
+    private _getParagraph() {
+        const paragraph = this._owner.getData().body?.paragraphs?.find((item) => item.paragraphId === this._paragraphId);
+        if (!paragraph) {
+            throw new Error(`Rich text paragraph "${this._paragraphId}" was not found.`);
+        }
+        return paragraph;
+    }
+
+    private _assertActive(): void {
+        this._owner._assertChildHandleRevision(this._revision);
+    }
+}
+
+/**
+ * An editable text-run handle owned by a detached {@link RichTextBuilder}.
+ *
+ * Calling {@link setText} replaces only the run text. The builder automatically updates this run, every later run,
+ * paragraph indexes, hyperlinks, decorations, and other offset-based document metadata through TextX.
+ */
+export class RichTextRunBuilder {
+    private _active = true;
+
+    /** @hideconstructor */
+    constructor(
+        private readonly _owner: RichTextBuilder,
+        private readonly _range: IMutableRichTextRange,
+        private readonly _textStyle: ITextStyle | undefined,
+        private readonly _styleId: string | undefined,
+        private readonly _hasExplicitTextStyle: boolean,
+        private readonly _revision: number
+    ) {}
+
+    /** Inclusive start offset, kept for compatibility with existing `getTextRuns()` callers. */
+    get st(): number {
+        this._assertActive();
+        return this._range.startOffset;
+    }
+
+    /** Exclusive end offset, automatically updated after text replacement. */
+    get ed(): number {
+        this._assertActive();
+        return this._range.endOffset;
+    }
+
+    /** Optional persisted style id. This is not a stable run identity. */
+    get sId(): string | undefined {
+        this._assertActive();
+        return this._styleId;
+    }
+
+    /** Existing text-style value property exposed by `getTextRuns()`. */
+    get ts(): TextStyleValue | null {
+        this._assertActive();
+        return this._textStyle ? TextStyleValue.create(this._textStyle) : null;
+    }
+
+    /** Returns the current run range. */
+    getRange(): IRichTextRange {
+        this._assertActive();
+        return { ...this._range };
+    }
+
+    /** Returns the current run text. */
+    getText(): string {
+        this._assertActive();
+        const dataStream = this._owner.getData().body?.dataStream ?? '';
+        return dataStream.slice(this._range.startOffset, this._range.endOffset);
+    }
+
+    /** Returns this run's explicit text style, or `null` for an unstyled text segment. */
+    getTextStyle(): TextStyleValue | null {
+        return this.ts;
+    }
+
+    /** Returns whether this segment is backed by an explicit document text run. */
+    hasTextStyle(): boolean {
+        this._assertActive();
+        return this._hasExplicitTextStyle;
+    }
+
+    /**
+     * Replaces this run's text without changing its style or paragraph structure.
+     *
+     * Replacement text may be longer or shorter than the original. Offsets are updated automatically, so handles
+     * returned in the same `getTextRuns()` call remain safe to use in forward order. Paragraph and section breaks are
+     * rejected because a text run cannot create or remove paragraphs.
+     *
+     * @param text New text for this run.
+     * @returns This run handle for chaining. A handle becomes invalid after it is replaced with an empty string.
+     * @example
+     * ```ts
+     * const richText = univerAPI.newRichText()
+     *   .span('标题', { bold: true, fontSize: 24 })
+     *   .paragraph()
+     *   .text('正文内容');
+     * const replacements = ['Quarterly Review', 'Revenue increased by 18%.'];
+     * let index = 0;
+     * for (const run of richText.getTextRuns()) {
+     *   const replacement = replacements[index++];
+     *   if (replacement !== undefined) run.setText(replacement);
+     * }
+     * console.log(richText.toPlainText());
+     * ```
+     */
+    setText(text: string): this {
+        this._assertActive();
+        this._owner._replaceTextRun(
+            this._range,
+            text,
+            this._textStyle,
+            this._styleId,
+            this._hasExplicitTextStyle
+        );
+        if (!text) {
+            this._active = false;
+        }
+        return this;
+    }
+
+    private _assertActive(): void {
+        if (!this._active) {
+            throw new Error('Rich text run handle is no longer valid.');
+        }
+        this._owner._assertChildHandleRevision(this._revision);
+    }
+}
+
+function createParagraphSnapshot(
+    data: IDocumentData,
+    paragraphId: string,
+    range: IRichTextRange
+): IDocumentData {
+    const { body, ...documentData } = data;
+    if (!body) {
+        throw new Error('Rich text body is not available.');
+    }
+    const paragraph = body.paragraphs?.find((item) => item.paragraphId === paragraphId);
+    if (!paragraph) {
+        throw new Error(`Rich text paragraph "${paragraphId}" was not found.`);
+    }
+
+    const paragraphBody = getBodySlice(body, range.startOffset, range.endOffset);
+    paragraphBody.paragraphs = [{
+        ...Tools.deepClone(paragraph),
+        startIndex: range.endOffset - range.startOffset,
+    }];
+
+    return {
+        ...Tools.deepClone(documentData),
+        body: paragraphBody,
+    };
 }

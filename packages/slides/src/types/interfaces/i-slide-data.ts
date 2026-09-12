@@ -125,20 +125,17 @@ export interface IPageElement {
     image?: IImage;
     richText?: ISlideRichTextProps;
 
-    /** @deprecated */
     spreadsheet?: {
         worksheet: IWorksheetData;
         styles: Record<string, Nullable<IStyleData>>;
     };
-    /** @deprecated */
     document?: IDocumentData;
-    /** @deprecated */
     slide?: ISlideData;
     // video: IVideo;
     // line: ILine;
     // table: ITable;
     // chart: IChartProperties;
-    customBlock?: ICustomBlock; // customBlock 用户通过插件自定义的block
+    customBlock?: ICustomBlock; // customBlock block customized by user through plugin
 }
 
 export enum PageType {

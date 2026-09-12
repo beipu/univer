@@ -14,16 +14,30 @@
  * limitations under the License.
  */
 
-import type { Dependency, IOperation, IWorkbookData, Workbook } from '@univerjs/core';
+import type { IOperation, IWorkbookData, Workbook } from '@univerjs/core';
 import type { ISetSheetsFilterRangeMutationParams } from '@univerjs/sheets-filter';
 import type { IEditorBridgeServiceVisibleParam } from '@univerjs/sheets-ui';
-import { CommandType, ICommandService, IContextService, Inject, Injector, LocaleService, LocaleType, Plugin, Univer, UniverInstanceType } from '@univerjs/core';
-import { ActiveDirtyManagerService, IActiveDirtyManagerService, ISheetRowFilteredService, SheetRowFilteredService } from '@univerjs/engine-formula';
-import { RefRangeService, SheetInterceptorService, SheetRangeThemeModel, SheetsSelectionsService, ZebraCrossingCacheController } from '@univerjs/sheets';
-import { SetSheetsFilterRangeMutation, UniverSheetsFilterPlugin } from '@univerjs/sheets-filter';
+import {
+    CommandType,
+    ICommandService,
+    IContextService,
+    Inject,
+    Injector,
+    LocaleService,
+    LocaleType,
+    Plugin,
+    Univer,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { FilterBy, SetSheetsFilterRangeMutation, UniverSheetsFilterPlugin } from '@univerjs/sheets-filter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SheetsFilterPanelService } from '../../../services/sheets-filter-panel.service';
-import { CloseFilterPanelOperation, FILTER_PANEL_OPENED_KEY, OpenFilterPanelOperation } from '../sheets-filter.operation';
+import { ISheetsFilterPanelService, SheetsFilterPanelService } from '../../../services/sheets-filter-panel.service';
+import {
+    ChangeFilterByOperation,
+    CloseFilterPanelOperation,
+    FILTER_PANEL_OPENED_KEY,
+    OpenFilterPanelOperation,
+} from '../sheets-filter.operation';
 
 const SetCellEditVisibleOperation: IOperation<IEditorBridgeServiceVisibleParam> = {
     id: 'sheet.operation.set-cell-edit-visible',
@@ -74,16 +88,7 @@ function createFilterOperationTestBed() {
         }
 
         override onStarting(): void {
-            ([
-                [SheetInterceptorService],
-                [SheetsFilterPanelService],
-                [RefRangeService],
-                [SheetsSelectionsService],
-                [SheetRangeThemeModel],
-                [ZebraCrossingCacheController],
-                [IActiveDirtyManagerService, { useClass: ActiveDirtyManagerService }],
-                [ISheetRowFilteredService, { useClass: SheetRowFilteredService }],
-            ] as Dependency[]).forEach((d) => this._injector.add(d));
+            this._injector.add([ISheetsFilterPanelService, { useClass: SheetsFilterPanelService }]);
         }
     }
 
@@ -99,6 +104,7 @@ function createFilterOperationTestBed() {
     [
         OpenFilterPanelOperation,
         CloseFilterPanelOperation,
+        ChangeFilterByOperation,
         SetCellEditVisibleOperation,
     ].forEach((command) => commandService.registerCommand(command));
 
@@ -110,7 +116,7 @@ describe('test sheets filter ui operations', () => {
     let get: Injector['get'];
     let contextService: IContextService;
     let commandService: ICommandService;
-    let sheetsFilterPanelService: SheetsFilterPanelService;
+    let sheetsFilterPanelService: ISheetsFilterPanelService;
 
     beforeEach(() => {
         const testBed = createFilterOperationTestBed();
@@ -119,7 +125,7 @@ describe('test sheets filter ui operations', () => {
 
         contextService = get(IContextService);
         commandService = get(ICommandService);
-        sheetsFilterPanelService = get(SheetsFilterPanelService);
+        sheetsFilterPanelService = get(ISheetsFilterPanelService);
     });
 
     afterEach(() => {
@@ -167,6 +173,33 @@ describe('test sheets filter ui operations', () => {
             expect(commandService.syncExecuteCommand(CloseFilterPanelOperation.id)).toBeTruthy();
             expect(contextService.getContextValue(FILTER_PANEL_OPENED_KEY)).toBeFalsy();
             expect(spy).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('test "ChangeFilterByOperation"', () => {
+        it('should switch the active filter panel to condition filtering', () => {
+            expect(commandService.syncExecuteCommand(SetSheetsFilterRangeMutation.id, {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                range: { startRow: 0, startColumn: 0, endRow: 5, endColumn: 5 },
+            } as ISetSheetsFilterRangeMutationParams)).toBeTruthy();
+            expect(commandService.syncExecuteCommand(OpenFilterPanelOperation.id, {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                col: 0,
+            })).toBeTruthy();
+
+            expect(commandService.syncExecuteCommand(ChangeFilterByOperation.id, {
+                filterBy: FilterBy.CONDITIONS,
+            })).toBe(true);
+            expect(sheetsFilterPanelService.filterBy).toBe(FilterBy.CONDITIONS);
+        });
+
+        it('should not switch filter type before a filter panel column is prepared', () => {
+            expect(commandService.syncExecuteCommand(ChangeFilterByOperation.id, {
+                filterBy: FilterBy.CONDITIONS,
+            })).toBe(false);
+            expect(sheetsFilterPanelService.filterBy).toBe(FilterBy.VALUES);
         });
     });
 });

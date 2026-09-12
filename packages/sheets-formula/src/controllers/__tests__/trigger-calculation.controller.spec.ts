@@ -26,6 +26,9 @@ import {
     ActiveDirtyManagerService,
     ENGINE_FORMULA_CYCLE_REFERENCE_COUNT,
     ENGINE_FORMULA_RETURN_DEPENDENCY_TREE,
+    FormulaCalculationSessionController,
+    FormulaCalculationSessionService,
+    FormulaCalculationTriggerService,
     FormulaDataModel,
     FormulaExecutedStateType,
     FormulaExecuteStageType,
@@ -39,9 +42,9 @@ import {
 } from '@univerjs/engine-formula';
 import { SetRangeValuesMutation, SetStyleCommand } from '@univerjs/sheets';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { CalculationMode, PLUGIN_CONFIG_KEY_BASE } from '../../config/config';
 import { createFacadeTestBed } from '../../facade/__tests__/create-test-bed';
+import { SheetFormulaCalculationResultApplyController } from '../sheet-formula-calculation-result-apply.controller';
 import { TriggerCalculationController } from '../trigger-calculation.controller';
 
 function createWorkbookData(): IWorkbookData {
@@ -68,10 +71,14 @@ function createWorkbookData(): IWorkbookData {
     };
 }
 
-function createControllerTestBed() {
+function createControllerTestBed(initialFormulaComputing = CalculationMode.WHEN_EMPTY) {
     const dependencies: Dependency[] = [
         [IActiveDirtyManagerService, { useClass: ActiveDirtyManagerService }],
+        [FormulaCalculationTriggerService],
         [RegisterOtherFormulaService],
+        [FormulaCalculationSessionService],
+        [FormulaCalculationSessionController],
+        [SheetFormulaCalculationResultApplyController],
         [TriggerCalculationController],
     ];
 
@@ -80,7 +87,7 @@ function createControllerTestBed() {
     const commandService = injector.get(ICommandService);
     const configService = injector.get(IConfigService);
 
-    configService.setConfig(PLUGIN_CONFIG_KEY_BASE, { initialFormulaComputing: CalculationMode.WHEN_EMPTY }, { merge: true });
+    configService.setConfig(PLUGIN_CONFIG_KEY_BASE, { initialFormulaComputing }, { merge: true });
     configService.setConfig(ENGINE_FORMULA_RETURN_DEPENDENCY_TREE, true);
     configService.setConfig(ENGINE_FORMULA_CYCLE_REFERENCE_COUNT, 7);
 
@@ -118,6 +125,9 @@ function createControllerTestBed() {
         });
     });
 
+    injector.get(FormulaCalculationTriggerService).start();
+    injector.get(FormulaCalculationSessionController);
+    injector.get(SheetFormulaCalculationResultApplyController);
     const controller = injector.get(TriggerCalculationController);
 
     return {
@@ -126,10 +136,19 @@ function createControllerTestBed() {
         commandService,
         formulaDataModel: injector.get(FormulaDataModel),
         activeDirtyManagerService: injector.get(IActiveDirtyManagerService),
-        registerOtherFormulaService: injector.get(RegisterOtherFormulaService),
         executedCommands,
         executedDisposable,
     };
+}
+
+async function settleInitialCalculation(testBed: ReturnType<typeof createControllerTestBed>): Promise<void> {
+    await vi.advanceTimersByTimeAsync(10);
+    if (testBed.executedCommands.some(({ id }) => id === SetFormulaCalculationStartMutation.id)) {
+        await testBed.commandService.executeCommand(SetFormulaCalculationNotificationMutation.id, {
+            functionsExecutedState: FormulaExecutedStateType.SUCCESS,
+        });
+    }
+    testBed.executedCommands.length = 0;
 }
 
 describe('TriggerCalculationController', () => {
@@ -145,13 +164,7 @@ describe('TriggerCalculationController', () => {
     it('should trigger initial calculation and enrich calculation params through real command hooks', async () => {
         const testBed = createControllerTestBed();
 
-        await Promise.resolve();
-
-        expect(testBed.registerOtherFormulaService.calculateStarted$.getValue()).toBe(true);
-
-        testBed.executedCommands.length = 0;
-
-        await testBed.commandService.executeCommand(SetFormulaCalculationStartMutation.id, {});
+        await vi.advanceTimersByTimeAsync(10);
         await testBed.commandService.executeCommand(SetFormulaStringBatchCalculationMutation.id, {});
 
         expect(testBed.executedCommands.find((command) => command.id === SetFormulaCalculationStartMutation.id)).toMatchObject({
@@ -174,8 +187,21 @@ describe('TriggerCalculationController', () => {
         testBed.testBed.univer.dispose();
     });
 
+    it('should not enqueue an empty initial calculation in no-calculation mode', async () => {
+        const testBed = createControllerTestBed(CalculationMode.NO_CALCULATION);
+
+        await vi.advanceTimersByTimeAsync(10);
+
+        expect(testBed.executedCommands.some(({ id }) => id === SetTriggerFormulaCalculationStartMutation.id)).toBe(false);
+        expect(testBed.executedCommands.some(({ id }) => id === SetFormulaCalculationStartMutation.id)).toBe(false);
+
+        testBed.executedDisposable.dispose();
+        testBed.testBed.univer.dispose();
+    });
+
     it('should merge dirty data from real active-dirty registrations and skip style-triggered range updates', async () => {
         const testBed = createControllerTestBed();
+        await settleInitialCalculation(testBed);
 
         testBed.activeDirtyManagerService.register('formula.test-dirty-1', {
             commandId: 'formula.test-dirty-1',
@@ -185,7 +211,7 @@ describe('TriggerCalculationController', () => {
                     { unitId: 'test', sheetId: 'sheet1', range: { startRow: 0, startColumn: 0, endRow: 1, endColumn: 1 } },
                 ],
                 dirtyNameMap: { test: { sheet1: '1' } },
-                dirtyDefinedNameMap: { test: { sheet1: '1' } },
+                dirtyDefinedNameMap: { test: { definedNameA: '1' } },
                 dirtyUnitFeatureMap: { test: { sheet1: { featureA: true } } },
                 dirtyUnitOtherFormulaMap: { test: { sheet1: { formulaA: true } } },
                 clearDependencyTreeCache: { test: { sheet1: '1' } },
@@ -201,12 +227,11 @@ describe('TriggerCalculationController', () => {
         });
         testBed.activeDirtyManagerService.register(SetRangeValuesMutation.id, {
             commandId: SetRangeValuesMutation.id,
+            shouldTrigger: (command) => (command.params as { trigger?: string })?.trigger !== SetStyleCommand.id,
             getDirtyData: () => ({
                 dirtyRanges: [{ unitId: 'test', sheetId: 'sheet1', range: { startRow: 9, startColumn: 9, endRow: 9, endColumn: 9 } }],
             }),
         });
-
-        testBed.executedCommands.length = 0;
 
         await testBed.commandService.executeCommand('formula.test-dirty-1');
         await testBed.commandService.executeCommand(SetRangeValuesMutation.id, {
@@ -229,7 +254,7 @@ describe('TriggerCalculationController', () => {
                     { unitId: 'test', sheetId: 'sheet1', range: { startRow: 2, startColumn: 0, endRow: 3, endColumn: 1 } },
                 ],
                 dirtyNameMap: { test: { sheet1: '1' } },
-                dirtyDefinedNameMap: { test: { sheet1: '1' } },
+                dirtyDefinedNameMap: { test: { definedNameA: '1' } },
                 dirtyUnitFeatureMap: { test: { sheet1: { featureA: true, featureB: false } } },
                 dirtyUnitOtherFormulaMap: { test: { sheet1: { formulaA: true } } },
                 clearDependencyTreeCache: { test: { sheet1: '1' } },
@@ -243,15 +268,15 @@ describe('TriggerCalculationController', () => {
 
     it('should stop and restart calculation through real notification flow', async () => {
         const testBed = createControllerTestBed();
+        await settleInitialCalculation(testBed);
 
         testBed.activeDirtyManagerService.register('formula.test-dirty-restart', {
             commandId: 'formula.test-dirty-restart',
             getDirtyData: () => ({
+                forceCalculation: true,
                 dirtyRanges: [{ unitId: 'test', sheetId: 'sheet1', range: { startRow: 4, startColumn: 0, endRow: 4, endColumn: 1 } }],
             }),
         });
-
-        testBed.executedCommands.length = 0;
 
         await testBed.commandService.executeCommand(SetFormulaCalculationNotificationMutation.id, {
             stageInfo: {
@@ -273,7 +298,7 @@ describe('TriggerCalculationController', () => {
             functionsExecutedState: FormulaExecutedStateType.STOP_EXECUTION,
         });
 
-        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(10);
 
         expect(testBed.executedCommands.findLast((command) => command.id === SetFormulaCalculationStartMutation.id)).toMatchObject({
             options: { onlyLocal: true },
@@ -288,6 +313,7 @@ describe('TriggerCalculationController', () => {
 
     it('should publish progress updates through real notification commands', async () => {
         const testBed = createControllerTestBed();
+        await settleInitialCalculation(testBed);
         const progressValues: Array<{ done: number; count: number; label?: string }> = [];
         const subscription = testBed.controller.progress$.subscribe((value) => progressValues.push(value));
 
@@ -337,11 +363,11 @@ describe('TriggerCalculationController', () => {
             functionsExecutedState: FormulaExecutedStateType.SUCCESS,
         });
 
-        expect(progressValues).toContainEqual({ done: 0, count: 1, label: 'formula.progress.analyzing' });
-        expect(progressValues).toContainEqual({ done: 3, count: 8, label: 'formula.progress.calculating' });
-        expect(progressValues).toContainEqual({ done: 3, count: 8, label: 'formula.progress.array-analysis' });
-        expect(progressValues).toContainEqual({ done: 6, count: 8, label: 'formula.progress.array-calculation' });
-        expect(progressValues).toContainEqual({ done: 1, count: 1, label: 'formula.progress.done' });
+        expect(progressValues).toContainEqual({ done: 0, count: 1, label: 'sheets-formula.progress.analyzing' });
+        expect(progressValues).toContainEqual({ done: 3, count: 8, label: 'sheets-formula.progress.calculating' });
+        expect(progressValues).toContainEqual({ done: 3, count: 8, label: 'sheets-formula.progress.array-analysis' });
+        expect(progressValues).toContainEqual({ done: 6, count: 8, label: 'sheets-formula.progress.array-calculation' });
+        expect(progressValues).toContainEqual({ done: 1, count: 1, label: 'sheets-formula.progress.done' });
 
         subscription.unsubscribe();
         testBed.executedDisposable.dispose();

@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Editar enlace',
             addTitle: 'Insertar enlace',
             label: 'Etiqueta',
             type: 'Tipo',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'Insertar enlace',
         },
+        permission: {
+            hyperLinkErr: 'No tiene permiso para insertar un enlace.',
+        },
         message: {
             noSheet: 'La hoja de destino ha sido eliminada',
             refError: 'Rango no válido',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'Enlace copiado al portapapeles',
         },
         popup: {
+            title: 'Hipervínculo',
+            open: 'Abrir enlace',
             copy: 'Copiar enlace',
             edit: 'Editar enlace',
             cancel: 'Cancelar enlace',

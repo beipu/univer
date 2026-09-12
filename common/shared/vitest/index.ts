@@ -1,24 +1,10 @@
-/**
- * Copyright 2023-present DreamNum Co., Ltd.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 import { createRequire } from 'node:module';
+import process from 'node:process';
 import { defineConfig, mergeConfig } from 'vitest/config';
 
 const require = createRequire(import.meta.url);
 const coverageProviderModule = require.resolve('@vitest/coverage-istanbul');
+const isCI = process.env.CI === 'true';
 
 export default function createConfig(options?: any) {
     return defineConfig(mergeConfig({
@@ -32,7 +18,7 @@ export default function createConfig(options?: any) {
             },
             environment: 'happy-dom',
             coverage: {
-                reporter: ['html', 'json'],
+                reporter: isCI ? ['json', 'lcovonly'] : ['html'],
                 provider: 'custom',
                 // `customProviderModule` expects a file path. Using a bare
                 // package name makes Vitest resolve it as a relative path from
@@ -58,13 +44,16 @@ export default function createConfig(options?: any) {
                     'lib/**',
                     'src/locale/**',
                     '**/*.stories.tsx',
-                    '**/__testing__/**',
                     '**/*/tailwind.config.ts',
+                    'packages/protocol/**',
                     'packages/slides/**',
                     'packages/slides-ui/**',
+                    '**/src/menu/**',
                     '**/src/plugin.ts',
                     '**/src/mobile-plugin.ts',
+                    '**/src/facade/index.ts',
                     '**/src/config/config.ts',
+                    '**/src/controllers/components.controller.ts',
                 ],
             },
         },

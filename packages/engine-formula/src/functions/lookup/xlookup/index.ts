@@ -15,7 +15,6 @@
  */
 
 import type { Nullable } from '@univerjs/core';
-
 import type { ArrayValueObject } from '../../../engine/value-object/array-value-object';
 import type { BaseValueObject } from '../../../engine/value-object/base-value-object';
 import { ErrorType } from '../../../basics/error-type';
@@ -54,8 +53,12 @@ export class Xlookup extends BaseFunction {
             _searchMode = NumberValueObject.create(1);
         }
 
-        if (lookupValue.isError()) {
-            return lookupValue;
+        const _lookupValue = this.currentFormulaRowCount > 1 || this.currentFormulaColumnCount > 1
+            ? lookupValue
+            : this._legacyImplicitLookupValue(lookupValue);
+
+        if (_lookupValue.isError()) {
+            return _lookupValue;
         }
 
         const rowCountLookup = lookupArray.isArray() ? (lookupArray as ArrayValueObject).getRowCount() : 1;
@@ -92,7 +95,7 @@ export class Xlookup extends BaseFunction {
         }
 
         return this._getResult(
-            lookupValue,
+            _lookupValue,
             baseValueObjectToArrayValueObject(lookupArray),
             baseValueObjectToArrayValueObject(returnArray),
             _ifNotFound,
@@ -146,7 +149,7 @@ export class Xlookup extends BaseFunction {
                     return ifNotFound;
                 }
 
-                return result;
+                return this._blankResultAsZero(result);
             });
         }
 
@@ -165,7 +168,7 @@ export class Xlookup extends BaseFunction {
                 return ifNotFound!;
             }
 
-            return result;
+            return this._blankResultAsZero(result);
         }
 
         let axis = 0;
@@ -184,6 +187,50 @@ export class Xlookup extends BaseFunction {
         }
 
         return resultArray;
+    }
+
+    private _legacyImplicitLookupValue(lookupValue: BaseValueObject): BaseValueObject {
+        if (!lookupValue.isArray()) {
+            return lookupValue;
+        }
+
+        const array = lookupValue as ArrayValueObject;
+
+        if (
+            array.getUnitId() === '' ||
+            array.getSheetId() === '' ||
+            array.getCurrentRow() < 0 ||
+            array.getCurrentColumn() < 0
+        ) {
+            return lookupValue;
+        }
+
+        const startRow = array.getCurrentRow();
+        const startColumn = array.getCurrentColumn();
+        const rowCount = array.getRowCount();
+        const columnCount = array.getColumnCount();
+
+        let rowIndex = -1;
+        let columnIndex = -1;
+        if (rowCount === 1 && columnCount === 1) {
+            rowIndex = 0;
+            columnIndex = 0;
+        } else if (rowCount === 1) {
+            rowIndex = 0;
+            columnIndex = this.column - startColumn;
+        } else if (columnCount === 1) {
+            rowIndex = this.row - startRow;
+            columnIndex = 0;
+        } else {
+            rowIndex = this.row - startRow;
+            columnIndex = this.column - startColumn;
+        }
+
+        if (rowIndex < 0 || rowIndex >= rowCount || columnIndex < 0 || columnIndex >= columnCount) {
+            return ErrorValueObject.create(ErrorType.VALUE);
+        }
+
+        return array.get(rowIndex, columnIndex) as BaseValueObject || ErrorValueObject.create(ErrorType.VALUE);
     }
 
     private _handleExpandObject(
@@ -217,11 +264,12 @@ export class Xlookup extends BaseFunction {
                 resultArray,
                 matchModeValue === 1 ? ArrayOrderSearchType.MAX : ArrayOrderSearchType.MIN,
                 searchModeValue === -1,
-                axis
+                axis,
+                true
             );
         }
 
-        return this.equalSearchExpand(value, searchArray, resultArray, searchModeValue !== -1, axis);
+        return this._exactSearchExpand(value, searchArray, resultArray, searchModeValue !== -1, axis);
     }
 
     private _handleSingleObject(
@@ -247,11 +295,89 @@ export class Xlookup extends BaseFunction {
                 searchArray,
                 resultArray,
                 matchModeValue === 1 ? ArrayOrderSearchType.MAX : ArrayOrderSearchType.MIN,
-                searchModeValue === -1
+                searchModeValue === -1,
+                true
             );
         }
 
-        return this.equalSearch(value, searchArray, resultArray, searchModeValue !== -1);
+        return this._exactSearch(value, searchArray, resultArray, searchModeValue !== -1);
+    }
+
+    private _exactSearch(
+        value: BaseValueObject,
+        searchArray: ArrayValueObject,
+        resultArray: ArrayValueObject,
+        isFirst: boolean
+    ): BaseValueObject {
+        const position = this._findExactPosition(value, searchArray, isFirst);
+        if (position == null) {
+            return ErrorValueObject.create(ErrorType.NA);
+        }
+
+        return resultArray.get(position.row, position.column) ?? ErrorValueObject.create(ErrorType.NA);
+    }
+
+    private _exactSearchExpand(
+        value: BaseValueObject,
+        searchArray: ArrayValueObject,
+        resultArray: ArrayValueObject,
+        isFirst: boolean,
+        axis: number
+    ): BaseValueObject {
+        const position = this._findExactPosition(value, searchArray, isFirst);
+        if (position == null) {
+            return ErrorValueObject.create(ErrorType.NA);
+        }
+
+        return axis === 0
+            ? resultArray.slice([position.row, position.row + 1]) ?? ErrorValueObject.create(ErrorType.NA)
+            : resultArray.slice(undefined, [position.column, position.column + 1]) ?? ErrorValueObject.create(ErrorType.NA);
+    }
+
+    private _findExactPosition(
+        value: BaseValueObject,
+        searchArray: ArrayValueObject,
+        isFirst: boolean
+    ): Nullable<{ row: number; column: number }> {
+        let position: Nullable<{ row: number; column: number }>;
+        const find = (candidate: Nullable<BaseValueObject>, row: number, column: number) => {
+            if (candidate != null && this._isExactMatch(candidate, value)) {
+                position = { row, column };
+                return false;
+            }
+        };
+
+        if (isFirst) {
+            searchArray.iterator(find);
+        } else {
+            searchArray.iteratorReverse(find);
+        }
+
+        return position;
+    }
+
+    private _isExactMatch(candidate: BaseValueObject, value: BaseValueObject): boolean {
+        if (candidate.isError() || value.isError()) {
+            return candidate.isError() && value.isError() && candidate.getValue() === value.getValue();
+        }
+        if (
+            candidate.isNull() !== value.isNull() ||
+            candidate.isNumber() !== value.isNumber() ||
+            candidate.isString() !== value.isString() ||
+            candidate.isBoolean() !== value.isBoolean()
+        ) {
+            return false;
+        }
+
+        return candidate.isEqual(value).getValue() === true;
+    }
+
+    private _blankResultAsZero(value: BaseValueObject) {
+        if (value.isNull()) {
+            return NumberValueObject.create(0);
+        }
+
+        return value;
     }
 
     /**

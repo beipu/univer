@@ -17,13 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    docLink: {
+    'docs-hyper-link-ui': {
         edit: {
             confirm: 'OK',
             cancel: 'キャンセル',
-            title: 'リンク',
             address: 'アドレス',
-            placeholder: 'リンクのURLを入力してください',
             addressError: 'URLが正しくありません！',
             label: '表示文字列',
             labelError: 'リンクの表示文字列を入力してください',

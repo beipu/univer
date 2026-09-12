@@ -15,25 +15,28 @@
  */
 
 import type { DocumentDataModel, IDisposable, ITextRangeParam, Nullable } from '@univerjs/core';
-import type { INodePosition, IRenderContext, IRenderModule, ITextRangeWithStyle } from '@univerjs/engine-render';
-import { DataStreamTreeTokenType, deepCompare, Disposable, Inject, isInternalEditorID, IUniverInstanceService, toDisposable, UniverInstanceType } from '@univerjs/core';
-import { DocSelectionManagerService } from '@univerjs/docs';
-import { ComponentManager } from '@univerjs/ui';
-import { FloatToolbar } from '../components/float-toolbar/FloatToolbar';
+import type { IRenderContext, IRenderModule } from '@univerjs/engine-render';
+import {
+    DataStreamTreeTokenType,
+    Disposable,
+    DocumentBlockRangeType,
+    FOCUSING_COMMON_DRAWINGS,
+    IContextService,
+    Inject,
+    IPermissionService,
+    isInternalEditorID,
+    IUniverInstanceService,
+    Optional,
+    toDisposable,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { canEditDocumentTargets, DocSelectionManagerService, getDocumentEditTargetObjectIds } from '@univerjs/docs';
+import { IContextMenuService } from '@univerjs/ui';
+import { FLOAT_MENU_COMPONENT_KEY } from '../views/float-toolbar/FloatToolbar';
+import { IDocEmbedRuntimeFocusCoordinator } from './doc-embed-integration.service';
+import { DocLayoutInteractionService } from './doc-layout-interaction.service';
 import { DocCanvasPopManagerService } from './doc-popup-manager.service';
 import { DocSelectionRenderService } from './selection/doc-selection-render.service';
-
-const FLOAT_MENU_COMPONENT_KEY = 'univer.doc.float-menu';
-
-function isInSameLine(startNodePosition: Nullable<INodePosition>, endNodePosition: Nullable<INodePosition>) {
-    if (startNodePosition == null || endNodePosition == null) {
-        return false;
-    }
-    const { glyph: _startGlyph, ...startRest } = startNodePosition;
-    const { glyph: _endGlyph, ...endRest } = endNodePosition;
-
-    return deepCompare(startRest, endRest);
-}
 
 const SKIP_SYMBOLS: string[] = [
     DataStreamTreeTokenType.CUSTOM_BLOCK,
@@ -41,23 +44,31 @@ const SKIP_SYMBOLS: string[] = [
 ];
 
 export class DocFloatMenuService extends Disposable implements IRenderModule {
-    private _floatMenu: Nullable<{ disposable: IDisposable; start: number; end: number }> = null;
+    protected _floatMenu: Nullable<{ disposable: IDisposable; start: number; end: number; segmentId: string }> = null;
+    private _suppressed = false;
+    private _embedSuppressed = false;
+    private _invalidatedSelection: Nullable<string> = null;
 
     constructor(
         private _context: IRenderContext<DocumentDataModel>,
         @Inject(DocSelectionManagerService) private readonly _docSelectionManagerService: DocSelectionManagerService,
-        @Inject(DocCanvasPopManagerService) private readonly _docCanvasPopManagerService: DocCanvasPopManagerService,
-        @Inject(ComponentManager) private readonly _componentManager: ComponentManager,
+        @Inject(DocCanvasPopManagerService) protected readonly _docCanvasPopManagerService: DocCanvasPopManagerService,
         @Inject(IUniverInstanceService) private readonly _univerInstanceService: IUniverInstanceService,
-        @Inject(DocSelectionRenderService) private readonly _docSelectionRenderService: DocSelectionRenderService
+        @Inject(DocSelectionRenderService) private readonly _docSelectionRenderService: DocSelectionRenderService,
+        @IContextService private readonly _contextService: IContextService,
+        @IContextMenuService protected readonly _contextMenuService: IContextMenuService,
+        @IPermissionService private readonly _permissionService: IPermissionService,
+        @Inject(DocLayoutInteractionService) private readonly _docLayoutInteractionService: DocLayoutInteractionService,
+        @Optional(IDocEmbedRuntimeFocusCoordinator) private readonly _embedRuntimeFocusCoordinator?: IDocEmbedRuntimeFocusCoordinator
     ) {
         super();
 
         if (isInternalEditorID(this._context.unitId)) {
             return;
         }
-        this._registerFloatMenu();
+        this._initPermissionLifecycle();
         this._initSelectionChange();
+        this._initEmbedRuntimeLifecycle();
 
         this.disposeWithMe(() => {
             this._hideFloatMenu();
@@ -68,12 +79,24 @@ export class DocFloatMenuService extends Disposable implements IRenderModule {
         return this._floatMenu;
     }
 
-    private _registerFloatMenu() {
-        this.disposeWithMe(this._componentManager.register(FLOAT_MENU_COMPONENT_KEY, FloatToolbar));
+    hideFloatMenu(): void {
+        this._hideFloatMenu();
+    }
+
+    setSuppressed(suppressed: boolean): void {
+        if (this._suppressed === suppressed) {
+            return;
+        }
+
+        this._suppressed = suppressed;
+        if (suppressed) {
+            this._hideFloatMenu();
+        }
     }
 
     private _initSelectionChange() {
         this.disposeWithMe(this._docSelectionRenderService.onSelectionStart$.subscribe(() => {
+            this._invalidatedSelection = null;
             this._hideFloatMenu();
         }));
 
@@ -83,9 +106,24 @@ export class DocFloatMenuService extends Disposable implements IRenderModule {
                 return;
             }
 
+            if (this._suppressed || this._embedSuppressed || this._contextService.getContextValue(FOCUSING_COMMON_DRAWINGS)) {
+                this._hideFloatMenu();
+                return;
+            }
+
             const range = (textRanges.length > 0) && textRanges.find((range) => !range.collapsed);
             if (range) {
-                if (range.startOffset === this._floatMenu?.start && range.endOffset === this._floatMenu?.end) {
+                const selectionKey = this._getSelectionKey(range);
+                if (selectionKey === this._invalidatedSelection) {
+                    this._hideFloatMenu();
+                    return;
+                }
+                this._invalidatedSelection = null;
+                if (
+                    range.startOffset === this._floatMenu?.start &&
+                    range.endOffset === this._floatMenu?.end &&
+                    (range.segmentId ?? '') === this._floatMenu?.segmentId
+                ) {
                     return;
                 }
                 this._hideFloatMenu();
@@ -93,8 +131,76 @@ export class DocFloatMenuService extends Disposable implements IRenderModule {
                 return;
             }
 
+            this._invalidatedSelection = null;
             this._hideFloatMenu();
         }));
+    }
+
+    private _initPermissionLifecycle(): void {
+        this.disposeWithMe(this._permissionService.permissionPointUpdate$.subscribe(() => {
+            if (this._floatMenu && !this._canEditDocument({
+                startOffset: this._floatMenu.start,
+                endOffset: this._floatMenu.end,
+            }, this._floatMenu.segmentId)) {
+                this._hideFloatMenu();
+            }
+        }));
+    }
+
+    private _canEditDocument(
+        range?: Pick<ITextRangeParam, 'startOffset' | 'endOffset'>,
+        segmentId = ''
+    ): boolean {
+        const documentDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(
+            this._context.unitId,
+            UniverInstanceType.UNIVER_DOC
+        );
+        if (!documentDataModel) {
+            return false;
+        }
+
+        return canEditDocumentTargets(
+            this._permissionService,
+            this._context.unitId,
+            range ? getDocumentEditTargetObjectIds(documentDataModel, segmentId, range) : []
+        );
+    }
+
+    private _initEmbedRuntimeLifecycle(): void {
+        if (!this._embedRuntimeFocusCoordinator) {
+            return;
+        }
+
+        const syncSuppressedState = () => {
+            const suppressed = this._embedRuntimeFocusCoordinator?.shouldSuppressHostInteraction(this._context.unitId) === true;
+            if (this._embedSuppressed === suppressed) {
+                return;
+            }
+
+            this._embedSuppressed = suppressed;
+            if (!suppressed) {
+                return;
+            }
+
+            const expandedRange = this._docSelectionManagerService
+                .getTextRanges({ unitId: this._context.unitId, subUnitId: this._context.unitId })
+                ?.find((range) => !range.collapsed);
+            this._invalidatedSelection = expandedRange
+                ? this._getSelectionKey(expandedRange)
+                : this._floatMenu && this._getSelectionKey({
+                    startOffset: this._floatMenu.start,
+                    endOffset: this._floatMenu.end,
+                    segmentId: this._floatMenu.segmentId,
+                });
+            this._hideFloatMenu();
+        };
+
+        this.disposeWithMe(this._embedRuntimeFocusCoordinator.runtimeSessionChanged$.subscribe(syncSuppressedState));
+        syncSuppressedState();
+    }
+
+    private _getSelectionKey(range: Pick<ITextRangeParam, 'startOffset' | 'endOffset' | 'segmentId'>): string {
+        return `${range.segmentId ?? ''}:${range.startOffset}:${range.endOffset}`;
     }
 
     private _hideFloatMenu() {
@@ -104,7 +210,12 @@ export class DocFloatMenuService extends Disposable implements IRenderModule {
 
     private _showFloatMenu(unitId: string, range: ITextRangeParam) {
         const documentDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
-        if (!documentDataModel || documentDataModel.getDisabled()) {
+        const segmentId = range.segmentId ?? '';
+        if (!documentDataModel || documentDataModel.getDisabled() || !this._canEditDocument(range, segmentId)) {
+            return;
+        }
+
+        if (isRangeInCodeBlock(documentDataModel, range)) {
             return;
         }
 
@@ -117,20 +228,47 @@ export class DocFloatMenuService extends Disposable implements IRenderModule {
             return;
         }
 
-        this._floatMenu = {
-            disposable: this._docCanvasPopManagerService.attachPopupToRange(
-                range,
-                {
-                    componentKey: FLOAT_MENU_COMPONENT_KEY,
-                    direction: range.direction === 'backward' || isInSameLine((range as ITextRangeWithStyle).startNodePosition, (range as ITextRangeWithStyle).endNodePosition) ? 'top-center' : 'bottom-center',
-                    offset: [0, 4],
+        return this._openSelectionMenu(unitId, range);
+    }
+
+    protected _openSelectionMenu(unitId: string, range: ITextRangeParam): IDisposable | undefined {
+        const segmentId = range.segmentId ?? '';
+        const popup = this._docCanvasPopManagerService.attachPopupToRange(
+            range,
+            {
+                componentKey: FLOAT_MENU_COMPONENT_KEY,
+                direction: 'top-left',
+                rangeAnchor: 'selection-end',
+                offset: [0, 8],
+                extraProps: {
+                    onDismiss: () => {
+                        this._invalidatedSelection = this._getSelectionKey(range);
+                        this._hideFloatMenu();
+                    },
                 },
-                unitId
-            ),
+            },
+            unitId
+        );
+        const layoutInteraction = this._docLayoutInteractionService.beginInteraction();
+        this._floatMenu = {
+            disposable: toDisposable(() => {
+                popup.dispose();
+                layoutInteraction.dispose();
+            }),
             start: range.startOffset,
             end: range.endOffset,
+            segmentId,
         };
 
         return toDisposable(() => this._hideFloatMenu());
     }
+}
+
+function isRangeInCodeBlock(documentDataModel: DocumentDataModel, range: ITextRangeParam): boolean {
+    const blockRanges = documentDataModel.getBody()?.blockRanges ?? [];
+
+    return blockRanges.some((blockRange) => (
+        blockRange.blockType === DocumentBlockRangeType.CODE &&
+        Math.max(range.startOffset, blockRange.startIndex) <= Math.min(range.endOffset, blockRange.endIndex)
+    ));
 }

@@ -14,31 +14,30 @@
  * limitations under the License.
  */
 
-import type { Nullable } from '@univerjs/core';
-import type {
-    IRichTextEditingMutationParams,
-} from '@univerjs/docs';
+import type { DocumentDataModel, Nullable } from '@univerjs/core';
+import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { RenderComponentType } from '@univerjs/engine-render';
 import type { IEditorBridgeServiceVisibleParam } from '../../services/editor-bridge.service';
 import {
     DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
     DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
     EDITOR_ACTIVATED,
-    FOCUSING_EDITOR_BUT_HIDDEN,
     FOCUSING_FX_BAR_EDITOR,
+    FOCUSING_UNIVER_EDITOR,
     ICommandService,
     IContextService,
     Inject,
     IUndoRedoService,
     IUniverInstanceService,
     RxDisposable,
+    UniverInstanceType,
 } from '@univerjs/core';
 import {
     DocSelectionManagerService,
     DocSkeletonManagerService,
     RichTextEditingMutation,
 } from '@univerjs/docs';
-import { CoverContentCommand, VIEWPORT_KEY as DOC_VIEWPORT_KEY, IEditorService } from '@univerjs/docs-ui';
+import { CoverContentCommand, IEditorService, VIEWPORT_KEY } from '@univerjs/docs-ui';
 import { DeviceInputEventType, IRenderManagerService, ScrollBar } from '@univerjs/engine-render';
 import { combineLatest, filter, takeUntil } from 'rxjs';
 import { getEditorObject } from '../../basics/editor/get-editor-object';
@@ -77,13 +76,25 @@ export class FormulaEditorController extends RxDisposable {
         this._create(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY);
 
         this.disposeWithMe(this._editorService.focus$.subscribe(() => {
-            const focusUnitId = this._editorService.getFocusEditor()?.getEditorId();
-            if (focusUnitId !== DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY) {
-                this._contextService.setContextValue(FOCUSING_FX_BAR_EDITOR, false);
-            } else {
-                this._contextService.setContextValue(FOCUSING_FX_BAR_EDITOR, true);
-            }
+            this._syncFxBarFocusContext();
         }));
+    }
+
+    private _syncFxBarFocusContext(): void {
+        const focusUnitId = this._editorService.getFocusEditor()?.getEditorId();
+        if (focusUnitId === DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY) {
+            this._contextService.setContextValue(FOCUSING_FX_BAR_EDITOR, true);
+            return;
+        }
+
+        if (
+            this._contextService.getContextValue(FOCUSING_FX_BAR_EDITOR) &&
+            this._contextService.getContextValue(EDITOR_ACTIVATED)
+        ) {
+            return;
+        }
+
+        this._contextService.setContextValue(FOCUSING_FX_BAR_EDITOR, false);
     }
 
     private _handleContentChange() {
@@ -105,7 +116,7 @@ export class FormulaEditorController extends RxDisposable {
             return;
         }
 
-        const formulaEditorDocObject = this._renderManagerService.getRenderById(unitId);
+        const formulaEditorDocObject = this._renderManagerService.getRenderUnitById(unitId);
         if (formulaEditorDocObject == null) {
             return;
         }
@@ -122,15 +133,16 @@ export class FormulaEditorController extends RxDisposable {
     }
 
     private _listenFxBtnClick() {
-        this._formulaEditorManagerService.fxBtnClick$.pipe(takeUntil(this.dispose$)).subscribe(() => {
+        this._formulaEditorManagerService.fxBtnClick$.pipe(takeUntil(this.dispose$)).subscribe((forceFormulaMode) => {
             const isFocusButHidden =
-                this._contextService.getContextValue(FOCUSING_EDITOR_BUT_HIDDEN) &&
+                this._contextService.getContextValue(FOCUSING_UNIVER_EDITOR) &&
                 !this._contextService.getContextValue(EDITOR_ACTIVATED);
 
-            if (isFocusButHidden) {
+            if (isFocusButHidden || forceFormulaMode) {
                 this._univerInstanceService.setCurrentUnitForType(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY);
-                const formulaEditorDataModel = this._univerInstanceService.getUniverDocInstance(
-                    DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY
+                const formulaEditorDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(
+                    DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
+                    UniverInstanceType.UNIVER_DOC
                 );
 
                 const visibleState = this._editorBridgeService.isVisible();
@@ -194,8 +206,9 @@ export class FormulaEditorController extends RxDisposable {
         this.disposeWithMe(combineLatest([this._formulaEditorManagerService.position$, addFormulaBar$]).subscribe(([position]) => {
             if (!position) return this._clearScheduledCallback();
             const editorObject = getEditorObject(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY, this._renderManagerService);
-            const formulaEditorDataModel = this._univerInstanceService.getUniverDocInstance(
-                DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY
+            const formulaEditorDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(
+                DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
+                UniverInstanceType.UNIVER_DOC
             );
 
             if (editorObject == null || formulaEditorDataModel == null) return this._clearScheduledCallback();
@@ -219,11 +232,12 @@ export class FormulaEditorController extends RxDisposable {
     autoScroll() {
         const position = this._formulaEditorManagerService.getPosition();
 
-        const skeleton = this._renderManagerService.getRenderById(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY)?.with(DocSkeletonManagerService).getSkeleton();
-        const editorObject = this._renderManagerService.getRenderById(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY);
+        const skeleton = this._renderManagerService.getRenderUnitById(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY)?.with(DocSkeletonManagerService).getSkeleton();
+        const editorObject = this._renderManagerService.getRenderUnitById(DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY);
 
-        const formulaEditorDataModel = this._univerInstanceService.getUniverDocInstance(
-            DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY
+        const formulaEditorDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(
+            DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
+            UniverInstanceType.UNIVER_DOC
         );
 
         if (skeleton == null || position == null || editorObject == null || formulaEditorDataModel == null) {
@@ -239,7 +253,7 @@ export class FormulaEditorController extends RxDisposable {
         actualHeight += marginTop + marginBottom;
 
         const { width, height } = position;
-        const viewportMain = scene.getViewport(DOC_VIEWPORT_KEY.VIEW_MAIN);
+        const viewportMain = scene.getViewport(VIEWPORT_KEY.VIEW_MAIN);
         let scrollBar = viewportMain?.getScrollBar() as Nullable<ScrollBar>;
 
         scene.transformByState({

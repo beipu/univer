@@ -31,6 +31,12 @@ interface IDocSelectionManagerSearchParam {
     subUnitId: string;
 }
 
+/**
+ * Keeps a programmatically restored collapsed caret from being promoted back
+ * into a neighboring whole-entity selection by feature-specific UI.
+ */
+export const DOC_SELECTION_OPTION_PRESERVE_CARET = 'preserveCaret';
+
 export interface IRefreshSelectionParam extends IDocSelectionManagerSearchParam {
     docRanges: ISuccinctDocRangeParam[];
     isEditing: boolean;
@@ -91,12 +97,15 @@ export class DocSelectionManagerService extends RxDisposable {
         return this._getTextRanges(params);
     }
 
-    refreshSelection(params: Nullable<IDocSelectionManagerSearchParam> = this._currentSelection) {
+    refreshSelection(
+        params: Nullable<IDocSelectionManagerSearchParam> = this._currentSelection,
+        isEditing = false
+    ) {
         if (params == null) {
             return;
         }
 
-        this._refresh(params);
+        this._refresh(params, isEditing);
     }
 
     // **Only used in test case** because this does not go through the render layer.
@@ -150,20 +159,6 @@ export class DocSelectionManagerService extends RxDisposable {
         return textRanges.find((textRange) => textRange.isActive);
     }
 
-    /**
-     *
-     * @deprecated
-     */
-    getActiveRectRange(): Nullable<ITextRangeWithStyle> {
-        const selectionInfo = this._getTextRanges(this._currentSelection);
-        if (selectionInfo == null) {
-            return;
-        }
-
-        const { rectRanges } = selectionInfo;
-        return rectRanges.find((rectRange) => rectRange.isActive);
-    }
-
     // **Only used in test case** because this does not go through the render layer.
     __TEST_ONLY_add(textRanges: ITextRangeWithStyle[], isEditing = true) {
         if (this._currentSelection == null) {
@@ -179,23 +174,6 @@ export class DocSelectionManagerService extends RxDisposable {
             isEditing,
             style: NORMAL_TEXT_SELECTION_PLUGIN_STYLE, // mock style.
         });
-    }
-
-    // Use to replace the current editor selection.
-    /**
-     * @deprecated pls use replaceDocRanges.
-     */
-    replaceTextRanges(
-        docRanges: ISuccinctDocRangeParam[],
-        isEditing = true,
-        options?: { [key: string]: boolean }
-    ) {
-        return this.replaceDocRanges(
-            docRanges,
-            this._currentSelection,
-            isEditing,
-            options
-        );
     }
 
     replaceDocRanges(
@@ -221,12 +199,28 @@ export class DocSelectionManagerService extends RxDisposable {
         });
     }
 
-    // Only use in doc-selection-render.controller.ts
-    __replaceTextRangesWithNoRefresh(textSelectionInfo: IDocSelectionInnerParam, search: IDocSelectionManagerSearchParam) {
-        if (this._currentSelection == null) {
+    /**
+     * Replaces logical selection state without rebuilding render ranges. Atomic
+     * external mutations use this before applying document actions so layout can
+     * follow transformed offsets, then refresh after new geometry is available.
+     */
+    replaceSelectionInfoWithoutRefresh(
+        selectionInfo: IDocSelectionInnerParam,
+        params: Nullable<IDocSelectionManagerSearchParam> = this._currentSelection
+    ): void {
+        if (params == null) {
             return;
         }
 
+        this._replaceByParam({
+            ...selectionInfo,
+            ...params,
+        });
+    }
+
+    // Only use in doc-selection-render.controller.ts
+    __replaceTextRangesWithNoRefresh(textSelectionInfo: IDocSelectionInnerParam, search: IDocSelectionManagerSearchParam) {
+        // Embedded render selections have an explicit owner even while the host retains global focus.
         const params = {
             ...textSelectionInfo,
             ...search,
@@ -282,14 +276,14 @@ export class DocSelectionManagerService extends RxDisposable {
         return this._textSelectionInfo.get(unitId)?.get(subUnitId);
     }
 
-    private _refresh(param: IDocSelectionManagerSearchParam): void {
+    private _refresh(param: IDocSelectionManagerSearchParam, isEditing = false): void {
         const allTextSelectionInfo = this._getTextRanges(param);
 
         if (allTextSelectionInfo == null) {
             return;
         }
 
-        const { textRanges, rectRanges } = allTextSelectionInfo;
+        const { textRanges, rectRanges, options } = allTextSelectionInfo;
 
         const docRanges = [...textRanges, ...rectRanges];
 
@@ -299,7 +293,9 @@ export class DocSelectionManagerService extends RxDisposable {
             unitId,
             subUnitId,
             docRanges,
-            isEditing: false,
+            isEditing,
+            // Forced focus belongs to the original interaction, not later layout refreshes.
+            options: options?.forceFocus ? { ...options, forceFocus: false } : options,
         });
     }
 

@@ -14,16 +14,44 @@
  * limitations under the License.
  */
 
-import type { CommandListener, DocumentDataModel, IDisposable, IDocumentData, IExecutionOptions, ILanguagePack, IParagraphStyle, ITextDecoration, ITextStyle, LifecycleStages, LocaleType } from '@univerjs/core';
+import type { DocumentDataModel, IDisposable, IDocumentData, IExecutionOptions, ILanguagePack, IParagraphStyle, ITextDecoration, ITextStyle, LifecycleStages, LocaleType } from '@univerjs/core';
+import type { Theme } from '@univerjs/themes';
 import type { Subscription } from 'rxjs';
 import type { ICommandEvent, IEventParamConfig } from './f-event';
-import { CanceledError, Disposable, ICommandService, Inject, Injector, IUniverInstanceService, LifecycleService, LocaleService, ParagraphStyleBuilder, ParagraphStyleValue, RedoCommand, RichTextBuilder, RichTextValue, TextDecorationBuilder, TextStyleBuilder, TextStyleValue, ThemeService, toDisposable, UndoCommand, Univer, UniverInstanceType } from '@univerjs/core';
+import {
+    CanceledError,
+    Disposable,
+
+    ICommandService,
+
+    Inject,
+    Injector,
+
+    IUniverInstanceService,
+    LifecycleService,
+
+    LocaleService,
+
+    ParagraphStyleBuilder,
+    ParagraphStyleValue,
+    RedoCommand,
+    RegionService,
+    RichTextBuilder,
+    RichTextValue,
+    TextDecorationBuilder,
+    TextStyleBuilder,
+    TextStyleValue,
+    ThemeService,
+    toDisposable,
+    UndoCommand,
+    Univer,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { FBlob } from './f-blob';
 import { FDoc } from './f-doc';
 import { FEnum } from './f-enum';
 import { FEventName } from './f-event';
 import { FEventRegistry } from './f-event-registry';
-import { FHooks } from './f-hooks';
 import { FUserManager } from './f-usermanager';
 import { FUtil } from './f-util';
 
@@ -45,7 +73,7 @@ type Initializers = Array<(injector: Injector) => void>;
  */
 export class FUniver extends Disposable {
     /**
-     * Create an FUniver instance, if the injector is not provided, it will create a new Univer instance.
+     * Creates a Facade API instance for an existing Univer instance or its injector.
      * @static
      * @param {Univer | Injector} wrapped - The Univer instance or injector instance.
      * @returns {FUniver} - The FUniver instance.
@@ -65,12 +93,12 @@ export class FUniver extends Disposable {
     /**
      * @ignore
      */
-    _initialize(injector: Injector): void { }
+    _initialize(_injector: Injector): void { }
 
     /**
      * @ignore
      */
-    static extend(source: any): void {
+    static extend(source: { prototype: object }): void {
         Object.getOwnPropertyNames(source.prototype).forEach((name) => {
             if (name === '_initialize') {
                 let initializers = this.prototype[InitializerSymbol];
@@ -79,17 +107,15 @@ export class FUniver extends Disposable {
                     this.prototype[InitializerSymbol] = initializers;
                 }
 
-                initializers.push(source.prototype._initialize);
+                initializers.push(Reflect.get(source.prototype, name));
             } else if (name !== 'constructor') {
-                // @ts-ignore
-                this.prototype[name] = source.prototype[name];
+                Reflect.set(this.prototype, name, Reflect.get(source.prototype, name));
             }
         });
 
         Object.getOwnPropertyNames(source).forEach((name) => {
             if (name !== 'prototype' && name !== 'name' && name !== 'length') {
-                // @ts-ignore
-                this[name] = source[name];
+                Reflect.set(this, name, Reflect.get(source, name));
             }
         });
     }
@@ -129,9 +155,8 @@ export class FUniver extends Disposable {
 
         const initializers = Object.getPrototypeOf(this)[InitializerSymbol];
         if (initializers) {
-            const self = this;
-            initializers.forEach(function (fn: (_injector: Injector) => void) {
-                fn.apply(self, [_injector]);
+            initializers.forEach((fn: (injector: Injector) => void) => {
+                fn.call(this, this._injector);
             });
         }
     }
@@ -279,8 +304,8 @@ export class FUniver extends Disposable {
     }
 
     /**
-     * Dispose the UniverSheet by the `unitId`. The UniverSheet would be unload from the application.
-     * @param unitId The unit id of the UniverSheet.
+     * Disposes the document, workbook, or other Univer unit identified by `unitId`, unloading it from the application.
+     * @param unitId The ID of the unit to dispose.
      * @returns Whether the Univer instance is disposed successfully.
      *
      * @example
@@ -339,6 +364,54 @@ export class FUniver extends Disposable {
     }
 
     /**
+     * Set the theme used by Univer.
+     * @param {Theme} theme - The complete theme to use.
+     * @example
+     * ```ts
+     * import { defaultTheme } from '@univerjs/themes';
+     *
+     * univerAPI.setTheme({
+     *   ...defaultTheme,
+     *   primary: {
+     *     ...defaultTheme.primary,
+     *     600: '#274fee',
+     *   },
+     * });
+     * ```
+     */
+    setTheme(theme: Theme): void {
+        const themeService = this._injector.get(ThemeService);
+        themeService.setTheme(theme);
+    }
+
+    /**
+     * Get the theme currently used by Univer.
+     * @returns {Theme} The current theme.
+     * @example
+     * ```ts
+     * const theme = univerAPI.getCurrentTheme();
+     * console.log(theme.primary[600]);
+     * ```
+     */
+    getCurrentTheme(): Theme {
+        const themeService = this._injector.get(ThemeService);
+        return themeService.getCurrentTheme();
+    }
+
+    /**
+     * Whether Univer is currently using dark mode.
+     * @returns {boolean} Whether dark mode is enabled.
+     * @example
+     * ```ts
+     * const darkMode = univerAPI.isDarkMode();
+     * ```
+     */
+    isDarkMode(): boolean {
+        const themeService = this._injector.get(ThemeService);
+        return themeService.darkMode;
+    }
+
+    /**
      * Toggle dark mode on or off.
      * @param {boolean} isDarkMode - Whether the dark mode is enabled.
      * @example
@@ -382,35 +455,79 @@ export class FUniver extends Disposable {
     }
 
     /**
-     * Register a callback that will be triggered before invoking a command.
-     * @deprecated use `univerAPI.addEvent(univerAPI.Event.BeforeCommandExecute, (event) => {})` instead.
-     * @param {CommandListener} callback The callback.
-     * @returns {IDisposable} The disposable instance.
+     * Set the region used for locale-sensitive formatting.
+     * @param {string} region - A unique region identifier.
+     * @example
+     * ```ts
+     * univerAPI.setRegion('enUS');
+     * ```
      */
-    onBeforeCommandExecute(callback: CommandListener): IDisposable {
-        return this._commandService.beforeCommandExecuted((command, options?: IExecutionOptions) => {
-            callback(command, options);
-        });
+    setRegion(region: string): void {
+        const regionService = this._injector.get(RegionService);
+        regionService.setRegion(region as LocaleType);
     }
 
     /**
-     * Register a callback that will be triggered when a command is invoked.
-     * @deprecated use `univerAPI.addEvent(univerAPI.Event.CommandExecuted, (event) => {})` instead.
-     * @param {CommandListener} callback The callback.
-     * @returns {IDisposable} The disposable instance.
+     * Get the region currently used for locale-sensitive formatting.
+     * @returns {string} The current region identifier.
+     * @example
+     * ```ts
+     * const currentRegion = univerAPI.getCurrentRegion();
+     * console.log(currentRegion);
+     * ```
      */
-    onCommandExecuted(callback: CommandListener): IDisposable {
-        return this._commandService.onCommandExecuted((command, options?: IExecutionOptions) => {
-            callback(command, options);
-        });
+    getCurrentRegion(): string {
+        const regionService = this._injector.get(RegionService);
+        return regionService.getCurrentRegion();
+    }
+
+    /**
+     * Set the current layout direction.
+     * @param {('ltr' | 'rtl')} direction - The layout direction.
+     * @example
+     * ```ts
+     * univerAPI.setDirection('rtl');
+     * ```
+     */
+    setDirection(direction: 'ltr' | 'rtl'): void {
+        const localeService = this._injector.get(LocaleService);
+        localeService.setDirection(direction);
+    }
+
+    /**
+     * Get the current locale.
+     * @returns {string} The current locale identifier.
+     * @example
+     * ```ts
+     * const currentLocale = univerAPI.getCurrentLocale();
+     * console.log(currentLocale);
+     * ```
+     */
+    getCurrentLocale(): string {
+        const localeService = this._injector.get(LocaleService);
+        return localeService.getCurrentLocale();
+    }
+
+    /**
+     * Get the locales for the current locale.
+     * @returns {ILanguagePack | undefined} The locales object for the current locale, it returns undefined if the locales is not loaded.
+     * @example
+     * ```ts
+     * const locales = univerAPI.getLocales();
+     * console.log(locales);
+     * ```
+     */
+    getLocales(): ILanguagePack | undefined {
+        const localeService = this._injector.get(LocaleService);
+        return localeService.getLocales();
     }
 
     /**
      * Execute a command with the given id and parameters.
      * @param id Identifier of the command.
-     * @param params Parameters of this execution.
-     * @param options Options of this execution.
-     * @returns The result of the execution. It is a boolean value by default which indicates the command is executed.
+     * @param [params] Parameters of this execution.
+     * @param [options] Options of this execution.
+     * @returns {Promise<R>} The result of the execution. It is a boolean value by default which indicates the command is executed.
      *
      * @example
      * ```ts
@@ -431,8 +548,8 @@ export class FUniver extends Disposable {
     /**
      * Execute a command with the given id and parameters synchronously.
      * @param id Identifier of the command.
-     * @param params Parameters of this execution.
-     * @param options Options of this execution.
+     * @param [params] Parameters of this execution.
+     * @param [options] Options of this execution.
      * @returns The result of the execution. It is a boolean value by default which indicates the command is executed.
      *
      * @example
@@ -452,31 +569,31 @@ export class FUniver extends Disposable {
     }
 
     /**
-     * Get hooks.
-     * @deprecated use `addEvent` instead.
-     * @returns {FHooks} FHooks instance
+     * Enums exposed by the registered Facade extensions.
      */
-    getHooks(): FHooks {
-        return this._injector.createInstance(FHooks);
-    }
-
     get Enum(): FEnum {
         return FEnum.get();
     }
 
+    /**
+     * Event names to use with `addEvent`.
+     */
     get Event(): FEventName {
         return FEventName.get();
     }
 
+    /**
+     * Utility functions exposed by the registered Facade extensions.
+     */
     get Util(): FUtil {
         return FUtil.get();
     }
 
     /**
      * Add an event listener
-     * @param {string} event key of event
-     * @param {(params: IEventParamConfig[typeof event]) => void} callback callback when event triggered
-     * @returns {Disposable} The Disposable instance, for remove the listener
+     * @param {T} event key of event
+     * @param {(params: IEventParamConfig[T]) => void} callback callback when event triggered
+     * @returns {IDisposable} A disposable that removes the event listener.
      * @example
      * ```ts
      * // Add life cycle changed event listener
@@ -495,9 +612,9 @@ export class FUniver extends Disposable {
 
     /**
      * Fire an event, used in internal only.
-     * @param {string} event key of event
-     * @param {any} params params of event
-     * @returns {boolean} should cancel
+     * @param {T} event key of event
+     * @param {IEventParamConfig[T]} params params of event
+     * @returns {boolean | undefined} The event's `cancel` value after listeners run; `undefined` if it was not set.
      * @example
      * ```ts
      * this.fireEvent(univerAPI.Event.LifeCycleChanged, params);
@@ -507,6 +624,14 @@ export class FUniver extends Disposable {
         return this._eventRegistry.fireEvent(event, params);
     }
 
+    /**
+     * Gets the facade for reading the current user.
+     * @returns {FUserManager} The user manager facade.
+     * @example
+     * ```ts
+     * const user = univerAPI.getUserManager().getCurrentUser();
+     * ```
+     */
     getUserManager(): FUserManager {
         return this._injector.createInstance(FUserManager);
     }
@@ -525,29 +650,42 @@ export class FUniver extends Disposable {
 
     /**
      * Create a new rich text.
-     * @param {IDocumentData} data
      * @returns {RichTextBuilder} The new rich text instance
      * @example
      * ```ts
-     * const richText = univerAPI.newRichText({ body: { dataStream: 'Hello World\r\n' } });
-     * const range = univerAPI.getActiveWorkbook().getActiveSheet().getRange('A1');
-     * range.setRichTextValueForCell(richText);
+     * const richText = univerAPI.newRichText()
+     *   .text('Read ')
+     *   .link('Univer documentation', 'https://docs.univer.ai')
+     *   .text(' for details.');
      * ```
      */
-    newRichText(data?: IDocumentData): RichTextBuilder {
+    newRichText(): RichTextBuilder {
+        return RichTextBuilder.create();
+    }
+
+    /**
+     * Create a rich-text builder from raw Univer document data.
+     *
+     * This is an advanced integration escape hatch for importers and adapters. Application and agent code should use
+     * the fluent builder returned by `newRichText()`.
+     *
+     * @param data Raw Univer document data.
+     * @returns A rich-text builder initialized with the supplied document data.
+     * @advanced
+     */
+    newRichTextFromDocumentData(data: IDocumentData): RichTextBuilder {
         return RichTextBuilder.create(data);
     }
 
     /**
      * Create a new rich text value.
-     * @param {IDocumentData} data - The rich text data
+     *
+     * This is an advanced integration escape hatch for callers that already own Univer document data. Application and
+     * agent code should prefer the fluent value returned by `newRichText()`.
+     *
+     * @param {IDocumentData} data The raw Univer document data.
      * @returns {RichTextValue} The new rich text value instance
-     * @example
-     * ```ts
-     * const richTextValue = univerAPI.newRichTextValue({ body: { dataStream: 'Hello World\r\n' } });
-     * const range = univerAPI.getActiveWorkbook().getActiveSheet().getRange('A1');
-     * range.setRichTextValueForCell(richTextValue);
-     * ```
+     * @advanced
      */
     newRichTextValue(data: IDocumentData): RichTextValue {
         return RichTextValue.create(data);
@@ -555,16 +693,13 @@ export class FUniver extends Disposable {
 
     /**
      * Create a new paragraph style.
-     * @param {IParagraphStyle} style - The paragraph style
+     *
+     * This is an advanced document-model API. Application and agent code should normally use
+     * `newRichText().paragraph({ ... })`.
+     *
+     * @param {IParagraphStyle} [style] The paragraph style
      * @returns {ParagraphStyleBuilder} The new paragraph style instance
-     * @example
-     * ```ts
-     * const richText = univerAPI.newRichText({ body: { dataStream: 'Hello World\r\n' } });
-     * const paragraphStyle = univerAPI.newParagraphStyle({ textStyle: { ff: 'Arial', fs: 12, it: univerAPI.Enum.BooleanNumber.TRUE, bl: univerAPI.Enum.BooleanNumber.TRUE } });
-     * richText.insertParagraph(paragraphStyle);
-     * const range = univerAPI.getActiveWorkbook().getActiveSheet().getRange('A1');
-     * range.setRichTextValueForCell(richText);
-     * ```
+     * @advanced
      */
     newParagraphStyle(style?: IParagraphStyle): ParagraphStyleBuilder {
         return ParagraphStyleBuilder.create(style);
@@ -572,7 +707,7 @@ export class FUniver extends Disposable {
 
     /**
      * Create a new paragraph style value.
-     * @param {IParagraphStyle} style - The paragraph style
+     * @param {IParagraphStyle} [style] - The paragraph style
      * @returns {ParagraphStyleValue} The new paragraph style value instance
      * @example
      * ```ts
@@ -585,7 +720,7 @@ export class FUniver extends Disposable {
 
     /**
      * Create a new text style.
-     * @param {ITextStyle} style - The text style
+     * @param {ITextStyle} [style] - The text style
      * @returns {TextStyleBuilder} The new text style instance
      * @example
      * ```ts
@@ -598,7 +733,7 @@ export class FUniver extends Disposable {
 
     /**
      * Create a new text style value.
-     * @param {ITextStyle} style - The text style
+     * @param {ITextStyle} [style] - The text style
      * @returns {TextStyleValue} The new text style value instance
      * @example
      * ```ts
@@ -611,7 +746,7 @@ export class FUniver extends Disposable {
 
     /**
      * Create a new text decoration.
-     * @param {ITextDecoration} decoration - The text decoration
+     * @param {ITextDecoration} [decoration] - The text decoration
      * @returns {TextDecorationBuilder} The new text decoration instance
      * @example
      * ```ts

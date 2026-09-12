@@ -16,28 +16,52 @@
 
 import type { DocumentDataModel } from '@univerjs/core';
 import type { IRenderContext, IRenderModule } from '@univerjs/engine-render';
-import { Disposable } from '@univerjs/core';
+import { Disposable, Inject } from '@univerjs/core';
 import { neoGetDocObject } from '../basics/component-tools';
 import { VIEWPORT_KEY } from '../basics/docs-view-key';
+import { DocViewScaleService, resolveDocFitPaddingX } from './doc-view-scale';
 
 export class DocPageLayoutService extends Disposable implements IRenderModule {
+    private _bottomReserve = 0;
+
     constructor(
-        private _context: IRenderContext<DocumentDataModel>
+        private _context: IRenderContext<DocumentDataModel>,
+        @Inject(DocViewScaleService) private readonly _docViewScaleService: DocViewScaleService
     ) {
         super();
+    }
+
+    setBottomReserve(height: number): void {
+        const bottomReserve = Math.max(0, height);
+        if (bottomReserve === this._bottomReserve) {
+            return;
+        }
+        this._bottomReserve = bottomReserve;
+        this.calculatePagePosition();
+    }
+
+    resolveSceneHeight(contentHeight: number): number {
+        return contentHeight + this._bottomReserve / Math.max(this._docViewScaleService.getViewScale(), 0.01);
     }
 
     calculatePagePosition() {
         if (this._disposed) return;
 
         const docObject = neoGetDocObject(this._context);
-        const docDataModel = this._context.unit;
-        const zoomRatio = docDataModel.getSettings()?.zoomRatio ?? 1;
+        const viewScale = this._docViewScaleService.getViewScale();
+        const fitOptions = this._docViewScaleService.getOptions();
+        const isStartAlignedFit = fitOptions.mode === 'fit-width' && fitOptions.align === 'start';
         const { document: docsComponent, scene, docBackground } = docObject;
+        if (scene.scaleX !== viewScale || scene.scaleY !== viewScale) {
+            scene.scale(viewScale, viewScale);
+        }
 
         const parent = scene?.getParent();
 
         const { width: docsWidth, height: docsHeight, pageMarginLeft, pageMarginTop } = docsComponent;
+        const horizontalMargin = isStartAlignedFit
+            ? resolveDocFitPaddingX(this._docViewScaleService.getAvailableWidth(), fitOptions.paddingX) / viewScale
+            : pageMarginLeft;
 
         if (parent == null || docsWidth === Number.POSITIVE_INFINITY || docsHeight === Number.POSITIVE_INFINITY) {
             return;
@@ -52,26 +76,26 @@ export class DocPageLayoutService extends Disposable implements IRenderModule {
 
         let scrollToX = Number.POSITIVE_INFINITY;
 
-        if (engineWidth > (docsWidth + pageMarginLeft * 2) * zoomRatio) {
-            docsLeft = engineWidth / 2 - (docsWidth * zoomRatio) / 2;
-            docsLeft /= zoomRatio;
-            sceneWidth = (engineWidth - pageMarginLeft * 2) / zoomRatio;
+        if (engineWidth > (docsWidth + horizontalMargin * 2) * viewScale) {
+            docsLeft = isStartAlignedFit ? horizontalMargin : (engineWidth / 2 - (docsWidth * viewScale) / 2) / viewScale;
+            sceneWidth = (engineWidth - horizontalMargin * 2) / viewScale;
 
             scrollToX = 0;
         } else {
-            docsLeft = pageMarginLeft;
-            sceneWidth = docsWidth + pageMarginLeft * 2;
+            docsLeft = horizontalMargin;
+            sceneWidth = docsWidth + horizontalMargin * 2;
 
-            scrollToX = (sceneWidth - engineWidth / zoomRatio) / 2;
+            scrollToX = 0;
         }
 
         if (engineHeight > docsHeight) {
-            sceneHeight = (engineHeight - pageMarginTop * 2) / zoomRatio;
+            sceneHeight = (engineHeight - pageMarginTop * 2) / viewScale;
         } else {
             sceneHeight = docsHeight + pageMarginTop * 2;
         }
+        sceneHeight = this.resolveSceneHeight(sceneHeight);
 
-        scene.resize(sceneWidth, sceneHeight);
+        scene.transformByState({ width: sceneWidth, height: sceneHeight });
 
         // the engine width is 1, when engine has no container.
         // Use to fix flickering issues into the page.

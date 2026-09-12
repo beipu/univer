@@ -48,8 +48,10 @@ export interface IRectRangeWithStyle extends ITextRangeWithStyle {
     spanEntireTable: boolean;
 }
 
-// Only use in add/replaceTextRanges methods.
-export type ISuccinctDocRangeParam = Pick<ITextRangeWithStyle, 'startOffset' | 'endOffset' | 'segmentId' | 'segmentPage' | 'style' | 'rangeType'>;
+// Only use in add/replaceDocRanges methods.
+export type ISuccinctDocRangeParam =
+    Pick<ITextRangeWithStyle, 'startOffset' | 'endOffset' | 'segmentId' | 'segmentPage' | 'style' | 'rangeType'> &
+    Partial<Pick<ITextRangeWithStyle, 'collapsed' | 'direction' | 'isActive' | 'startNodePosition' | 'endNodePosition'>>;
 
 export interface IDocSelectionInnerParam {
     textRanges: ITextRangeWithStyle[];

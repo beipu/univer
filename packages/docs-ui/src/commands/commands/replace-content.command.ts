@@ -17,9 +17,23 @@
 import type { DocumentDataModel, ICommand, IDocumentBody, IDocumentData, IMutationInfo, ITextRange, JSONXActions } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { ITextRangeWithStyle } from '@univerjs/engine-render';
-import { BuildTextUtils, CommandType, ICommandService, IUndoRedoService, IUniverInstanceService, JSONX, TextX, TextXActionType, ThemeService, Tools, UniverInstanceType } from '@univerjs/core';
+import {
+    BuildTextUtils,
+    CommandType,
+    getRichTextEditPath,
+    ICommandService,
+    IUndoRedoService,
+    IUniverInstanceService,
+    JSONX,
+    TextX,
+    TextXActionType,
+    ThemeService,
+    Tools,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
-import { getRichTextEditPath } from '../util';
+import { getCommandSkeleton } from '../util';
+import { getReplaceDocRangesActions } from './clipboard.inner.command';
 
 export interface IReplaceSnapshotCommandParams {
     unitId: string;
@@ -32,14 +46,14 @@ export interface IReplaceSnapshotCommandParams {
 export const ReplaceSnapshotCommand: ICommand<IReplaceSnapshotCommandParams> = {
     id: 'doc.command-replace-snapshot',
     type: CommandType.COMMAND,
-    // eslint-disable-next-line max-lines-per-function, complexity
+
     handler: (accessor, params: IReplaceSnapshotCommandParams) => {
         const { unitId, snapshot, textRanges, segmentId = '', options } = params;
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const commandService = accessor.get(ICommandService);
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
         const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
-        const prevSnapshot = docDataModel?.getSelfOrHeaderFooterModel(segmentId).getSnapshot();
+        const prevSnapshot = docDataModel?.getSelfOrHeaderFooterModel(segmentId)?.getSnapshot();
 
         if (docDataModel == null || prevSnapshot == null) {
             return false;
@@ -84,69 +98,25 @@ export const ReplaceSnapshotCommand: ICommand<IReplaceSnapshotCommandParams> = {
             doMutation.params.options = options;
         }
 
-        const rawActions: JSONXActions = [];
-
-        const jsonX = JSONX.getInstance();
-
-        if (!Tools.diffValue(prevDocumentStyle, documentStyle)) {
-            const actions = jsonX.replaceOp(['documentStyle'], prevDocumentStyle, documentStyle);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(body, prevBody)) {
-            const actions = jsonX.replaceOp(['body'], prevBody, body);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(tableSource, prevTableSource)) {
-            const actions = jsonX.replaceOp(['tableSource'], prevTableSource, tableSource);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(footers, prevFooters)) {
-            const actions = jsonX.replaceOp(['footers'], prevFooters, footers);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(headers, prevHeaders)) {
-            const actions = jsonX.replaceOp(['headers'], prevHeaders, headers);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(lists, prevLists)) {
-            const actions = jsonX.replaceOp(['lists'], prevLists, lists);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(drawings, prevDrawings)) {
-            const actions = jsonX.replaceOp(['drawings'], prevDrawings, drawings);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        if (!Tools.diffValue(drawingsOrder, prevDrawingsOrder)) {
-            const actions = jsonX.replaceOp(['drawingsOrder'], prevDrawingsOrder, drawingsOrder);
-            if (actions != null) {
-                rawActions.push(actions);
-            }
-        }
-
-        doMutation.params.actions = rawActions.reduce((acc, cur) => {
-            return JSONX.compose(acc, cur as JSONXActions);
-        }, null as JSONXActions);
+        doMutation.params.actions = buildReplaceSnapshotActions({
+            body: prevBody,
+            documentStyle: prevDocumentStyle,
+            tableSource: prevTableSource,
+            footers: prevFooters,
+            headers: prevHeaders,
+            lists: prevLists,
+            drawings: prevDrawings,
+            drawingsOrder: prevDrawingsOrder,
+        } as IDocumentData, {
+            body,
+            documentStyle,
+            tableSource,
+            footers,
+            headers,
+            lists,
+            drawings,
+            drawingsOrder,
+        } as IDocumentData);
 
         const result = commandService.syncExecuteCommand<
             IRichTextEditingMutationParams,
@@ -158,61 +128,59 @@ export const ReplaceSnapshotCommand: ICommand<IReplaceSnapshotCommandParams> = {
 
 };
 
-interface IReplaceContentCommandParams {
-    unitId: string;
-    body: IDocumentBody; // Do not contain `\r\n` at the end.
-    textRanges: ITextRangeWithStyle[];
-    segmentId?: string;
-    options: { [key: string]: boolean };
+export function buildReplaceSnapshotActions(previousSnapshot: IDocumentData, snapshot: IDocumentData): JSONXActions | null {
+    const jsonX = JSONX.getInstance();
+    const rawActions: JSONXActions[] = [];
+
+    const bodyAction = buildReplaceSnapshotBodyAction(previousSnapshot.body, snapshot.body);
+    if (bodyAction) {
+        rawActions.push(bodyAction);
+    }
+
+    collectTopLevelReplaceAction(jsonX, rawActions, ['documentStyle'], previousSnapshot.documentStyle, snapshot.documentStyle);
+    collectTopLevelReplaceAction(jsonX, rawActions, ['tableSource'], previousSnapshot.tableSource, snapshot.tableSource);
+    collectTopLevelReplaceAction(jsonX, rawActions, ['footers'], previousSnapshot.footers, snapshot.footers);
+    collectTopLevelReplaceAction(jsonX, rawActions, ['headers'], previousSnapshot.headers, snapshot.headers);
+    collectTopLevelReplaceAction(jsonX, rawActions, ['lists'], previousSnapshot.lists, snapshot.lists);
+    collectTopLevelReplaceAction(jsonX, rawActions, ['drawings'], previousSnapshot.drawings, snapshot.drawings);
+    collectTopLevelReplaceAction(jsonX, rawActions, ['drawingsOrder'], previousSnapshot.drawingsOrder, snapshot.drawingsOrder);
+
+    return rawActions.reduce((acc, cur) => JSONX.compose(acc, cur as JSONXActions), null as JSONXActions);
 }
 
-// Replace all content with new body, and reserve undo/redo stack.
-/**
- * @deprecated please use ReplaceSnapshotCommand instead.
- */
-export const ReplaceContentCommand: ICommand<IReplaceContentCommandParams> = {
-    id: 'doc.command-replace-content',
+function buildReplaceSnapshotBodyAction(previousBody: IDocumentBody | undefined, body: IDocumentBody | undefined): JSONXActions | null {
+    if (!previousBody || !body || Tools.diffValue(previousBody, body)) {
+        return null;
+    }
 
-    type: CommandType.COMMAND,
+    const textX = new TextX();
+    if (previousBody.dataStream.length > 0) {
+        textX.delete(previousBody.dataStream.length);
+    }
 
-    handler: async (accessor, params: IReplaceContentCommandParams) => {
-        const { unitId, body, textRanges, segmentId = '', options } = params;
-        const univerInstanceService = accessor.get(IUniverInstanceService);
-        const commandService = accessor.get(ICommandService);
-        const docSelectionManagerService = accessor.get(DocSelectionManagerService);
+    if (body.dataStream.length > 0) {
+        textX.insert(body.dataStream.length, body);
+    }
 
-        const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
-        const prevBody = docDataModel?.getSelfOrHeaderFooterModel(segmentId).getSnapshot().body;
+    return JSONX.getInstance().editOp(textX.serialize(), ['body']);
+}
 
-        if (docDataModel == null || prevBody == null) {
-            return false;
-        }
+function collectTopLevelReplaceAction(
+    jsonX: JSONX,
+    rawActions: JSONXActions[],
+    path: string[],
+    previousValue: unknown,
+    value: unknown
+): void {
+    if (Tools.diffValue(previousValue, value)) {
+        return;
+    }
 
-        const doMutation = getMutationParams(unitId, segmentId, docDataModel, prevBody, body);
-
-        doMutation.params.textRanges = textRanges;
-        if (options) {
-            doMutation.params.options = options;
-        }
-
-        // Handle body is equal to prevBody.
-        if (doMutation.params.actions == null && textRanges) {
-            docSelectionManagerService.replaceDocRanges(textRanges, {
-                unitId,
-                subUnitId: unitId,
-            }, false);
-
-            return true;
-        }
-
-        const result = commandService.syncExecuteCommand<
-            IRichTextEditingMutationParams,
-            IRichTextEditingMutationParams
-        >(doMutation.id, doMutation.params);
-
-        return Boolean(result);
-    },
-};
+    const action = jsonX.replaceOp(path, previousValue, value);
+    if (action != null) {
+        rawActions.push(action);
+    }
+}
 
 interface ICoverContentCommandParams {
     unitId: string;
@@ -233,7 +201,7 @@ export const CoverContentCommand: ICommand<ICoverContentCommandParams> = {
         const commandService = accessor.get(ICommandService);
         const undoRedoService = accessor.get(IUndoRedoService);
 
-        const docDatModel = univerInstanceService.getUniverDocInstance(unitId);
+        const docDatModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
 
         const prevBody = docDatModel?.getSnapshot().body;
 
@@ -303,9 +271,11 @@ function getMutationParams(unitId: string, segmentId: string, docDatModel: Docum
 
 export interface IReplaceSelectionCommandParams {
     unitId: string;
+    historyAction?: string;
     selection?: ITextRange;
     body: IDocumentBody; // Do not contain `\r\n` at the end.
     textRanges?: ITextRangeWithStyle[];
+    segmentId?: string;
 }
 
 export const ReplaceSelectionCommand: ICommand<IReplaceSelectionCommandParams> = {
@@ -316,7 +286,7 @@ export const ReplaceSelectionCommand: ICommand<IReplaceSelectionCommandParams> =
             return false;
         }
         const commandService = accessor.get(ICommandService);
-        const { unitId, body: insertBody, textRanges } = params;
+        const { unitId, body: insertBody, historyAction, textRanges, segmentId } = params;
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId);
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
@@ -324,36 +294,87 @@ export const ReplaceSelectionCommand: ICommand<IReplaceSelectionCommandParams> =
             return false;
         }
 
-        const body = docDataModel.getBody();
         const selection = params.selection ?? docSelectionManagerService.getActiveTextRange();
+        const targetSegmentId = segmentId ?? docSelectionManagerService.getActiveTextRange()?.segmentId ?? '';
+        const body = docDataModel.getSelfOrHeaderFooterModel(targetSegmentId)?.getBody();
         if (!selection || !body) {
             return false;
         }
+
+        const selectionInfo = docSelectionManagerService.getSelectionInfo();
+        const selectedTextRanges = params.selection
+            ? [params.selection]
+            : docSelectionManagerService.getTextRanges() ?? [];
+        const selectedRectRanges = params.selection
+            ? []
+            : docSelectionManagerService.getRectRanges() ?? [];
+        const hasSelectedStructure = !selection.collapsed && (
+            Boolean(body.blockRanges?.length) ||
+            Boolean(body.columnGroups?.length) ||
+            Boolean(body.customBlocks?.length) ||
+            Boolean(body.tables?.length)
+        );
+        const hasComplexSelection = hasSelectedStructure || selectedRectRanges.length > 0 || selectedTextRanges.length > 1 || selectionInfo?.options?.wholeDocument === true;
+        const docSkeletonManagerService = hasComplexSelection ? getCommandSkeleton(accessor, unitId) : null;
+        const replacement = docSkeletonManagerService
+            ? getReplaceDocRangesActions(
+                selectedTextRanges,
+                selectedRectRanges,
+                docDataModel,
+                docSkeletonManagerService.getViewModel(),
+                targetSegmentId,
+                insertBody,
+                selectionInfo?.options?.wholeDocument === true
+            )
+            : null;
+        const insertOffset = replacement?.insertOffset ?? selection.startOffset;
 
         const doMutation: IMutationInfo<IRichTextEditingMutationParams> = {
             id: RichTextEditingMutation.id,
             params: {
                 unitId,
+                historyAction,
                 actions: [],
-                textRanges,
+                textRanges: textRanges ?? [{
+                    startOffset: insertOffset + insertBody.dataStream.length,
+                    endOffset: insertOffset + insertBody.dataStream.length,
+                    collapsed: true,
+                    style: docSelectionManagerService.getActiveTextRange()?.style,
+                    segmentId: targetSegmentId,
+                }],
+                segmentId: targetSegmentId,
                 debounce: true,
+                trigger: ReplaceSelectionCommand.id,
             },
         };
 
-        const textX = new TextX();
-        const jsonX = JSONX.getInstance();
-        // delete
-        textX.push(...BuildTextUtils.selection.delete([selection], body, 0, insertBody));
-        doMutation.params.actions = jsonX.editOp(textX.serialize());
+        if (replacement) {
+            doMutation.params.actions = replacement.actions;
+        } else {
+            const textX = new TextX();
+            textX.push(...BuildTextUtils.selection.delete([selection], body, 0, insertBody));
+            doMutation.params.actions = JSONX.getInstance().editOp(
+                textX.serialize(),
+                getRichTextEditPath(docDataModel, targetSegmentId)
+            );
+        }
         return commandService.syncExecuteCommand(doMutation.id, doMutation.params);
     },
 };
 
-export const ReplaceTextRunsCommand: ICommand<IReplaceContentCommandParams> = {
+interface IReplaceTextRunsCommandParams {
+    unitId: string;
+    body: IDocumentBody; // Do not contain `\r\n` at the end.
+    textRanges: ITextRangeWithStyle[];
+    segmentId?: string;
+    options: { [key: string]: boolean };
+}
+
+export const ReplaceTextRunsCommand: ICommand<IReplaceTextRunsCommandParams> = {
     id: 'doc.command.replace-text-runs',
     type: CommandType.COMMAND,
 
-    handler: (accessor, params: IReplaceContentCommandParams) => {
+    handler: (accessor, params: IReplaceTextRunsCommandParams) => {
         const { unitId, body, textRanges, segmentId = '', options } = params;
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const commandService = accessor.get(ICommandService);
@@ -361,7 +382,7 @@ export const ReplaceTextRunsCommand: ICommand<IReplaceContentCommandParams> = {
         // const docSelectionManagerService = accessor.get(DocSelectionManagerService);
 
         const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
-        const prevBody = docDataModel?.getSelfOrHeaderFooterModel(segmentId).getSnapshot().body;
+        const prevBody = docDataModel?.getSelfOrHeaderFooterModel(segmentId)?.getBody();
 
         if (docDataModel == null || prevBody == null) {
             return false;

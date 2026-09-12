@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { LocaleKey } from '../locale/types';
 import { LocaleService } from '@univerjs/core';
 import { useDependency } from '@univerjs/ui';
 
@@ -24,11 +25,11 @@ export const QuickInsertPlaceholder = () => {
     return (
         <div
             className={`
-              univer-flex univer-h-full univer-items-center univer-justify-center univer-rounded-lg univer-bg-white
+              univer-flex univer-h-full univer-items-center univer-justify-center univer-rounded-lg univer-bg-gray-0
               univer-px-12 univer-py-6 univer-text-gray-400 univer-shadow-lg
             `}
         >
-            <span>{localeService.t('docQuickInsert.placeholder')}</span>
+            <span>{localeService.t<LocaleKey>('docs-quick-insert-ui.placeholder')}</span>
         </div>
     );
 };

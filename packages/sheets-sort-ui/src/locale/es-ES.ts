@@ -17,7 +17,7 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-sort': {
+    'sheets-sort-ui': {
         general: {
             sort: 'Ordenar',
             'sort-asc': 'Ascendente',
@@ -41,8 +41,12 @@ const locale: typeof enUS = {
             'sort-reminder-no': 'Mantener el rango de ordenación',
             'first-row-check': 'La primera fila no participa en la ordenación',
             'add-condition': 'Agregar condición',
+            'delete-condition': 'Eliminar condición',
             cancel: 'Cancelar',
             confirm: 'Confirmar',
+        },
+        info: {
+            tooltip: 'Información sobre la herramienta',
         },
     },
 };

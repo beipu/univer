@@ -14,55 +14,80 @@
  * limitations under the License.
  */
 
-import { ObjectMatrix } from '@univerjs/core';
+import type { ICellData, Nullable } from '@univerjs/core';
+import type { BaseAstNode } from '../../engine/ast-node/base-ast-node';
+import {
+    ContextService,
+    DesktopLogService,
+    IContextService,
+    ILogService,
+    Injector,
+    IUniverInstanceService,
+    LocaleService,
+    ObjectMatrix,
+    UniverInstanceService,
+} from '@univerjs/core';
 import { describe, expect, it } from 'vitest';
 import { ErrorType } from '../../basics/error-type';
+import { LexerTreeBuilder } from '../../engine/analysis/lexer-tree-builder';
 import { createNewArray } from '../../engine/utils/array-object';
-import { NumberValueObject, StringValueObject } from '../../engine/value-object/primitive-object';
-import { FormulaExecutedStateType, FormulaExecuteStageType, FormulaRuntimeService } from '../runtime.service';
+import { NullValueObject, NumberValueObject, StringValueObject } from '../../engine/value-object/primitive-object';
+import { FormulaDataModel } from '../../models/formula-data.model';
+import { FormulaCurrentConfigService, IFormulaCurrentConfigService } from '../current-data.service';
+import { HyperlinkEngineFormulaService, IHyperlinkEngineFormulaService } from '../hyperlink-engine-formula.service';
+import { FormulaExecutedStateType, FormulaExecuteStageType, FormulaRuntimeService, IFormulaRuntimeService } from '../runtime.service';
+import { ISheetRowFilteredService, SheetRowFilteredService } from '../sheet-row-filtered.service';
 
 function createRuntimeService() {
-    const unitDataMatrix = new ObjectMatrix<any>();
-    const arrayFormulaCellData = new ObjectMatrix<any>();
+    const unitDataMatrix = new ObjectMatrix<ICellData>();
     const arrayFormulaRange = {
         unit: {
             sheet: {},
         },
     };
 
-    const currentConfigService = {
-        getUnitData: () => ({
+    const injector = new Injector();
+    injector.add([ILogService, { useClass: DesktopLogService }]);
+    injector.add([IContextService, { useClass: ContextService }]);
+    injector.add([IUniverInstanceService, { useClass: UniverInstanceService }]);
+    injector.add([LocaleService]);
+    injector.add([LexerTreeBuilder]);
+    injector.add([FormulaDataModel]);
+    injector.add([ISheetRowFilteredService, { useClass: SheetRowFilteredService }]);
+    injector.add([IFormulaCurrentConfigService, { useClass: FormulaCurrentConfigService }]);
+    injector.add([IHyperlinkEngineFormulaService, { useClass: HyperlinkEngineFormulaService }]);
+    injector.add([IFormulaRuntimeService, { useClass: FormulaRuntimeService }]);
+    const currentConfigService = injector.get(IFormulaCurrentConfigService);
+    currentConfigService.load({
+        allUnitData: {
             unit: {
                 sheet: {
                     cellData: unitDataMatrix,
+                    columnCount: 20,
+                    columnData: {},
+                    rowCount: 20,
+                    rowData: {},
                 },
             },
-        }),
-        getArrayFormulaCellData: () => ({
-            unit: {
-                sheet: arrayFormulaCellData,
-            },
-        }),
-        getArrayFormulaRange: () => arrayFormulaRange,
-        getDirtyRanges: () => [],
-    };
-
-    const hyperlinkEngineFormulaService = {
-        generateCellValue: (url: string, text: string) => ({
-            v: text,
-            p: { url },
-        }),
-    };
-
-    const runtime = new FormulaRuntimeService(
-        currentConfigService as never,
-        hyperlinkEngineFormulaService as never
-    );
+        },
+        unitStylesData: {},
+        unitSheetNameMap: { unit: { sheet: 'Sheet1' } },
+        formulaData: {},
+        arrayFormulaCellData: { unit: { sheet: {} } },
+        arrayFormulaRange,
+        forceCalculate: false,
+        dirtyRanges: [],
+        dirtyNameMap: {},
+        dirtyDefinedNameMap: {},
+        dirtyUnitFeatureMap: {},
+        dirtyUnitOtherFormulaMap: {},
+    });
+    const runtime = injector.get(IFormulaRuntimeService) as FormulaRuntimeService;
 
     return {
         runtime,
         unitDataMatrix,
-        arrayFormulaCellData,
+        arrayFormulaCellData: currentConfigService.getArrayFormulaCellData().unit!.sheet!,
         arrayFormulaRange,
     };
 }
@@ -124,7 +149,17 @@ describe('FormulaRuntimeService', () => {
         expect(runtime.currentSubUnitId).toBe('sheet');
         expect(runtime.currentUnitId).toBe('unit');
 
-        const lambdaVar = new Map<string, any>([['x', null]]);
+        expect(runtime.hasFunctionRefInfoOverride()).toBe(false);
+        const restoreRefInfo = runtime.setFunctionRefInfoOverride(1, 2);
+        expect(runtime.hasFunctionRefInfoOverride()).toBe(true);
+        expect(runtime.currentRowCount).toBe(1);
+        expect(runtime.currentColumnCount).toBe(2);
+        restoreRefInfo();
+        expect(runtime.hasFunctionRefInfoOverride()).toBe(false);
+        expect(runtime.currentRowCount).toBe(99);
+        expect(runtime.currentColumnCount).toBe(88);
+
+        const lambdaVar = new Map<string, Nullable<BaseAstNode>>([['x', null]]);
         runtime.registerFunctionDefinitionPrivacyVar('lambda-1', lambdaVar);
         expect(runtime.getFunctionDefinitionPrivacyVar('lambda-1')).toBe(lambdaVar);
         runtime.clearFunctionDefinitionPrivacyVar();
@@ -191,12 +226,9 @@ describe('FormulaRuntimeService', () => {
         });
         runtime.setRuntimeData(hyperlinkValue as never);
 
-        expect(runtime.getUnitData().unit?.sheet?.getValue(0, 0)).toEqual({
-            v: 'Open',
-            p: {
-                url: 'https://example.com',
-            },
-        });
+        const cell = runtime.getUnitData().unit?.sheet?.getValue(0, 0);
+        expect(cell?.p?.body?.dataStream).toBe('Open\r\n');
+        expect(cell?.p?.body?.customRanges?.[0]?.properties?.url).toBe('https://example.com');
     });
 
     it('should handle single-cell and normal array spill write', () => {
@@ -206,6 +238,11 @@ describe('FormulaRuntimeService', () => {
         const oneCellArray = createNewArray([[NumberValueObject.create(5)]], 1, 1);
         runtime.setRuntimeData(oneCellArray as never);
         expect(runtime.getUnitData().unit?.sheet?.getValue(1, 1)?.v).toBe(5);
+
+        runtime.setCurrent(2, 2, 10, 10, 'sheet', 'unit');
+        const blankOneCellArray = createNewArray([[NullValueObject.create()]], 1, 1);
+        runtime.setRuntimeData(blankOneCellArray as never);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(2, 2)?.v).toBe(0);
 
         runtime.setCurrent(3, 3, 10, 10, 'sheet', 'unit');
         const twoByTwo = createNewArray(
@@ -245,6 +282,178 @@ describe('FormulaRuntimeService', () => {
         expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(9, 9)?.v).toBe(ErrorType.SPILL);
     });
 
+    it('should return #VALUE when a declared single-cell array formula produces multiple cells', () => {
+        const { runtime, arrayFormulaRange } = createRuntimeService();
+        arrayFormulaRange.unit.sheet = {
+            1: {
+                1: {
+                    startRow: 1,
+                    startColumn: 1,
+                    endRow: 1,
+                    endColumn: 1,
+                },
+            },
+        };
+
+        runtime.setCurrent(1, 1, 10, 10, 'sheet', 'unit');
+        const twoByTwo = createNewArray(
+            [
+                [NumberValueObject.create(1), NumberValueObject.create(2)],
+                [NumberValueObject.create(3), NumberValueObject.create(4)],
+            ],
+            2,
+            2
+        );
+
+        runtime.setRuntimeData(twoByTwo as never);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(1, 1)?.v).toBe(ErrorType.VALUE);
+        expect(runtime.getRuntimeClearArrayFormulaCellData().unit?.sheet?.getValue(1, 1)?.v).toBe(ErrorType.VALUE);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(1, 1)?.v).toBe(ErrorType.VALUE);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(1, 2)).toBeUndefined();
+    });
+
+    it('should not treat previous cells of the same array formula as spill blockers', () => {
+        const { runtime, unitDataMatrix, arrayFormulaCellData, arrayFormulaRange } = createRuntimeService();
+        arrayFormulaRange.unit.sheet = {
+            3: {
+                3: {
+                    startRow: 3,
+                    startColumn: 3,
+                    endRow: 4,
+                    endColumn: 4,
+                },
+            },
+        };
+        unitDataMatrix.setValue(3, 4, { v: 12 });
+        arrayFormulaCellData.setValue(3, 4, { v: 12 });
+
+        runtime.setCurrent(3, 3, 10, 10, 'sheet', 'unit');
+        const twoByTwo = createNewArray(
+            [
+                [NumberValueObject.create(11), NumberValueObject.create(12)],
+                [NumberValueObject.create(21), NumberValueObject.create(22)],
+            ],
+            2,
+            2
+        );
+
+        runtime.setRuntimeData(twoByTwo as never);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 3)?.v).toBe(11);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(3, 4)?.v).toBe(12);
+    });
+
+    it('should return #SPILL when a real value is entered into the previous array formula range', () => {
+        const { runtime, unitDataMatrix, arrayFormulaCellData, arrayFormulaRange } = createRuntimeService();
+        arrayFormulaRange.unit.sheet = {
+            3: {
+                3: {
+                    startRow: 3,
+                    startColumn: 3,
+                    endRow: 4,
+                    endColumn: 4,
+                },
+            },
+        };
+        unitDataMatrix.setValue(3, 4, { v: 12 });
+        unitDataMatrix.setValue(4, 3, { v: 21 });
+        unitDataMatrix.setValue(4, 4, { v: 111 });
+        arrayFormulaCellData.setValue(3, 3, { v: 11 });
+        arrayFormulaCellData.setValue(3, 4, { v: 12 });
+        arrayFormulaCellData.setValue(4, 3, { v: 21 });
+
+        runtime.setCurrent(3, 3, 10, 10, 'sheet', 'unit');
+        const twoByTwo = createNewArray(
+            [
+                [NumberValueObject.create(11), NumberValueObject.create(12)],
+                [NumberValueObject.create(21), NumberValueObject.create(22)],
+            ],
+            2,
+            2
+        );
+
+        runtime.setRuntimeData(twoByTwo as never);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 3)?.v).toBe(ErrorType.SPILL);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 4)).toBeNull();
+        expect(runtime.getUnitData().unit?.sheet?.getValue(4, 3)).toBeNull();
+        expect(runtime.getUnitData().unit?.sheet?.getValue(4, 4)?.v).toBe(111);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(3, 3)?.v).toBe(ErrorType.SPILL);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(4, 4)).toBeUndefined();
+    });
+
+    it('should not mark real spill blockers as array formula cell data', () => {
+        const { runtime, unitDataMatrix, arrayFormulaCellData, arrayFormulaRange } = createRuntimeService();
+        arrayFormulaRange.unit.sheet = {
+            3: {
+                3: {
+                    startRow: 3,
+                    startColumn: 3,
+                    endRow: 4,
+                    endColumn: 4,
+                },
+            },
+        };
+        unitDataMatrix.setValue(3, 4, { v: 12 });
+        unitDataMatrix.setValue(4, 3, { v: 222 });
+        unitDataMatrix.setValue(4, 4, { v: 111 });
+        arrayFormulaCellData.setValue(3, 3, { v: ErrorType.SPILL });
+        arrayFormulaCellData.setValue(3, 4, { v: 12 });
+
+        runtime.setCurrent(3, 3, 10, 10, 'sheet', 'unit');
+        const twoByTwo = createNewArray(
+            [
+                [NumberValueObject.create(11), NumberValueObject.create(12)],
+                [NumberValueObject.create(21), NumberValueObject.create(22)],
+            ],
+            2,
+            2
+        );
+
+        runtime.setRuntimeData(twoByTwo as never);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 3)?.v).toBe(ErrorType.SPILL);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 4)).toBeNull();
+        expect(runtime.getUnitData().unit?.sheet?.getValue(4, 3)?.v).toBe(222);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(4, 4)?.v).toBe(111);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(3, 3)?.v).toBe(ErrorType.SPILL);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(4, 3)).toBeUndefined();
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(4, 4)).toBeUndefined();
+    });
+
+    it('should preserve a real blocker even when stale array formula cell data still has the edited cell', () => {
+        const { runtime, unitDataMatrix, arrayFormulaCellData, arrayFormulaRange } = createRuntimeService();
+        arrayFormulaRange.unit.sheet = {
+            3: {
+                3: {
+                    startRow: 3,
+                    startColumn: 3,
+                    endRow: 4,
+                    endColumn: 4,
+                },
+            },
+        };
+        unitDataMatrix.setValue(3, 4, { v: 12 });
+        unitDataMatrix.setValue(4, 3, { v: 222 });
+        arrayFormulaCellData.setValue(3, 3, { v: 11 });
+        arrayFormulaCellData.setValue(3, 4, { v: 12 });
+        arrayFormulaCellData.setValue(4, 3, { v: 21 });
+
+        runtime.setCurrent(3, 3, 10, 10, 'sheet', 'unit');
+        const twoByTwo = createNewArray(
+            [
+                [NumberValueObject.create(11), NumberValueObject.create(12)],
+                [NumberValueObject.create(21), NumberValueObject.create(22)],
+            ],
+            2,
+            2
+        );
+
+        runtime.setRuntimeData(twoByTwo as never);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 3)?.v).toBe(ErrorType.SPILL);
+        expect(runtime.getUnitData().unit?.sheet?.getValue(3, 4)).toBeNull();
+        expect(runtime.getUnitData().unit?.sheet?.getValue(4, 3)?.v).toBe(222);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(3, 3)?.v).toBe(ErrorType.SPILL);
+        expect(runtime.getRuntimeArrayFormulaCellData().unit?.sheet?.getValue(4, 3)).toBeUndefined();
+    });
+
     it('should manage feature caches and embedded map', () => {
         const { runtime } = createRuntimeService();
         runtime.setCurrent(4, 5, 20, 20, 'sheet', 'unit');
@@ -258,45 +467,6 @@ describe('FormulaRuntimeService', () => {
         expect(runtime.getRuntimeFeatureRange()['feature-a']).toEqual({ unit: { sheet: [] } });
         expect(runtime.getRuntimeFeatureCellData()['feature-a']).toEqual({ unit: {} });
         expect(runtime.getDependencyTreeModelData()).toEqual([{ treeId: 1 }]);
-    });
-
-    it('should evaluate helper methods for range, overlap and dirty checks', () => {
-        const { runtime, arrayFormulaRange } = createRuntimeService();
-
-        expect((runtime as any)._arrayCellHasData(null)).toBe(false);
-        expect((runtime as any)._arrayCellHasData({})).toBe(false);
-        expect((runtime as any)._arrayCellHasData({ v: 0 })).toBe(true);
-
-        expect((runtime as any)._isInArrayFormulaRange(null, 1, 1)).toBe(false);
-        expect((runtime as any)._isInArrayFormulaRange({ startRow: 0, endRow: 2, startColumn: 0, endColumn: 2 }, 1, 1)).toBe(true);
-        expect((runtime as any)._checkIfArrayFormulaExceeded(5, 5, { startRow: 0, endRow: 5, startColumn: 0, endColumn: 1 })).toBe(true);
-        expect((runtime as any)._checkIfArrayFormulaExceeded(5, 5, { startRow: 0, endRow: 4, startColumn: 0, endColumn: 4 })).toBe(false);
-
-        runtime.setCurrent(0, 0, 10, 10, 'sheet', 'unit');
-        runtime.setRuntimeData(NumberValueObject.create(123) as never);
-        arrayFormulaRange.unit.sheet = {
-            0: {
-                0: {
-                    startRow: 0,
-                    startColumn: 0,
-                    endRow: 1,
-                    endColumn: 1,
-                },
-            },
-            5: {
-                5: {
-                    startRow: 5,
-                    startColumn: 5,
-                    endRow: 6,
-                    endColumn: 6,
-                },
-            },
-        };
-
-        expect((runtime as any)._isInOtherArrayFormulaRange('unit', 'sheet', 5, 5, 0, 0)).toBe(true);
-        expect((runtime as any)._isInOtherArrayFormulaRange('unit', 'sheet', 5, 5, 8, 8)).toBe(false);
-
-        expect((runtime as any)._isInDirtyRange('unit', 'sheet', 1, 1)).toBe(true);
     });
 
     it('should dispose and clear runtime feature caches', () => {

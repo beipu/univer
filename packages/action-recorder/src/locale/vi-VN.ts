@@ -18,12 +18,21 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     'action-recorder': {
+        panel: {
+            recording: 'Đang ghi...',
+            startRecording: 'Bắt đầu ghi',
+            cancel: 'Hủy',
+            close: 'Đóng',
+            save: 'Lưu',
+            start: 'Bắt đầu',
+            startWithId: 'Bắt đầu (N)',
+        },
         menu: {
-            title: 'Record Actions',
-            record: 'Record Actions...',
-            'replay-local': 'Replace Local Record...',
-            'replay-local-name': 'Replace Local Record by Subunit...',
-            'replay-local-active': 'Replace Local Record by Current Subunit...',
+            title: 'Ghi hành động',
+            record: 'Ghi hành động...',
+            'replay-local': 'Thay bản ghi cục bộ...',
+            'replay-local-name': 'Thay bản ghi cục bộ theo bộ phận...',
+            'replay-local-active': 'Thay bản ghi cục bộ theo bộ phận hiện tại...',
         },
     },
 };

@@ -29,7 +29,7 @@ import type {
     ITransformState,
     LocaleService,
 } from '@univerjs/core';
-
+import type { IDocumentCompatibilityPolicy } from '../components/docs/document-compatibility';
 import type { DataStreamTreeNode } from '../components/docs/view-model/data-stream-tree-node';
 import type { DocumentViewModel } from '../components/docs/view-model/document-view-model';
 import type {
@@ -94,6 +94,7 @@ export interface IFontLocale {
 export interface IDocsConfig extends IReferenceSource, IDocumentLayout {
     localeService: LocaleService;
     documentTextStyle?: ITextStyle;
+    documentCompatibilityPolicy?: IDocumentCompatibilityPolicy;
     headerTreeMap: Map<string, DocumentViewModel>;
     footerTreeMap: Map<string, DocumentViewModel>;
 }
@@ -111,6 +112,10 @@ export interface IFooterIds {
 }
 
 export interface ISectionBreakConfig extends IDocStyleBase, ISectionBreakBase, IDocsConfig {
+    sectionId: string;
+    /** Cell continuation pages retain their segment and physical row-slice budgets. */
+    cellTableId?: string;
+    cellPageHeights?: readonly number[];
     headerIds?: IHeaderIds;
     footerIds?: IFooterIds;
     useFirstPageHeaderFooter?: BooleanNumber;
@@ -127,8 +132,22 @@ export interface IParagraphTableCache {
 
 export interface IParagraphConfig {
     paragraphIndex: number;
+    isInsideTable?: boolean;
+    documentCompatibilityPolicy?: IDocumentCompatibilityPolicy;
+    useWordStyleLineHeight?: boolean;
+    usePptxFontSizeLineHeight?: boolean;
+    usePptxNominalFontLineHeight?: boolean;
+    usePptxCompatibleLineSpacing?: boolean;
+    usePptxPercentageLineSpacing?: boolean;
+    pptxPercentageFontSize?: number;
+    usePptxNormAutofitLineHeight?: boolean;
+    pptxEmptyParagraphFontSize?: number;
+    pptxHasExplicitEndParaFontSize?: boolean;
+    sumPptxParagraphSpacing?: boolean;
+    docxFallbackAnchorLeft?: IParagraphStyle['indentStart'];
     paragraphNonInlineSkeDrawings?: Map<string, IDocumentSkeletonDrawing>;
     paragraphInlineSkeDrawings?: Map<string, IDocumentSkeletonDrawing>;
+    topBottomCustomBlockFlowBottom?: number;
     skeTablesInParagraph?: IParagraphTableCache[];
     // headerAndFooterAffectSkeDrawings?: Map<string, IDocumentSkeletonDrawing>;
     bulletSkeleton?: IDocumentSkeletonBullet;
@@ -146,6 +165,7 @@ export interface IFontCreateConfig {
     textStyle: ITextStyle;
     charSpace: number;
     snapToGrid: BooleanNumber;
+    documentCompatibilityPolicy?: IDocumentCompatibilityPolicy;
     gridType?: GridType;
     pageWidth?: number;
 }

@@ -1,9 +1,9 @@
 {
     "name": "@univerjs/docs-drawing",
-    "version": "0.21.1",
+    "version": "1.0.0-rc.0",
     "private": false,
-    "description": "",
-    "author": "DreamNum <developer@univer.ai>",
+    "description": "Drawing model integration for Univer Docs.",
+    "author": "DreamNum Co., Ltd. <developer@univer.ai>",
     "license": "Apache-2.0",
     "funding": {
         "type": "opencollective",
@@ -17,10 +17,17 @@
     "bugs": {
         "url": "https://github.com/dream-num/univer/issues"
     },
-    "keywords": [],
+    "keywords": [
+        "univer",
+        "docs",
+        "drawing",
+        "document",
+        "plugin"
+    ],
     "exports": {
         ".": "./src/index.ts",
-        "./*": "./src/*"
+        "./*": "./src/*",
+        "./facade": "./src/facade/index.ts"
     },
     "main": "./src/index.ts",
     "types": "./lib/types/index.d.ts",
@@ -38,6 +45,16 @@
                 "import": "./lib/es/*",
                 "require": "./lib/cjs/*",
                 "types": "./lib/types/index.d.ts"
+            },
+            "./facade": {
+                "import": "./lib/es/facade.js",
+                "require": "./lib/cjs/facade.js",
+                "types": "./lib/types/facade/index.d.ts"
+            },
+            "./lib/facade": {
+                "import": "./lib/es/facade.js",
+                "require": "./lib/cjs/facade.js",
+                "types": "./lib/types/facade/index.d.ts"
             },
             "./lib/*": "./lib/*"
         }
@@ -59,11 +76,13 @@
     },
     "dependencies": {
         "@univerjs/core": "workspace:*",
+        "@univerjs/docs": "workspace:*",
         "@univerjs/drawing": "workspace:*"
     },
     "devDependencies": {
         "@univerjs-infra/shared": "workspace:*",
-        "typescript": "^6.0.2",
-        "vitest": "^4.1.4"
+        "@univerjs/engine-render": "workspace:*",
+        "typescript": "^6.0.3",
+        "vitest": "^5.0.0"
     }
 }

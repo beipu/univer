@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: '표',
         selectRange: '표 범위 선택',
         rename: '표 이름 바꾸기',
+        renamePlaceholder: '테이블 이름 입력',
         updateRange: '표 범위 업데이트',
         tableRangeWithMergeError: '표 범위는 병합된 셀과 겹칠 수 없습니다',
         tableRangeWithOtherTableError: '표 범위는 다른 표와 겹칠 수 없습니다',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: '바닥글',
         firstLine: '첫 번째 줄',
         secondLine: '두 번째 줄',
-        columnPrefix: '열',
-        tablePrefix: '표',
         tableNameError: '표 이름은 공백을 포함할 수 없으며 숫자로 시작할 수 없고 기존 표 이름과 중복될 수 없습니다',
+        columnMenu: {
+            'insert-left': '왼쪽에 열 1개 삽입',
+            'insert-right': '오른쪽에 열 1개 삽입',
+            delete: '테이블 열 삭제',
+        },
+
+        sort: {
+            'sort-asc': '오름차순',
+            'sort-desc': '내림차순',
+        },
 
         insert: {
             main: '표 삽입',
@@ -131,12 +140,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: '필터',
             'by-values': '값으로 필터',
+            'by-colors': '색으로 필터',
             'by-conditions': '조건으로 필터',
+            back: '뒤로',
+            resize: '크기 조절',
+            'filter-by-cell-fill-color': '셀 채우기 색',
+            'filter-by-cell-text-color': '셀 텍스트 색',
+            'filter-by-color-none': '이 열에는 한 가지 색만 있습니다',
             'clear-filter': '필터 지우기',
             cancel: '취소',
             confirm: '확인',
             'search-placeholder': '검색어는 공백으로 구분',
+            'input-values-placeholder': '값 입력',
             'select-all': '전체 선택',
         },
     },

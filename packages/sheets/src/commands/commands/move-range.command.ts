@@ -14,9 +14,18 @@
  * limitations under the License.
  */
 
-import type { IAccessor, ICellData, ICommand, IRange, ISelectionCell, Nullable, Workbook, Worksheet } from '@univerjs/core';
+import type {
+    IAccessor,
+    ICellData,
+    ICommand,
+    IRange,
+    ISelectionCell,
+    Nullable,
+    Workbook,
+    Worksheet,
+} from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import type { IMoveRangeMutationParams } from '../mutations/move-range.mutation';
-
 import type { ISetSelectionsOperationParams } from '../operations/selection.operation';
 import {
     cellToRange,
@@ -82,7 +91,7 @@ export const MoveRangeCommand: ICommand = {
 
         const moveRangeCommandMutations = getMoveRangeCommandMutations(accessor, params);
         if (!moveRangeCommandMutations) {
-            errorService.emit(localeService.t('sheets.info.acrossMergedCell'));
+            errorService.emit(localeService.t<LocaleKey>('sheets.info.acrossMergedCell'));
             return false;
         }
 
@@ -116,7 +125,7 @@ function _resolveMoveRangeContext(accessor: IAccessor, params: IMoveRangeCommand
         return null;
     }
 
-    const workbook = univerInstanceService.getUniverSheetInstance(unitId);
+    const workbook = univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
     const fromWorksheet = workbook?.getSheetBySheetId(fromSubUnitId);
     const toWorksheet = workbook?.getSheetBySheetId(toSubUnitId);
 

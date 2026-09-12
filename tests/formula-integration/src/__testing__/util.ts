@@ -1,23 +1,8 @@
-/**
- * Copyright 2023-present DreamNum Co., Ltd.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 import type { IWorkbookData } from '@univerjs/core';
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect } from 'vitest';
+
 import { createFormulaTestBed } from './univer';
 
 export function getTestName(): string {
@@ -34,31 +19,25 @@ export function getTestFilePath() {
     return name.replace(/[ >]/g, '-').toLowerCase();
 }
 
-export async function expectCalculationResultMatchesSnapshot() {
-    const testBed = createFormulaTestBed();
-    const snapshotRootDir = path.join(import.meta.dirname, '../__snapshots__');
-
-    const testSnapshotPath = path.resolve(snapshotRootDir, `${getTestFilePath()}.json`);
-    if (!fs.existsSync(testSnapshotPath)) {
+export function readTestSnapshot(suffix = ''): IWorkbookData {
+    const snapshotPath = path.resolve(import.meta.dirname, '../__snapshots__', `${getTestFilePath()}${suffix}.json`);
+    if (!fs.existsSync(snapshotPath)) {
         throw new Error(`Cannot find snapshot file for test "${getTestName()}".`);
     }
 
-    const testSnapshotRaw = fs.readFileSync(testSnapshotPath, 'utf-8');
-    const testSnapshot = JSON.parse(testSnapshotRaw) as IWorkbookData;
+    return JSON.parse(fs.readFileSync(snapshotPath, 'utf-8')) as IWorkbookData;
+}
 
-    const workbook = testBed.api.createWorkbook(testSnapshot);
+export async function expectCalculationResultMatchesSnapshot() {
+    const testBed = createFormulaTestBed();
+    const workbook = testBed.api.createWorkbook(readTestSnapshot());
 
     await testBed.api.getFormula().onCalculationResultApplied();
 
     const resultSnapshot = workbook.save();
-    const snapshotFilePath = path.resolve(snapshotRootDir, `${getTestFilePath()}-result.json`);
-    if (fs.existsSync(snapshotFilePath)) {
-        const resultSnapshotFileString = fs.readFileSync(snapshotFilePath, 'utf-8');
-        expect(resultSnapshot).toMatchObject(JSON.parse(resultSnapshotFileString));
-    } else {
-        fs.writeFileSync(snapshotFilePath, JSON.stringify(resultSnapshot, null, 4));
+    const expectedSnapshot = readTestSnapshot('-result');
 
-        // eslint-disable-next-line no-console
-        console.log(`Snapshot file created at: ${snapshotFilePath}`);
+    for (const sheetId of expectedSnapshot.sheetOrder) {
+        expect(resultSnapshot.sheets[sheetId]?.cellData).toMatchObject(expectedSnapshot.sheets[sheetId].cellData ?? {});
     }
 }

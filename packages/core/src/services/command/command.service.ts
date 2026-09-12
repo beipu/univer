@@ -15,7 +15,6 @@
  */
 
 import type { IAccessor, IDisposable } from '../../common/di';
-
 import { findLast, remove } from '../../common/array';
 import { createIdentifier, Inject, Injector } from '../../common/di';
 import { CustomCommandExecutionError } from '../../common/error';
@@ -107,7 +106,7 @@ export interface IMultiCommand<P extends object = object, R = boolean> extends I
 
 export interface IMutationCommonParams {
     /**
-     * It is used to indicate which {@link CommandType.COMMAND} triggers the mutation.
+     * It is used to indicate which {@link CommandType.COMMAND} or {@link CommandType.OPERATION} triggers the mutation.
      */
     trigger?: string;
 
@@ -354,6 +353,10 @@ export class CommandService extends Disposable implements ICommandService {
         return this._disposed;
     }
 
+    private _warnCommandSkippedAfterDisposed(id: string): void {
+        this._logService.warn('[CommandService]', `command "${id}" skipped because CommandService is disposed.`);
+    }
+
     hasCommand(commandId: string): boolean {
         return this._commandRegistry.hasCommand(commandId);
     }
@@ -415,6 +418,11 @@ export class CommandService extends Disposable implements ICommandService {
         params?: P,
         options?: IExecutionOptions
     ): Promise<R> {
+        if (this._disposed) {
+            this._warnCommandSkippedAfterDisposed(id);
+            return false as R;
+        }
+
         try {
             const item = this._commandRegistry.getCommand(id);
             if (item) {
@@ -425,10 +433,18 @@ export class CommandService extends Disposable implements ICommandService {
                     params,
                 };
 
+                this._attachMutationTrigger(command, params);
+
                 const stackItemDisposable = this._pushCommandExecutionStack(commandInfo);
                 const _options = options ?? {};
 
                 this._beforeCommandExecutionListeners.forEach((listener) => listener(commandInfo, _options));
+                if (this._disposed) {
+                    stackItemDisposable.dispose();
+                    this._warnCommandSkippedAfterDisposed(id);
+                    return false as R;
+                }
+
                 const result = await this._execute<P, R>(command as ICommand<P, R>, params, _options);
                 // For syncOnly mutations, only call collab listeners, not regular listeners
                 if (_options.syncOnly) {
@@ -463,6 +479,11 @@ export class CommandService extends Disposable implements ICommandService {
         params?: P | undefined,
         options?: IExecutionOptions
     ): R {
+        if (this._disposed) {
+            this._warnCommandSkippedAfterDisposed(id);
+            return false as R;
+        }
+
         try {
             const item = this._commandRegistry.getCommand(id);
             if (item) {
@@ -473,23 +494,18 @@ export class CommandService extends Disposable implements ICommandService {
                     params,
                 };
 
-                // If the executed command is of type `Mutation`, we should add a trigger params,
-                // whose value is the command's ID that triggers the mutation.
-                if (command.type === CommandType.MUTATION) {
-                    const triggerCommand = findLast(
-                        this._commandExecutionStack,
-                        (item) => item.type === CommandType.COMMAND
-                    );
-                    if (triggerCommand) {
-                        commandInfo.params = commandInfo.params ?? {};
-                        (commandInfo.params as IMutationCommonParams).trigger = triggerCommand.id;
-                    }
-                }
+                this._attachMutationTrigger(command, params);
 
                 const stackItemDisposable = this._pushCommandExecutionStack(commandInfo);
                 const _options = options ?? {};
 
                 this._beforeCommandExecutionListeners.forEach((listener) => listener(commandInfo, _options));
+                if (this._disposed) {
+                    stackItemDisposable.dispose();
+                    this._warnCommandSkippedAfterDisposed(id);
+                    return false as R;
+                }
+
                 const result = this._syncExecute<P, R>(command as ICommand<P, R>, params, _options);
                 // For syncOnly mutations, only call collab listeners, not regular listeners
                 if (_options.syncOnly) {
@@ -541,11 +557,11 @@ export class CommandService extends Disposable implements ICommandService {
 
             this._multiCommandDisposables.set(command.id, disposableCollection);
         } else {
-            if ((registry[0] as Record<string, any>).multi !== true) {
-                throw new Error('Command has registered as a single command.');
-            } else {
-                multiCommand = registry[0] as MultiCommand;
+            const registeredCommand = registry[0];
+            if (!(registeredCommand instanceof MultiCommand)) {
+                throw new TypeError('Command has registered as a single command.');
             }
+            multiCommand = registeredCommand;
         }
 
         const implementationDisposable = multiCommand.registerImplementation(command as IMultiCommand);
@@ -555,6 +571,37 @@ export class CommandService extends Disposable implements ICommandService {
                 this._multiCommandDisposables.get(command.id)?.dispose();
             }
         });
+    }
+
+    private _attachMutationTrigger<P extends object>(command: ICommand<P>, params?: P): void {
+        if (command.type !== CommandType.MUTATION || !params) {
+            return;
+        }
+
+        const triggerCommand = findLast(
+            this._commandExecutionStack,
+            (item) => item.type === CommandType.COMMAND
+        );
+        if (triggerCommand) {
+            this._setMutationTrigger(params, triggerCommand.id);
+            return;
+        }
+
+        if ('trigger' in params && params.trigger !== undefined) {
+            return;
+        }
+
+        const triggerOperation = findLast(
+            this._commandExecutionStack,
+            (item) => item.type === CommandType.OPERATION
+        );
+        if (triggerOperation) {
+            this._setMutationTrigger(params, triggerOperation.id);
+        }
+    }
+
+    private _setMutationTrigger(params: object, trigger: string): void {
+        Object.assign(params, { trigger } satisfies IMutationCommonParams);
     }
 
     private async _execute<P extends object, R = boolean>(command: ICommand<P, R>, params?: P, options?: IExecutionOptions): Promise<R> {

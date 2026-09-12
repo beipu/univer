@@ -16,13 +16,36 @@
 
 import type { IDisposable } from '@univerjs/core';
 import type { Observable } from 'rxjs';
-import type { KeyCode } from './keycode';
 import { createIdentifier, Disposable, ICommandService, IContextService, Optional, toDisposable } from '@univerjs/core';
 import { Subject } from 'rxjs';
 import { fromGlobalEvent } from '../../common/lifecycle';
+import { getEmbedChildUnitId, isEmbedBoundaryTarget } from '../../utils/embed-boundary';
 import { ILayoutService } from '../layout/layout.service';
 import { IPlatformService } from '../platform/platform.service';
-import { KeyCodeToChar, MetaKeys } from './keycode';
+import { IUIRuntimeScopeService } from '../runtime-scope/ui-runtime-scope.service';
+import { KeyCode, KeyCodeToChar, MetaKeys } from './keycode';
+
+const MENU_NAVIGATION_KEYS = new Set([
+    KeyCode.ENTER,
+    KeyCode.SPACE,
+    KeyCode.TAB,
+    KeyCode.ESC,
+    KeyCode.ARROW_DOWN,
+    KeyCode.ARROW_UP,
+    KeyCode.ARROW_LEFT,
+    KeyCode.ARROW_RIGHT,
+    KeyCode.HOME,
+    KeyCode.END,
+]);
+
+/**
+ * Defines whether a Univer shortcut should yield to the browser's native behavior
+ * when the keyboard event originates from an editable text element.
+ */
+export enum NativeTextEditorShortcutBehavior {
+    ALLOW_NATIVE,
+    OVERRIDE_NATIVE,
+}
 
 /**
  * A shortcut item that could be registered to the {@link IShortcutService}.
@@ -42,6 +65,11 @@ export interface IShortcutItem<P extends object = object> {
      * would be passed to the callback.
      */
     preconditions?: (contextService: IContextService) => boolean;
+
+    /**
+     * A callback that examines the keyboard event before this shortcut is selected.
+     */
+    eventPreconditions?: (event: KeyboardEvent) => boolean;
 
     /**
      * The binding of the shortcut. It should be a combination of {@link KeyCode} and {@link MetaKeys}.
@@ -65,12 +93,27 @@ export interface IShortcutItem<P extends object = object> {
     linux?: number;
 
     /**
+     * Controls whether this shortcut can override the browser's native behavior
+     * for editable text elements. Native behavior is preserved by default.
+     */
+    nativeTextEditorBehavior?: NativeTextEditorShortcutBehavior;
+
+    /**
      * The group of the menu item should belong to. The shortcut item would be rendered in the
      * panel if this is set.
      *
      * @example { group: '10_global-shortcut' }
      */
     group?: string;
+
+    /**
+     * The locale key for the group title displayed in the shortcut panel.
+     * If not specified, the group name (without the sequence prefix) will be used as the locale key.
+     * It supports dot-notation paths for namespaced locale keys.
+     *
+     * @example { groupTitle: 'ui.global-shortcut' }
+     */
+    groupTitle?: string;
 
     /**
      * Static parameters of this shortcut. Would be send to {@link ICommandService.executeCommand} as the second
@@ -146,7 +189,7 @@ export class ShortcutService extends Disposable implements IShortcutService {
     private readonly _shortcutChanged$ = new Subject<void>();
     readonly shortcutChanged$ = this._shortcutChanged$.asObservable();
 
-    private _forceEscaped = false;
+    private _forceEscapeCount = 0;
 
     private _forceDisabled = false;
 
@@ -154,6 +197,7 @@ export class ShortcutService extends Disposable implements IShortcutService {
         @ICommandService private readonly _commandService: ICommandService,
         @IPlatformService private readonly _platformService: IPlatformService,
         @IContextService private readonly _contextService: IContextService,
+        @IUIRuntimeScopeService private readonly _runtimeScopeService: IUIRuntimeScopeService,
         @Optional(ILayoutService) private readonly _layoutService?: ILayoutService
     ) {
         super();
@@ -246,8 +290,10 @@ export class ShortcutService extends Disposable implements IShortcutService {
     }
 
     forceEscape(): IDisposable {
-        this._forceEscaped = true;
-        return toDisposable(() => (this._forceEscaped = false));
+        this._forceEscapeCount += 1;
+        return toDisposable(() => {
+            this._forceEscapeCount = Math.max(0, this._forceEscapeCount - 1);
+        });
     }
 
     forceDisable(): IDisposable {
@@ -260,18 +306,39 @@ export class ShortcutService extends Disposable implements IShortcutService {
     private _resolveKeyboardEvent(e: KeyboardEvent): void {
         const candidate = this.dispatch(e);
         if (candidate) {
-            this._commandService.executeCommand(candidate.id, candidate.staticParameters);
+            this._getRuntimeService<ICommandService>(e, ICommandService)?.executeCommand(candidate.id, candidate.staticParameters) ??
+                this._commandService.executeCommand(candidate.id, candidate.staticParameters);
             e.preventDefault();
         }
     }
 
     dispatch(e: KeyboardEvent): IShortcutItem<object> | undefined {
+        // The capture listener runs before the editor can handle IME candidate keys.
+        if (e.isComposing) {
+            return;
+        }
+
+        // Toolbar fields own their native editing and history before component key handlers run.
+        if (e.target instanceof HTMLInputElement && e.target.closest('[data-u-command]')) {
+            return;
+        }
+
+        // Scoped editor context can remain active while a portalled menu owns DOM focus.
+        if (
+            !e.ctrlKey && !e.metaKey && !e.altKey && MENU_NAVIGATION_KEYS.has(e.keyCode) &&
+            e.target instanceof HTMLElement &&
+            (e.target.matches('button[data-u-command], [data-u-command][role="button"], [data-embed-floating-menu="true"] button, [data-u-command] input') ||
+                e.target.closest('[role="menu"]'))
+        ) {
+            return;
+        }
+
         // Should get the container element of the Univer instance and see if
         // the event target is a descendant of the container element.
         // Also we should check through escape list and force catching list.
         // if the target is not focused on the univer instance we should ignore the keyboard event.
         // Maybe the user has forcibly disabled the shortcut keys, and the shortcut keys should not be processed at this time.
-        if (this._forceEscaped || this._forceDisabled) return;
+        if (this._forceEscapeCount > 0 || this._forceDisabled) return;
 
         if (
             this._layoutService &&
@@ -289,9 +356,20 @@ export class ShortcutService extends Disposable implements IShortcutService {
             return undefined;
         }
 
+        const contextService = this._getRuntimeService<IContextService>(e, IContextService) ?? this._contextService;
         const candidateShortcut = Array.from(shortcuts)
             .sort((s1, s2) => (s2.priority ?? 0) - (s1.priority ?? 0))
-            .find((s) => s.preconditions?.(this._contextService) ?? true);
+            .find((s) =>
+                (s.eventPreconditions?.(e) ?? true) &&
+                (s.preconditions?.(contextService) ?? true)
+            );
+
+        if (
+            this._shouldLetEmbedTextEditorHandleNativeShortcut(e, binding) &&
+            candidateShortcut?.nativeTextEditorBehavior !== NativeTextEditorShortcutBehavior.OVERRIDE_NATIVE
+        ) {
+            return undefined;
+        }
 
         return candidateShortcut;
     }
@@ -335,5 +413,28 @@ export class ShortcutService extends Disposable implements IShortcutService {
         }
 
         return binding;
+    }
+
+    private _shouldLetEmbedTextEditorHandleNativeShortcut(e: KeyboardEvent, binding: number): boolean {
+        if (binding !== (KeyCode.A | MetaKeys.CTRL_COMMAND)) {
+            return false;
+        }
+
+        const target = e.target;
+        if (!(target instanceof HTMLElement)) {
+            return false;
+        }
+
+        const isNativeTextEditor = target.isContentEditable ||
+            target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement;
+
+        return isNativeTextEditor && isEmbedBoundaryTarget(target);
+    }
+
+    private _getRuntimeService<T>(event: KeyboardEvent, identifier: unknown): T | undefined {
+        const childUnitId = getEmbedChildUnitId(event.target);
+        const runtimeScope = this._runtimeScopeService.get(childUnitId);
+        return runtimeScope?.has(identifier) ? runtimeScope.get<T>(identifier) : undefined;
     }
 }

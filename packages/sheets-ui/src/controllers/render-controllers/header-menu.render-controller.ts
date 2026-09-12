@@ -18,10 +18,12 @@ import type { Nullable, Workbook } from '@univerjs/core';
 import type { IMouseEvent, IPointerEvent, IRenderContext, IRenderModule, SpreadsheetColumnHeader, SpreadsheetHeader } from '@univerjs/engine-render';
 import type { ISetSelectionsOperationParams } from '@univerjs/sheets';
 import {
+    ColorKit,
     Disposable,
     ICommandService,
     Inject,
     RANGE_TYPE,
+    ThemeService,
 } from '@univerjs/core';
 import { CURSOR_TYPE, Rect } from '@univerjs/engine-render';
 import { SetSelectionsOperation, SheetsSelectionsService } from '@univerjs/sheets';
@@ -37,11 +39,18 @@ const HEADER_MENU_CONTROLLER_SHAPE = '__SpreadsheetHeaderMenuSHAPEControllerShap
 
 const HEADER_MENU_CONTROLLER_MENU = '__SpreadsheetHeaderMenuMAINControllerShape__';
 
-const HEADER_MENU_CONTROLLER_SHAPE_COLOR = 'rgba(0, 0, 0, 0.1)';
+const HEADER_MENU_CONTROLLER_SHAPE_ALPHA = 0.1;
 
 enum HEADER_HOVER_TYPE {
     ROW,
     COLUMN,
+}
+
+interface IHeaderBaseLayout {
+    rowBaseWidth: number;
+    rowGutterWidth: number;
+    columnBaseHeight: number;
+    columnGutterHeight: number;
 }
 
 /**
@@ -55,21 +64,15 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
 
     private _currentColumn: number = Number.POSITIVE_INFINITY;
 
-    // private _rowHeaderPointerMoveSub: Subscription;
-    // private _colHeaderPointerMoveSub: Subscription;
-    // private _rowHeaderPointerLeaveSub: Subscription;
-    // private _colHeaderPointerLeaveSub: Subscription;
-    // private _rowHeaderPointerEnterSub: Subscription;
-    // private _colHeaderPointerEnterSub: Subscription;
-    private _headerPointerSubs: Nullable<Subscription>;
-    private _colHeaderPointerSubs: Nullable<Subscription>;
+    private readonly _headerPointerSubs = new Subscription();
 
     constructor(
         private readonly _context: IRenderContext<Workbook>,
         @Inject(SheetSkeletonManagerService) private readonly _sheetSkeletonManagerService: SheetSkeletonManagerService,
         @IContextMenuService private readonly _contextMenuService: IContextMenuService,
         @ICommandService private readonly _commandService: ICommandService,
-        @Inject(SheetsSelectionsService) private readonly _selectionManagerService: SheetsSelectionsService
+        @Inject(SheetsSelectionsService) private readonly _selectionManagerService: SheetsSelectionsService,
+        @Inject(ThemeService) private readonly _themeService: ThemeService
     ) {
         super();
 
@@ -77,32 +80,25 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
     }
 
     override dispose(): void {
+        super.dispose();
         this._hoverRect?.dispose();
         this._hoverMenu?.dispose();
-
-        // const spreadsheetColumnHeader = this._context.components.get(SHEET_VIEW_KEY.COLUMN) as SpreadsheetColumnHeader;
-        // const spreadsheetRowHeader = this._context.components.get(SHEET_VIEW_KEY.ROW) as SpreadsheetHeader;
-
-        // [...this._headerPointerSubs, ...this._colHeaderPointerSubs].forEach((s) => {
-            // s.unsubscribe();
-            // spreadsheetRowHeader.onPointerEnterObserver.remove(observer);
-            // spreadsheetRowHeader.onPointerMoveObserver.remove(observer);
-            // spreadsheetRowHeader.onPointerLeaveObserver.remove(observer);
-            // spreadsheetColumnHeader.onPointerEnterObserver.remove(observer);
-            // spreadsheetColumnHeader.onPointerMoveObserver.remove(observer);
-            // spreadsheetColumnHeader.onPointerLeaveObserver.remove(observer);
-        // });
-        this._headerPointerSubs?.unsubscribe();
-        this._headerPointerSubs = null;
+        this._headerPointerSubs.unsubscribe();
     }
 
     private _initialize() {
         const scene = this._context.scene;
 
         this._hoverRect = new Rect(HEADER_MENU_CONTROLLER_SHAPE, {
-            fill: HEADER_MENU_CONTROLLER_SHAPE_COLOR,
             evented: false,
         });
+
+        this.disposeWithMe(this._themeService.currentTheme$.subscribe(() => {
+            const color = this._themeService.getColorFromTheme('gray.900');
+            this._hoverRect?.setProps({
+                fill: new ColorKit(color).setAlpha(HEADER_MENU_CONTROLLER_SHAPE_ALPHA).toRgbString(),
+            });
+        }));
 
         this._hoverMenu = new HeaderMenuShape(HEADER_MENU_CONTROLLER_MENU, { zIndex: 100, visible: false });
 
@@ -115,7 +111,6 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
         this._initialHoverMenu();
     }
 
-    // eslint-disable-next-line max-lines-per-function
     private _initialHover(initialType: HEADER_HOVER_TYPE = HEADER_HOVER_TYPE.ROW) {
         const spreadsheetColumnHeader = this._context.components.get(SHEET_VIEW_KEY.COLUMN) as SpreadsheetColumnHeader;
         const spreadsheetRowHeader = this._context.components.get(SHEET_VIEW_KEY.ROW) as SpreadsheetHeader;
@@ -129,7 +124,7 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
                 return;
             }
 
-            const { rowHeaderWidth, columnHeaderHeight } = skeleton;
+            const { rowBaseWidth, rowGutterWidth, columnBaseHeight, columnGutterHeight } = getHeaderBaseLayout(skeleton);
 
             const { startX, startY, endX, endY, column } = getCoordByOffset(
                 evt.offsetX,
@@ -140,9 +135,9 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
 
             if (initialType === HEADER_HOVER_TYPE.ROW) {
                 this._hoverRect?.transformByState({
-                    width: rowHeaderWidth,
+                    width: rowBaseWidth,
                     height: endY - startY,
-                    left: 0,
+                    left: rowGutterWidth,
                     top: startY,
                 });
             } else {
@@ -150,25 +145,25 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
 
                 this._hoverRect?.transformByState({
                     width: endX - startX,
-                    height: columnHeaderHeight,
+                    height: columnBaseHeight,
                     left: startX,
-                    top: 0,
+                    top: columnGutterHeight,
                 });
 
                 if (this._hoverMenu == null) {
                     return;
                 }
 
-                if (endX - startX < columnHeaderHeight * 2) {
+                if (endX - startX < columnBaseHeight * 2) {
                     this._hoverMenu.hide();
                     return;
                 }
 
-                const menuSize = columnHeaderHeight * 0.8;
+                const menuSize = columnBaseHeight * 0.8;
 
                 this._hoverMenu.transformByState({
-                    left: endX - columnHeaderHeight,
-                    top: columnHeaderHeight / 2 - menuSize / 2,
+                    left: endX - columnBaseHeight,
+                    top: columnGutterHeight + columnBaseHeight / 2 - menuSize / 2,
                 });
 
                 this._hoverMenu.setShapeProps({ size: menuSize });
@@ -186,24 +181,12 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
             this._hoverMenu?.hide();
         };
 
-        this._headerPointerSubs = new Subscription();
         const headerPointerMoveSub = eventBindingObject.onPointerMove$.subscribeEvent(pointerMoveHandler);
         const headerPointerEnterSub = eventBindingObject.onPointerEnter$.subscribeEvent(pointerEnterHandler);
         const headerPointerLeaveSub = eventBindingObject.onPointerLeave$.subscribeEvent(pointerLeaveHandler);
-        this._headerPointerSubs?.add(headerPointerMoveSub);
-        this._headerPointerSubs?.add(headerPointerEnterSub);
-        this._headerPointerSubs?.add(headerPointerLeaveSub);
-        // this._observers.push(
-        //     eventBindingObject?.onPointerEnter$.subscribeEvent(() => {
-        //     })
-        // );
-        // this._observers.push(
-        // eventBindingObject?.onPointerMoveObserver.add(
-        // );
-
-        // this._observers.push(
-        // eventBindingObject?.onPointerLeave$.subscribeEvent(})
-        // );
+        this._headerPointerSubs.add(headerPointerMoveSub);
+        this._headerPointerSubs.add(headerPointerEnterSub);
+        this._headerPointerSubs.add(headerPointerLeaveSub);
     }
 
     private _initialHoverMenu() {
@@ -298,4 +281,29 @@ export class HeaderMenuRenderController extends Disposable implements IRenderMod
             ],
         };
     }
+}
+
+function getHeaderBaseLayout(skeleton: {
+    rowHeaderWidth: number;
+    rowHeaderWidthAndMarginLeft: number;
+    columnHeaderHeight: number;
+    columnHeaderHeightAndMarginTop: number;
+    worksheet: { getConfig?: () => { rowHeader?: { width?: number }; columnHeader?: { height?: number } } };
+}): IHeaderBaseLayout {
+    const config = skeleton.worksheet.getConfig?.();
+    const configuredRowWidth = config?.rowHeader?.width;
+    const configuredColumnHeight = config?.columnHeader?.height;
+    const rowBaseWidth = typeof configuredRowWidth === 'number' && configuredRowWidth > 0
+        ? Math.min(configuredRowWidth, skeleton.rowHeaderWidth)
+        : skeleton.rowHeaderWidth;
+    const columnBaseHeight = typeof configuredColumnHeight === 'number' && configuredColumnHeight > 0
+        ? Math.min(configuredColumnHeight, skeleton.columnHeaderHeight)
+        : skeleton.columnHeaderHeight;
+
+    return {
+        rowBaseWidth,
+        rowGutterWidth: Math.max(0, skeleton.rowHeaderWidthAndMarginLeft - rowBaseWidth),
+        columnBaseHeight,
+        columnGutterHeight: Math.max(0, skeleton.columnHeaderHeightAndMarginTop - columnBaseHeight),
+    };
 }

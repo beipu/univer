@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ICommandInfo, Nullable, Workbook } from '@univerjs/core';
+import type { ICommandInfo, IRange, Nullable, Workbook } from '@univerjs/core';
 import type { ISetDefinedNameMutationParam } from '@univerjs/engine-formula';
 import type {
     IDeleteRangeMoveLeftCommandParams,
@@ -26,8 +26,9 @@ import type {
     IMoveColsCommandParams,
     IMoveRangeCommandParams,
     IMoveRowsCommandParams,
-    IRemoveRowColCommandParams,
+    IRemoveRowColCommandInterceptParams,
     IRemoveSheetCommandParams,
+    ISetWorkbookNameCommandParams,
     ISetWorksheetNameCommandParams,
 } from '@univerjs/sheets';
 import type { IFormulaReferenceMoveParam } from './ref-range-formula';
@@ -47,9 +48,34 @@ import {
     RemoveRowCommand,
     RemoveSheetCommand,
     SetDefinedNameCommand,
+    SetWorkbookNameCommand,
     SetWorksheetNameCommand,
 } from '@univerjs/sheets';
 import { FormulaReferenceMoveType } from './ref-range-formula';
+
+const SET_SHEET_TABLE_COMMAND_ID = 'sheet.command.set-table-config';
+const DELETE_SHEET_TABLE_COMMAND_ID = 'sheet.command.delete-table';
+const REMOVE_SHEET_TABLE_COLUMN_AT_COMMAND_ID = 'sheet.command.table-remove-column-at';
+const REMOVE_SHEET_TABLE_COLUMN_COMMAND_ID = 'sheet.command.table-remove-col';
+
+interface ISetSheetTableNameCommandParam {
+    unitId: string;
+    name?: string;
+    oldTableName?: string;
+}
+
+interface IDeleteSheetTableCommandParam {
+    unitId: string;
+    tableName?: string;
+}
+
+interface IRemoveSheetTableColumnCommandParam {
+    unitId: string;
+    subUnitId?: string;
+    range?: IRange;
+    tableName?: string;
+    removedColumnNames?: string[];
+}
 
 export function getReferenceMoveParams(workbook: Workbook, command: ICommandInfo) {
     const { id } = command;
@@ -78,10 +104,10 @@ export function getReferenceMoveParams(workbook: Workbook, command: ICommandInfo
             result = handleRefInsertRangeMoveDown(command as ICommandInfo<IInsertRangeMoveDownCommandParams>, workbook);
             break;
         case RemoveRowCommand.id:
-            result = handleRefRemoveRow(command as ICommandInfo<IRemoveRowColCommandParams>, workbook);
+            result = handleRefRemoveRow(command as ICommandInfo<IRemoveRowColCommandInterceptParams>, workbook);
             break;
         case RemoveColCommand.id:
-            result = handleRefRemoveCol(command as ICommandInfo<IRemoveRowColCommandParams>, workbook);
+            result = handleRefRemoveCol(command as ICommandInfo<IRemoveRowColCommandInterceptParams>);
             break;
         case DeleteRangeMoveUpCommand.id:
             result = handleRefDeleteRangeMoveUp(command as ICommandInfo<IDeleteRangeMoveUpCommandParams>, workbook);
@@ -92,6 +118,9 @@ export function getReferenceMoveParams(workbook: Workbook, command: ICommandInfo
         case SetWorksheetNameCommand.id:
             result = handleRefSetWorksheetName(command as ICommandInfo<ISetWorksheetNameCommandParams>, workbook);
             break;
+        case SetWorkbookNameCommand.id:
+            result = handleRefSetWorkbookName(command as ICommandInfo<ISetWorkbookNameCommandParams>);
+            break;
         case RemoveSheetCommand.id:
             result = handleRefRemoveWorksheet(command as ICommandInfo<IRemoveSheetCommandParams>, workbook);
             break;
@@ -100,6 +129,16 @@ export function getReferenceMoveParams(workbook: Workbook, command: ICommandInfo
             break;
         case RemoveDefinedNameCommand.id:
             result = handleRefRemoveDefinedName(command as ICommandInfo<ISetDefinedNameMutationParam>, workbook);
+            break;
+        case SET_SHEET_TABLE_COMMAND_ID:
+            result = handleRefSetSheetTableName(command as ICommandInfo<ISetSheetTableNameCommandParam>, workbook);
+            break;
+        case DELETE_SHEET_TABLE_COMMAND_ID:
+            result = handleRefRemoveSheetTableName(command as ICommandInfo<IDeleteSheetTableCommandParam>, workbook);
+            break;
+        case REMOVE_SHEET_TABLE_COLUMN_AT_COMMAND_ID:
+        case REMOVE_SHEET_TABLE_COLUMN_COMMAND_ID:
+            result = handleRefRemoveSheetTableColumn(command as ICommandInfo<IRemoveSheetTableColumnCommandParam>, workbook);
             break;
     }
 
@@ -285,12 +324,11 @@ function handleRefInsertRangeMoveDown(command: ICommandInfo<IInsertRangeMoveDown
     };
 }
 
-function handleRefRemoveRow(command: ICommandInfo<IRemoveRowColCommandParams>, workbook: Workbook) {
+function handleRefRemoveRow(command: ICommandInfo<IRemoveRowColCommandInterceptParams>, workbook: Workbook) {
     const { params } = command;
     if (!params) return null;
 
-    const { range } = params;
-    const { unitId, sheetId } = getCurrentSheetInfo(workbook);
+    const { range, unitId, subUnitId: sheetId } = params;
 
     return {
         type: FormulaReferenceMoveType.RemoveRow,
@@ -301,12 +339,11 @@ function handleRefRemoveRow(command: ICommandInfo<IRemoveRowColCommandParams>, w
     };
 }
 
-function handleRefRemoveCol(command: ICommandInfo<IRemoveRowColCommandParams>, workbook: Workbook) {
+function handleRefRemoveCol(command: ICommandInfo<IRemoveRowColCommandInterceptParams>) {
     const { params } = command;
     if (!params) return null;
 
-    const { range } = params;
-    const { unitId, sheetId } = getCurrentSheetInfo(workbook);
+    const { range, unitId, subUnitId: sheetId } = params;
 
     return {
         type: FormulaReferenceMoveType.RemoveColumn,
@@ -362,6 +399,17 @@ function handleRefSetWorksheetName(command: ICommandInfo<ISetWorksheetNameComman
     };
 }
 
+function handleRefSetWorkbookName(command: ICommandInfo<ISetWorkbookNameCommandParams>): Nullable<IFormulaReferenceMoveParam> {
+    const { params } = command;
+    if (!params) return null;
+    return {
+        type: FormulaReferenceMoveType.SetUnitName,
+        unitId: params.unitId,
+        sheetId: '',
+        unitName: params.name,
+    };
+}
+
 function handleRefRemoveWorksheet(command: ICommandInfo<IRemoveSheetCommandParams>, workbook: Workbook) {
     const { params } = command;
     if (!params) return null;
@@ -408,5 +456,53 @@ function handleRefRemoveDefinedName(command: ICommandInfo<ISetDefinedNameMutatio
         sheetId,
         definedName: name,
         definedNameId: id,
+    };
+}
+
+function handleRefSetSheetTableName(command: ICommandInfo<ISetSheetTableNameCommandParam>, workbook: Workbook): Nullable<IFormulaReferenceMoveParam> {
+    const { params } = command;
+    if (!params || !params.name || !params.oldTableName || params.oldTableName === params.name) return null;
+
+    const { unitId, name: tableName, oldTableName } = params;
+    const { sheetId } = getCurrentSheetInfo(workbook);
+
+    return {
+        type: FormulaReferenceMoveType.SetSuperTableName,
+        unitId,
+        sheetId,
+        tableName,
+        oldTableName,
+    };
+}
+
+function handleRefRemoveSheetTableName(command: ICommandInfo<IDeleteSheetTableCommandParam>, workbook: Workbook): Nullable<IFormulaReferenceMoveParam> {
+    const { params } = command;
+    if (!params || !params.tableName) return null;
+
+    const { unitId, tableName } = params;
+    const { sheetId } = getCurrentSheetInfo(workbook);
+
+    return {
+        type: FormulaReferenceMoveType.RemoveSuperTableName,
+        unitId,
+        sheetId,
+        oldTableName: tableName,
+    };
+}
+
+function handleRefRemoveSheetTableColumn(command: ICommandInfo<IRemoveSheetTableColumnCommandParam>, workbook: Workbook): Nullable<IFormulaReferenceMoveParam> {
+    const { params } = command;
+    if (!params || !params.tableName || !params.removedColumnNames?.length) return null;
+
+    const { unitId, subUnitId, range, tableName, removedColumnNames } = params;
+    const { sheetId } = getCurrentSheetInfo(workbook);
+
+    return {
+        type: FormulaReferenceMoveType.RemoveSuperTableColumn,
+        unitId,
+        sheetId: subUnitId || sheetId,
+        range,
+        oldTableName: tableName,
+        tableColumnNames: removedColumnNames,
     };
 }

@@ -14,15 +14,30 @@
  * limitations under the License.
  */
 
-import type { Dependency, IDisposable, Injector, IWorkbookData, Workbook } from '@univerjs/core';
+import type { Dependency, IDisposable, IWorkbookData, Workbook } from '@univerjs/core';
 import type { IRenderContext, Vector2 } from '@univerjs/engine-render';
 import type { Observable } from 'rxjs';
-import { ICommandService, IContextService, ILogService, Inject, IUniverInstanceService, LocaleService, LocaleType, LogLevel, Plugin, Tools, Univer, Injector as UniverInjector, UniverInstanceType } from '@univerjs/core';
-import { IRenderManagerService, SHEET_VIEWPORT_KEY } from '@univerjs/engine-render';
+import {
+    ICommandService,
+    IContextService,
+    ILogService,
+    Inject,
+    Injector,
+    IUniverInstanceService,
+    LocaleService,
+    LocaleType,
+    LogLevel,
+    Plugin,
+    Tools,
+    Univer,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { IRenderManagerService, RenderManagerService, SHEET_VIEWPORT_KEY, Viewport } from '@univerjs/engine-render';
 import { SheetInterceptorService, SheetsSelectionsService } from '@univerjs/sheets';
 import { BehaviorSubject, Subject } from 'rxjs';
 import { SHEET_VIEW_KEY } from '../../../common/keys';
 import enUS from '../../../locale/en-US';
+import { HeaderUnhideRangeService } from '../../../services/header-unhide-range.service';
 import { SheetSkeletonManagerService } from '../../../services/sheet-skeleton-manager.service';
 
 export interface ITestEvent<TEvent, TState = { stopPropagation: () => void }> {
@@ -51,21 +66,33 @@ export interface IFakeViewport {
     scrollX: number;
     scrollY: number;
     isActive: boolean;
+    isDirty: boolean;
+    isForceDirty: boolean;
     left: number;
     top: number;
     width: number;
     height: number;
+    marginLeft: number;
+    marginTop: number;
     scrollAnimationFrameId: number | null;
     isWheelPreventDefaultX: boolean;
     isWheelPreventDefaultY: boolean;
+    shouldIntoRender(): boolean;
+    scene?: IFakeScene;
+    _paddingStartX: number;
+    _paddingStartY: number;
+    _scrollBar: { ratioScrollX: number; ratioScrollY: number } | null;
     padding?: { startX: number; endX: number; startY: number; endY: number };
     limitedScroll(x: number, y: number): { isLimitedX: boolean; isLimitedY: boolean };
     scrollToViewportPos(params: { viewportScrollX: number; viewportScrollY: number }): void;
     updateScrollVal(params: { scrollX?: number; scrollY?: number; viewportScrollX?: number; viewportScrollY?: number }): void;
     scrollByViewportDeltaVal(params: { viewportScrollX: number; viewportScrollY: number }): boolean;
+    transViewportScroll2ScrollValue(viewportScrollX: number, viewportScrollY: number): { x: number; y: number };
     transScroll2ViewportScrollValue(viewportScrollX: number, viewportScrollY: number): { x: number; y: number };
     enable(): void;
     disable(): void;
+    setMargin(marginLeft: number, marginTop: number): void;
+    setViewportSize(params: Partial<{ left: number; top: number; width: number; height: number }>): void;
     setPadding(padding: { startX: number; endX: number; startY: number; endY: number }): void;
     resetPadding(): void;
     resizeWhenFreezeChange(params: { left?: number; top?: number; right?: number; bottom?: number; width?: number; height?: number }): void;
@@ -85,13 +112,21 @@ export function createFakeViewport(viewportKey: string, options?: Partial<IFakeV
         scrollX: 0,
         scrollY: 0,
         isActive: true,
+        isDirty: false,
+        isForceDirty: false,
         left: 0,
         top: 0,
         width: 800,
         height: 600,
+        marginLeft: 0,
+        marginTop: 0,
         scrollAnimationFrameId: null,
         isWheelPreventDefaultX: false,
         isWheelPreventDefaultY: false,
+        shouldIntoRender: () => viewport.isActive && viewport.width > 1 && viewport.height > 1,
+        _paddingStartX: 0,
+        _paddingStartY: 0,
+        _scrollBar: { ratioScrollX: 1, ratioScrollY: 1 },
         onScrollAfter$: createTestEvent<any>(),
         onScrollByBar$: createTestEvent<any>(),
         limitedScroll: () => ({ isLimitedX: false, isLimitedY: false }),
@@ -110,12 +145,25 @@ export function createFakeViewport(viewportKey: string, options?: Partial<IFakeV
             viewport.viewportScrollY += viewportScrollY;
             return true;
         },
+        transViewportScroll2ScrollValue(viewportScrollX, viewportScrollY) {
+            return Viewport.prototype.transViewportScroll2ScrollValue.call(this, viewportScrollX, viewportScrollY);
+        },
         transScroll2ViewportScrollValue: (viewportScrollX, viewportScrollY) => ({ x: viewportScrollX, y: viewportScrollY }),
         enable: () => {
             viewport.isActive = true;
         },
         disable: () => {
             viewport.isActive = false;
+        },
+        setMargin: (marginLeft, marginTop) => {
+            viewport.marginLeft = marginLeft;
+            viewport.marginTop = marginTop;
+        },
+        setViewportSize: ({ left, top, width, height }) => {
+            if (typeof left === 'number') viewport.left = left;
+            if (typeof top === 'number') viewport.top = top;
+            if (typeof width === 'number') viewport.width = width;
+            if (typeof height === 'number') viewport.height = height;
         },
         setPadding: (padding) => {
             viewport.padding = padding;
@@ -146,6 +194,8 @@ export function createFakeViewport(viewportKey: string, options?: Partial<IFakeV
 }
 
 export interface IFakeScene {
+    width?: number;
+    height?: number;
     scaleX: number;
     scaleY: number;
     onMouseWheel$: ITestEvent<any>;
@@ -153,7 +203,12 @@ export interface IFakeScene {
     addObjects(objs: unknown[], layer?: number): void;
     enableLayerCache(...layers: number[]): void;
     makeDirty(dirty: boolean): void;
+    makeDirtyForScrolling(): void;
+    isDirty(): boolean;
+    isScrollRenderPending(): boolean;
+    getLayers(): Array<{ getObjectsByOrder(): Array<{ isDirty(): boolean }> }>;
     getViewport(key: unknown): IFakeViewport | null;
+    getMainViewport(): IFakeViewport;
     getViewports(): IFakeViewport[];
     getActiveViewportByCoord(_coord: Vector2): IFakeViewport | null;
     findViewportByPosToScene(_coord: Vector2): IFakeViewport | null;
@@ -208,7 +263,12 @@ export function createFakeScene(
         enableObjectsEvent: () => { },
         enableLayerCache: () => { },
         makeDirty: () => { },
+        makeDirtyForScrolling: () => { },
+        isDirty: () => false,
+        isScrollRenderPending: () => false,
+        getLayers: () => Array.from(layers.values()) as Array<{ getObjectsByOrder(): Array<{ isDirty(): boolean }> }>,
         getViewport: (key) => viewportMap.get(key) ?? null,
+        getMainViewport: () => viewportMap.get(SHEET_VIEWPORT_KEY.VIEW_MAIN)!,
         getViewports: () => Array.from(viewportMap.values()),
         getActiveViewportByCoord: () => viewportMap.get(SHEET_VIEWPORT_KEY.VIEW_MAIN) ?? null,
         findViewportByPosToScene: () => viewportMap.get(SHEET_VIEWPORT_KEY.VIEW_MAIN) ?? null,
@@ -220,12 +280,18 @@ export function createFakeScene(
         getCoordRelativeToViewport: (vec: any) => ({ x: vec?.x ?? vec?.[0] ?? 0, y: vec?.y ?? vec?.[1] ?? 0 }),
         getScrollXYInfoByViewport: (_coords, viewport) => ({ x: viewport?.viewportScrollX ?? 0, y: viewport?.viewportScrollY ?? 0 }),
         getAncestorScale: () => ({ scaleX: scene.scaleX, scaleY: scene.scaleY }),
-        transformByState: () => { },
+        transformByState: ({ width, height }) => {
+            scene.width = width;
+            scene.height = height;
+        },
         scale: (x, y) => {
             scene.scaleX = x;
             scene.scaleY = y;
         },
     };
+    viewportMap.forEach((viewport) => {
+        viewport.scene = scene;
+    });
     return scene;
 }
 
@@ -285,9 +351,9 @@ export interface IFakeSkeleton {
     getOffsetByColumn(col: number): number;
     getOffsetRelativeToRowCol(viewportScrollX: number, viewportScrollY: number): { row: number; column: number; rowOffset: number; columnOffset: number };
     getRangeByViewBound(_viewBound: unknown): { startRow: number; startColumn: number; endRow: number; endColumn: number };
-    getWorksheetConfig(): { freeze: any };
     getLocation(): [string, string];
     worksheet: {
+        getFreeze: () => any;
         getRowCount: () => number;
         getColumnCount: () => number;
         getSheetId: () => string;
@@ -348,9 +414,9 @@ export function createFakeSkeleton(options?: Partial<IFakeSkeleton>): IFakeSkele
             };
         },
         getRangeByViewBound: () => ({ startRow: 0, startColumn: 0, endRow: 20, endColumn: 10 }),
-        getWorksheetConfig: () => ({ freeze: { startRow: 0, startColumn: 0, xSplit: 0, ySplit: 0 } }),
         getLocation: () => ['test', 'sheet1'],
         worksheet: {
+            getFreeze: () => ({ startRow: 0, startColumn: 0, xSplit: 0, ySplit: 0 }),
             getRowCount: () => 200,
             getColumnCount: () => 50,
             getSheetId: () => 'sheet1',
@@ -405,7 +471,7 @@ export function createRenderTestBed(options?: { workbookData?: IWorkbookData; de
 
         constructor(
             _config: undefined,
-            @Inject(UniverInjector) override readonly _injector: Injector
+            @Inject(Injector) override readonly _injector: Injector
         ) {
             super();
         }
@@ -413,6 +479,7 @@ export function createRenderTestBed(options?: { workbookData?: IWorkbookData; de
         override onStarting(): void {
             this._injector.add([SheetsSelectionsService]);
             this._injector.add([SheetInterceptorService]);
+            this._injector.add([HeaderUnhideRangeService]);
             options?.dependencies?.forEach((d) => this._injector.add(d));
         }
     }
@@ -461,15 +528,21 @@ export function createRenderTestBed(options?: { workbookData?: IWorkbookData; de
     viewportMap.set(SHEET_VIEWPORT_KEY.VIEW_LEFT_TOP, viewportFactory(SHEET_VIEWPORT_KEY.VIEW_LEFT_TOP));
 
     const scene = createFakeScene(viewportMap, { parentClassType: options?.parentClassType, engine });
+    (scene as any).dispose ??= () => { };
+    (engine as any).dispose ??= () => { };
 
     const components = new Map<any, any>();
-    components.set(SHEET_VIEW_KEY.ROW, { onPointerDown$: createTestEvent<any>(), onPointerMove$: createTestEvent<any>(), onPointerLeave$: createTestEvent<any>() });
-    components.set(SHEET_VIEW_KEY.COLUMN, { onPointerDown$: createTestEvent<any>(), onPointerMove$: createTestEvent<any>(), onPointerLeave$: createTestEvent<any>() });
-    components.set(SHEET_VIEW_KEY.LEFT_TOP, { onPointerDown$: createTestEvent<any>() });
+    components.set(SHEET_VIEW_KEY.ROW, { onPointerDown$: createTestEvent<any>(), onPointerMove$: createTestEvent<any>(), onPointerLeave$: createTestEvent<any>(), makeForceDirty: () => { }, makeDirty: () => { }, dispose: () => { } });
+    components.set(SHEET_VIEW_KEY.COLUMN, { onPointerDown$: createTestEvent<any>(), onPointerMove$: createTestEvent<any>(), onPointerLeave$: createTestEvent<any>(), makeForceDirty: () => { }, makeDirty: () => { }, dispose: () => { } });
+    components.set(SHEET_VIEW_KEY.LEFT_TOP, { onPointerDown$: createTestEvent<any>(), makeForceDirty: () => { }, makeDirty: () => { }, dispose: () => { } });
 
     const mainComponent = {
         zIndex: 1,
+        isDirty: () => false,
+        isForceDirty: () => false,
+        getSkeleton: () => ({ worksheet: { getMergeData: () => [] } }),
         makeForceDirty: () => { },
+        makeDirty: () => { },
         onPointerDown$: createTestEvent<any>(),
     };
 
@@ -518,20 +591,22 @@ export function createRenderTestBed(options?: { workbookData?: IWorkbookData; de
 
     injector.add([SheetSkeletonManagerService, { useValue: sheetSkeletonManagerService as any }]);
 
-    const renderManagerService: IRenderManagerService = {
-        getRenderById: (unitId: string) => {
-            if (unitId !== sheet.getUnitId()) return null as any;
-            return {
-                unitId,
-                engine,
-                scene,
-                mainComponent,
-                components,
-            } as any;
-        },
-    } as IRenderManagerService;
-
-    injector.add([IRenderManagerService, { useValue: renderManagerService as any }]);
+    injector.add([IRenderManagerService, { useClass: RenderManagerService }]);
+    const renderManagerService = injector.get(IRenderManagerService);
+    renderManagerService.addRender(sheet.getUnitId(), {
+        unitId: sheet.getUnitId(),
+        type: UniverInstanceType.UNIVER_SHEET,
+        engine: engine as any,
+        scene: scene as any,
+        mainComponent: mainComponent as any,
+        components,
+        isMainScene: true,
+        activated$: new BehaviorSubject(true),
+        with: injector.get.bind(injector),
+        activate: () => { },
+        deactivate: () => { },
+        isDisposed: () => false,
+    });
 
     return {
         univer,

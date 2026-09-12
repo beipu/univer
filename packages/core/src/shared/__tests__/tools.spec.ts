@@ -15,7 +15,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createREGEXFromWildChar, generateRandomId, Tools } from '../tools';
+import { Tools } from '../tools';
 
 class CustomProto {
     value = 1;
@@ -30,12 +30,7 @@ describe('Tools extra coverage', () => {
         expect(Tools.deleteNull({ a: 1, b: null, c: undefined })).toEqual({ a: 1 });
     });
 
-    it('should merge, compare and clone complex values', () => {
-        const merged = Tools.deepMerge(
-            { a: { b: 1 }, list: [1], keep: true },
-            { a: { c: 2 }, list: [2, 3], extra: 'x' }
-        );
-        expect(merged).toEqual({ a: { b: 1, c: 2 }, list: [2, 3], keep: true, extra: 'x' });
+    it('should compare and clone complex values', () => {
         expect(Tools.diffValue([1, { a: 2 }], [1, { a: 2 }])).toBe(true);
         expect(Tools.diffValue(new Date('2024-01-01'), new Date('2024-01-01'))).toBe(true);
         expect(Tools.diffValue(/a/i, /a/i)).toBe(true);
@@ -100,17 +95,9 @@ describe('Tools extra coverage', () => {
         expect(Tools.clamp(-1, 1, 10)).toBe(1);
     });
 
-    it('should read timing, ids and wildcard regex helpers', () => {
+    it('should read timing helpers', () => {
         vi.spyOn(globalThis.performance, 'now').mockReturnValue(123.456);
 
         expect(Tools.now()).toBe(123.456);
-
-        const customId = generateRandomId(6, 'ab');
-        expect(customId).toMatch(/^[ab]{6}$/);
-        expect(generateRandomId(5)).toHaveLength(5);
-
-        const regex = createREGEXFromWildChar('file-??-*.ts');
-        expect(regex.test('file-ab-index.ts')).toBe(true);
-        expect(regex.test('file-a-index.ts')).toBe(false);
     });
 });

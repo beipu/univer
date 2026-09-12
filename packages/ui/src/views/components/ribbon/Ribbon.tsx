@@ -14,36 +14,46 @@
  * limitations under the License.
  */
 
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { RibbonType } from '../../../controllers/ui/ui.controller';
 import type { IMenuSchema } from '../../../services/menu/menu-manager.service';
 import { LocaleService, throttle } from '@univerjs/core';
-import { borderBottomClassName, clsx, divideXClassName, Dropdown } from '@univerjs/design';
-import { MoreFunctionIcon } from '@univerjs/icons';
-import { Fragment, useCallback, useEffect, useMemo, useRef } from 'react';
+import { borderBottomClassName, clsx, ConfigContext, ConfigProvider, divideXClassName, Dropdown } from '@univerjs/design';
+import { MoreVerticalIcon } from '@univerjs/icons';
+import { Fragment, useCallback, useContext, useLayoutEffect, useMemo, useRef } from 'react';
 import { RibbonPosition } from '../../../services/menu/types';
+import { IRibbonOverrideService } from '../../../services/ribbon/ribbon-override.service';
 import { IRibbonService } from '../../../services/ribbon/ribbon.service';
-import { useDependency, useObservable } from '../../../utils/di';
+import { connectInjector, useDependency, useObservable } from '../../../utils/di';
 import { ComponentContainer } from '../ComponentContainer';
 import { ClassicMenu } from './ribbon-menu/ClassicMenu';
 import { DefaultMenu } from './ribbon-menu/DefaultMenu';
+import { RibbonGridMenu } from './ribbon-menu/RibbonGridMenu';
+import { RibbonGrid } from './RibbonGrid';
 import { toolbarButtonClassName } from './ToolbarButton';
 import { ToolbarItem } from './ToolbarItem';
+import { ToolbarDropdownProvider } from './TooltipButtonWrapper';
 
 interface IRibbonProps {
     ribbonType: RibbonType;
     headerMenuComponents?: Set<ComponentType>;
     headerMenu?: boolean;
+    toolbarOnly?: boolean;
+    headerClassName?: string;
 }
 
 export function Ribbon(props: IRibbonProps) {
-    const { ribbonType, headerMenuComponents, headerMenu = true } = props;
+    const { ribbonType, headerMenuComponents, headerMenu = true, toolbarOnly = false, headerClassName } = props;
 
-    const ribbonService = useDependency(IRibbonService);
+    const defaultRibbonService = useDependency(IRibbonService);
+    const ribbonOverrideService = useDependency(IRibbonOverrideService);
     const localeService = useDependency(LocaleService);
+    const ribbonOverride = useObservable(ribbonOverrideService.override$, ribbonOverrideService.getOverride());
+    const ribbonService = ribbonOverride?.ribbonService ?? defaultRibbonService;
 
     const containerRef = useRef<HTMLDivElement>(null!);
-    const toolbarItemRefs = useRef<Record<string, {
+    const availableWidthRef = useRef(0);
+    const toolbarItemsRef = useRef<Record<string, {
         el: HTMLElement;
         key: string;
         order: number;
@@ -55,6 +65,7 @@ export function Ribbon(props: IRibbonProps) {
     const activatedTab = useObservable(ribbonService.activatedTab$, RibbonPosition.START);
     const collapsedIds = useObservable(ribbonService.collapsedIds$, []);
     const fakeToolbarVisible = useObservable(ribbonService.fakeToolbarVisible$, false);
+    const hideToolbar = ribbonOverride?.hideToolbar === true;
 
     const ribbon = useMemo(() => {
         if (ribbonType === 'simple') {
@@ -70,14 +81,19 @@ export function Ribbon(props: IRibbonProps) {
 
         return ribbonData;
     }, [ribbonType, ribbonData]);
+    const effectiveActivatedTab = ribbonType === 'simple' ? RibbonPosition.START : activatedTab;
+
+    const activatedTabTitle = useMemo(() => {
+        return ribbon.find((group) => group.key === effectiveActivatedTab)?.title || effectiveActivatedTab;
+    }, [ribbon, effectiveActivatedTab]);
 
     const handleSelectTab = useCallback((group: IMenuSchema) => {
-        toolbarItemRefs.current = {};
+        toolbarItemsRef.current = {};
         ribbonService.setActivatedTab(group.key);
-    }, []);
+    }, [ribbonService]);
 
     const activeGroup = useMemo(() => {
-        const allGroups = ribbon.find((group) => group.key === activatedTab)?.children ?? [];
+        const allGroups = ribbon.find((group) => group.key === effectiveActivatedTab)?.children ?? [];
         const visibleGroups: IMenuSchema[] = [];
         const hiddenGroups: IMenuSchema[] = [];
 
@@ -105,51 +121,35 @@ export function Ribbon(props: IRibbonProps) {
             visibleGroups,
             hiddenGroups,
         };
-    }, [collapsedIds, ribbon, activatedTab]);
+    }, [collapsedIds, ribbon, effectiveActivatedTab]);
 
-    useEffect(() => {
-        let timer: number | null = null;
+    useLayoutEffect(() => {
+        if (hideToolbar || ribbonType === 'grid') {
+            toolbarItemsRef.current = {};
+            ribbonService.setCollapsedIds([]);
+            ribbonService.setFakeToolbarVisible(false);
+            return;
+        }
+
+        if (!containerRef.current) {
+            return;
+        }
+
         const observer = new ResizeObserver(throttle((entries) => {
             for (const entry of entries) {
+                availableWidthRef.current = entry.contentRect.width;
                 ribbonService.setFakeToolbarVisible(true);
-
-                timer = requestAnimationFrame(() => {
-                    const { width: avaliableWidth } = entry.contentRect;
-                    const toolbarItems = Object.values(toolbarItemRefs.current);
-                    const sortedToolbarItems = toolbarItems.sort((a, b) => {
-                        return a.order - b.order || a.groupOrder - b.groupOrder || a.itemOrder - b.itemOrder;
-                    });
-
-                    const newCollapsedIds: string[] = [];
-                    let totalWidth = 32;
-                    const allGroups = ribbon.find((group) => group.key === activatedTab)?.children ?? [];
-
-                    const gapWidth = (allGroups.length - 1) * 8;
-                    totalWidth += gapWidth;
-
-                    for (const { el, key } of sortedToolbarItems) {
-                        const { width } = el.getBoundingClientRect();
-                        totalWidth += width + 8;
-
-                        if (totalWidth > avaliableWidth) {
-                            newCollapsedIds.push(key);
-                        }
-                    }
-
-                    ribbonService.setCollapsedIds(newCollapsedIds);
-
-                    ribbonService.setFakeToolbarVisible(false);
-                });
             }
         }, 10));
 
         observer.observe(containerRef.current);
+        availableWidthRef.current = containerRef.current.getBoundingClientRect().width;
+        ribbonService.setFakeToolbarVisible(true);
 
         return () => {
-            timer && cancelAnimationFrame(timer);
             observer.disconnect();
         };
-    }, [ribbon, activatedTab]);
+    }, [hideToolbar, ribbon, effectiveActivatedTab, ribbonService, ribbonType]);
 
     const fakeToolbar = useMemo(() => {
         return (
@@ -164,21 +164,29 @@ export function Ribbon(props: IRibbonProps) {
             >
                 {activeGroup.allGroups.map((groupItem, index) => (groupItem.children?.length || groupItem.item) && (
                     <Fragment key={groupItem.key}>
-                        <div className="univer-grid univer-shrink-0 univer-grid-flow-col univer-gap-2 univer-px-2">
+                        <div
+                            className="
+                              univer-grid univer-shrink-0 univer-grid-flow-col univer-gap-2 univer-px-2
+                              empty:univer-hidden
+                            "
+                        >
                             {groupItem.children && groupItem.children?.map((child) => (
                                 child.item && (
                                     <ToolbarItem
                                         key={child.key}
                                         {...child.item}
+                                        preserveStrokeWidth
                                         ref={(ref) => {
                                             if (ref?.el) {
-                                                toolbarItemRefs.current[child.key] = {
+                                                toolbarItemsRef.current[child.key] = {
                                                     el: ref.el,
                                                     key: child.key,
                                                     order: index,
                                                     groupOrder: groupItem.order,
                                                     itemOrder: child.order,
                                                 };
+                                            } else {
+                                                delete toolbarItemsRef.current[child.key];
                                             }
                                         }}
                                     />
@@ -191,16 +199,74 @@ export function Ribbon(props: IRibbonProps) {
         );
     }, [activeGroup.allGroups, fakeToolbarVisible]);
 
-    return (
+    useLayoutEffect(() => {
+        if (!fakeToolbarVisible || hideToolbar || ribbonType === 'grid') {
+            return;
+        }
+
+        const sortedToolbarItems = Object.values(toolbarItemsRef.current).sort((a, b) => {
+            return a.order - b.order || a.groupOrder - b.groupOrder || a.itemOrder - b.itemOrder;
+        });
+        const newCollapsedIds: string[] = [];
+        const allGroups = ribbon.find((group) => group.key === effectiveActivatedTab)?.children ?? [];
+        let totalWidth = 32 + (allGroups.length - 1) * 8;
+
+        for (const { el, key } of sortedToolbarItems) {
+            totalWidth += el.getBoundingClientRect().width + 8;
+            if (totalWidth > availableWidthRef.current) {
+                newCollapsedIds.push(key);
+            }
+        }
+
+        ribbonService.setCollapsedIds(newCollapsedIds);
+        ribbonService.setFakeToolbarVisible(false);
+    }, [effectiveActivatedTab, fakeToolbarVisible, hideToolbar, ribbon, ribbonService, ribbonType]);
+
+    const embedRibbonOverrideAttributes = ribbonOverride
+        ? {
+            'data-embed-ribbon-override': 'true',
+            'data-embed-id': ribbonOverride.id,
+        }
+        : {};
+
+    const content = (
         <>
             <div
                 data-u-comp="ribbon-header-menu"
-                className={clsx('univer-relative univer-select-none', {
-                    'univer-h-9': ribbonType === 'classic' || (headerMenuComponents && headerMenuComponents.size > 0),
+                {...embedRibbonOverrideAttributes}
+                className={clsx('univer-relative univer-select-none', headerClassName, {
+                    'univer-hidden': toolbarOnly,
+                    'univer-h-9': !toolbarOnly && (ribbonType === 'classic' || ribbonType === 'grid' || (headerMenuComponents && headerMenuComponents.size > 0)),
                 })}
             >
-                {ribbonType === 'classic' && ribbon.length > 1 && (
+                {!toolbarOnly && ribbonOverride?.placeholderTitle && ribbon.length === 0 && (
+                    <div
+                        className={clsx('univer-flex univer-h-9 univer-items-end univer-px-3', {
+                            'univer-justify-center': hideToolbar,
+                        })}
+                    >
+                        <span
+                            className="
+                              univer-relative univer-inline-flex univer-h-8 univer-items-center univer-justify-center
+                              univer-rounded-t univer-bg-primary-50 univer-px-3 univer-text-sm univer-font-medium
+                              univer-text-primary-600
+                            "
+                        >
+                            {ribbonOverride.placeholderTitle}
+                        </span>
+                    </div>
+                )}
+
+                {!toolbarOnly && ribbonType === 'classic' && ribbon.length >= 1 && (
                     <ClassicMenu
+                        ribbon={ribbon}
+                        activatedTab={activatedTab}
+                        onSelectTab={handleSelectTab}
+                    />
+                )}
+
+                {!toolbarOnly && ribbonType === 'grid' && ribbon.length >= 1 && (
+                    <RibbonGridMenu
                         ribbon={ribbon}
                         activatedTab={activatedTab}
                         onSelectTab={handleSelectTab}
@@ -210,8 +276,9 @@ export function Ribbon(props: IRibbonProps) {
                 {headerMenu && (headerMenuComponents && headerMenuComponents.size > 0) && (
                     <div
                         className={`
-                          univer-absolute univer-right-2 univer-top-0 univer-flex univer-h-full univer-items-center
-                          univer-gap-2
+                          univer-absolute univer-right-2 univer-top-0 univer-flex univer-h-full univer-flex-row
+                          univer-items-center univer-gap-2
+                          rtl:univer-left-2 rtl:univer-right-auto
                           [&>*]:univer-inline-flex [&>*]:univer-h-6 [&>*]:univer-items-center [&>*]:univer-rounded
                           [&>*]:univer-px-1 [&>*]:univer-transition-colors
                           hover:[&>*]:univer-bg-gray-100
@@ -222,97 +289,185 @@ export function Ribbon(props: IRibbonProps) {
                 )}
             </div>
 
-            <div
-                className={clsx(`
-                  univer-box-border univer-grid univer-h-10 univer-grid-flow-col univer-items-center univer-px-3
-                  univer-text-sm
-                `, {
-                    'univer-grid-cols-[1fr] univer-justify-center': ribbonType === 'classic',
-                    'univer-grid-cols-[auto,1fr]': ribbon.length > 1 && ribbonType !== 'classic',
-                    'univer-grid-cols-none': ribbon.length === 1,
-                }, borderBottomClassName)}
-            >
-                {ribbonType === 'collapsed' && ribbon.length > 1 && (
-                    <DefaultMenu
-                        ribbon={ribbon}
-                        activatedTab={activatedTab}
-                        onSelectTab={handleSelectTab}
-                    />
-                )}
+            {!hideToolbar && ribbonType === 'grid' && (
+                <RibbonGrid
+                    {...embedRibbonOverrideAttributes}
+                    groups={activeGroup.allGroups}
+                    title={activatedTabTitle}
+                />
+            )}
 
+            {!hideToolbar && ribbonType !== 'grid' && (
                 <div
-                    data-u-comp="ribbon-toolbar"
-                    ref={containerRef}
-                    className={clsx('univer-flex univer-overflow-hidden', divideXClassName, {
-                        'univer-justify-center': ribbonType === 'classic',
-                    })}
-                    role="toolbar"
-                    aria-label={localeService.t(activatedTab)}
+                    {...embedRibbonOverrideAttributes}
+                    className={clsx(`
+                      univer-box-border univer-grid univer-h-10 univer-grid-flow-col univer-items-center univer-px-3
+                      univer-text-sm
+                    `, {
+                        'univer-grid-cols-[1fr] univer-justify-center': ribbonType === 'classic' || ribbon.length === 1,
+                        'univer-grid-cols-[auto,1fr]': ribbon.length > 1 && ribbonType !== 'classic',
+                    }, borderBottomClassName)}
                 >
-                    {activeGroup.visibleGroups.map((groupItem) => (groupItem.children?.length || groupItem.item) && (
-                        <Fragment key={groupItem.key}>
-                            <div className="univer-grid univer-shrink-0 univer-grid-flow-col univer-gap-2 univer-px-2">
-                                {groupItem.children && groupItem.children?.map((child) => (
-                                    child.item && <ToolbarItem key={child.key} {...child.item} />
-                                ))}
-                            </div>
-                        </Fragment>
-                    ))}
+                    {ribbonType === 'collapsed' && ribbon.length >= 1 && (
+                        <DefaultMenu
+                            ribbon={ribbon}
+                            activatedTab={activatedTab}
+                            onSelectTab={handleSelectTab}
+                        />
+                    )}
 
-                    {/* More functions dropdown */}
-                    {collapsedIds.length > 0 && (
-                        <div
-                            data-u-comp="ribbon-toolbar-more"
-                            className={`
-                              univer-pl-2
-                              rtl:univer-pr-2
-                            `}
-                        >
-                            <Dropdown
-                                collisionPadding={{ right: 12, left: 12 }}
-                                onOpenAutoFocus={(e) => e.preventDefault()}
-                                overlay={(
+                    <div
+                        data-u-comp="ribbon-toolbar"
+                        ref={containerRef}
+                        className={clsx('univer-flex univer-overflow-hidden', divideXClassName, {
+                            'univer-justify-center': ribbonType === 'classic',
+                        })}
+                        role="toolbar"
+                        aria-label={localeService.t(activatedTabTitle)}
+                    >
+                        <ToolbarDropdownProvider key={effectiveActivatedTab}>
+                            {activeGroup.visibleGroups.map((groupItem) => (groupItem.children?.length || groupItem.item) && (
+                                <Fragment key={groupItem.key}>
                                     <div
-                                        className={`
-                                          univer-box-border univer-grid univer-max-w-[--radix-popper-available-width]
-                                          univer-gap-2 univer-p-2
-                                        `}
+                                        className="
+                                          univer-grid univer-shrink-0 univer-grid-flow-col univer-gap-2 univer-px-2
+                                          empty:univer-hidden
+                                        "
                                     >
-                                        {activeGroup.hiddenGroups.map((groupItem) => (
-                                            <div
-                                                key={groupItem.key}
-                                                className="univer-flex univer-items-center univer-gap-2"
-                                            >
-                                                <div className="univer-flex univer-flex-wrap univer-gap-2">
-                                                    {groupItem.children
-                                                        ? groupItem.children?.map((child) => (
-                                                            child.item && <ToolbarItem key={child.key} {...child.item} />
-                                                        ))
-                                                        : (
-                                                            groupItem.item && <ToolbarItem key={groupItem.key} {...groupItem.item} />
-                                                        )}
-                                                </div>
-                                            </div>
+                                        {groupItem.children && groupItem.children?.map((child) => (
+                                            child.item && (
+                                                <ToolbarItem
+                                                    key={child.key}
+                                                    {...child.item}
+                                                    preserveStrokeWidth
+                                                />
+                                            )
                                         ))}
                                     </div>
-                                )}
-                            >
-                                <button
-                                    type="button"
-                                    className={toolbarButtonClassName}
-                                    aria-label={localeService.t('ribbon.more')}
-                                    aria-haspopup="true"
+                                </Fragment>
+                            ))}
+
+                            {/* More functions dropdown */}
+                            {collapsedIds.length > 0 && (
+                                <div
+                                    className={`
+                                      univer-pl-2
+                                      rtl:univer-pr-2
+                                    `}
                                 >
-                                    <MoreFunctionIcon />
-                                </button>
-                            </Dropdown>
-                        </div>
-                    )}
+                                    <Dropdown
+                                        collisionPadding={{ right: 12, left: 12 }}
+                                        onOpenAutoFocus={(e) => e.preventDefault()}
+                                        overlay={(
+                                            <div
+                                                className={`
+                                                  univer-box-border univer-grid
+                                                  univer-max-w-[--radix-popper-available-width] univer-gap-2 univer-p-2
+                                                `}
+                                            >
+                                                {activeGroup.hiddenGroups.map((groupItem) => (
+                                                    <div
+                                                        key={groupItem.key}
+                                                        className="univer-flex univer-items-center univer-gap-2"
+                                                    >
+                                                        <div className="univer-flex univer-flex-wrap univer-gap-2">
+                                                            {groupItem.children
+                                                                ? groupItem.children?.map((child) => (
+                                                                    child.item && (
+                                                                        <ToolbarItem
+                                                                            key={child.key}
+                                                                            {...child.item}
+                                                                            preserveStrokeWidth
+                                                                        />
+                                                                    )
+                                                                ))
+                                                                : (
+                                                                    groupItem.item && (
+                                                                        <ToolbarItem
+                                                                            key={groupItem.key}
+                                                                            {...groupItem.item}
+                                                                            preserveStrokeWidth
+                                                                        />
+                                                                    )
+                                                                )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    >
+                                        <button
+                                            type="button"
+                                            className={toolbarButtonClassName}
+                                        >
+                                            <MoreVerticalIcon preserveStrokeWidth />
+                                        </button>
+                                    </Dropdown>
+                                </div>
+                            )}
+                        </ToolbarDropdownProvider>
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* fake toolbar */}
-            {fakeToolbar}
+            {ribbonType !== 'grid' && fakeToolbar}
         </>
+    );
+
+    return (
+        <RibbonOverrideRuntimeProvider override={ribbonOverride}>
+            {content}
+        </RibbonOverrideRuntimeProvider>
+    );
+}
+
+function RibbonOverrideRuntimeProvider(props: {
+    override: ReturnType<IRibbonOverrideService['getOverride']>;
+    children: ReactNode;
+}) {
+    const { override, children } = props;
+    const config = useContext(ConfigContext);
+    const injector = override?.injector;
+    const ConnectedRibbonOverrideConfigProvider = useMemo(
+        () => injector
+            ? connectInjector(RibbonOverrideConfigProvider, injector as never) as ComponentType<IRibbonOverrideConfigProviderProps>
+            : null,
+        [injector]
+    );
+
+    if (!override || !ConnectedRibbonOverrideConfigProvider) {
+        return children;
+    }
+
+    return (
+        <ConnectedRibbonOverrideConfigProvider
+            locale={config.locale}
+            direction={config.direction}
+            mountContainer={override.portalContainer ?? config.mountContainer}
+        >
+            {children}
+        </ConnectedRibbonOverrideConfigProvider>
+    );
+}
+
+interface IRibbonOverrideConfigProviderProps {
+    children: ReactNode;
+    locale?: unknown;
+    direction?: 'ltr' | 'rtl';
+    mountContainer: HTMLElement | null;
+}
+
+function RibbonOverrideConfigProvider(props: IRibbonOverrideConfigProviderProps) {
+    const { children, locale, direction, mountContainer } = props;
+
+    return (
+        <ConfigProvider
+            locale={locale}
+            direction={direction}
+            mountContainer={mountContainer}
+        >
+            {children}
+        </ConfigProvider>
     );
 }

@@ -16,6 +16,7 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { FOCUSING_COMMON_DRAWINGS, IContextService, UniverInstanceType } from '@univerjs/core';
 import {
     AddWorksheetMergeAllCommand,
@@ -34,14 +35,18 @@ import { combineLatest, combineLatestWith, map, startWith } from 'rxjs';
 import { getSheetSelectionsDisabled$ } from '../controllers/utils/selections-tools';
 import { getCurrentRangeDisable$, getObservableWithExclusiveRange$ } from './menu-util';
 
-export function CellMergeMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
-    const editDisabled$ = getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, { workbookTypes: [WorkbookEditablePermission], worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission, WorksheetSetCellStylePermission], rangeTypes: [RangeProtectionPermissionEditPoint] }));
+export function CellMergeMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
+    const editDisabled$ = getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, {
+        workbookTypes: [WorkbookEditablePermission],
+        worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission, WorksheetSetCellStylePermission],
+        rangeTypes: [RangeProtectionPermissionEditPoint],
+    }));
     const selectionsHasCross$ = getSheetSelectionsDisabled$(accessor);
 
     return {
         id: AddWorksheetMergeCommand.id,
         icon: 'MergeAllIcon',
-        tooltip: 'toolbar.mergeCell.main',
+        tooltip: 'sheets-ui.toolbar.mergeCell.main',
         type: MenuItemType.SUBITEMS,
         // selections: [...MERGE_CHILDREN],
         hidden$: combineLatest([
@@ -55,41 +60,41 @@ export function CellMergeMenuItemFactory(accessor: IAccessor): IMenuSelectorItem
     };
 }
 
-export function CellMergeAllMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function CellMergeAllMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: AddWorksheetMergeAllCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'merge.all',
+        title: 'sheets-ui.merge.all',
         icon: 'MergeAllIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function CellMergeVerticalMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function CellMergeVerticalMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: AddWorksheetMergeVerticalCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'merge.vertical',
+        title: 'sheets-ui.merge.vertical',
         icon: 'VerticalIntegrationIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function CellMergeHorizontalMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function CellMergeHorizontalMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: AddWorksheetMergeHorizontalCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'merge.horizontal',
+        title: 'sheets-ui.merge.horizontal',
         icon: 'HorizontalMergeIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function CellMergeCancelMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function CellMergeCancelMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: RemoveWorksheetMergeCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'merge.cancel',
+        title: 'sheets-ui.merge.cancel',
         icon: 'CancelMergeIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };

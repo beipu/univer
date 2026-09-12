@@ -16,11 +16,11 @@
 
 import type { ReactNode } from 'react';
 import type { IPopup } from '../../../services/popup/canvas-popup.service';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { animationFrameScheduler, combineLatest, map, of, throttleTime } from 'rxjs';
-import { ComponentManager } from '../../../common';
+import { ComponentManager } from '../../../common/component-manager';
 import { ICanvasPopupService } from '../../../services/popup/canvas-popup.service';
-import { useDependency, useObservable, useObservableRef } from '../../../utils/di';
+import { RediContext, useDependency, useObservable, useObservableRef } from '../../../utils/di';
 import { RectPopup } from './RectPopup';
 
 interface ISingleCanvasPopupProps {
@@ -29,7 +29,6 @@ interface ISingleCanvasPopupProps {
 }
 
 export const SingleCanvasPopup = ({ popup, children }: ISingleCanvasPopupProps) => {
-    const [hidden, setHidden] = useState(false);
     const anchorRect$ = useMemo(() => popup.anchorRect$.pipe(
         throttleTime(0, animationFrameScheduler),
         map((anchorRect) => {
@@ -46,37 +45,35 @@ export const SingleCanvasPopup = ({ popup, children }: ISingleCanvasPopupProps) 
     const hiddenRects$ = useMemo(() => popup.hiddenRects$?.pipe(throttleTime(0, animationFrameScheduler)) ?? of([]), [popup.hiddenRects$]);
     const excludeRects$ = useMemo(() => popup.excludeRects$?.pipe(throttleTime(0, animationFrameScheduler)), [popup.excludeRects$]);
     const excludeRectsRef = useObservableRef(excludeRects$, popup.excludeRects);
-    const { canvasElement, hideOnInvisible = true, hiddenType = 'destroy' } = popup;
+    const { boundaryInsets, canvasElement, constrainToCanvas = false, hideOnInvisible = true, hiddenType = 'destroy' } = popup;
 
-    useEffect(() => {
-        if (!hideOnInvisible) {
-            return;
-        }
+    const hidden = useObservable(
+        hideOnInvisible
+            ? () => combineLatest([anchorRect$, hiddenRects$]).pipe(map(([rectWithOffset, hiddenRects]) => {
+                const rect = canvasElement.getBoundingClientRect();
+                const { top, left, bottom, right } = rect;
+                const insetTop = constrainToCanvas ? boundaryInsets?.top ?? 0 : 0;
+                const insetLeft = constrainToCanvas ? boundaryInsets?.left ?? 0 : 0;
+                const rectHeight = rectWithOffset.bottom - rectWithOffset.top;
+                const rectWidth = rectWithOffset.right - rectWithOffset.left;
 
-        const anchorRectSub = combineLatest([anchorRect$, hiddenRects$]).subscribe(([rectWithOffset, hiddenRects]) => {
-            const rect = canvasElement.getBoundingClientRect();
-            const { top, left, bottom, right } = rect;
-            const rectHeight = rectWithOffset.bottom - rectWithOffset.top;
-            const rectWidth = rectWithOffset.right - rectWithOffset.left;
+                const isInHiddenRect = hiddenRects.some((hiddenRect) => {
+                    const bufferY = Math.min(0.5 * rectHeight, 10);
+                    const bufferX = Math.min(0.5 * rectWidth, 10);
+                    return rectWithOffset.top >= (hiddenRect.top - bufferY) &&
+                        rectWithOffset.bottom <= (hiddenRect.bottom + bufferY) &&
+                        rectWithOffset.left >= (hiddenRect.left - bufferX) &&
+                        rectWithOffset.right <= (hiddenRect.right + bufferX);
+                });
 
-            const isInHiddenRect = hiddenRects.some((hiddenRect) => {
-                const bufferY = Math.min(0.5 * rectHeight, 10);
-                const bufferX = Math.min(0.5 * rectWidth, 10);
-                return rectWithOffset.top >= (hiddenRect.top - bufferY) &&
-                    rectWithOffset.bottom <= (hiddenRect.bottom + bufferY) &&
-                    rectWithOffset.left >= (hiddenRect.left - bufferX) &&
-                    rectWithOffset.right <= (hiddenRect.right + bufferX);
-            });
-
-            if (rectWithOffset.bottom < top || rectWithOffset.top > bottom || rectWithOffset.right < left || rectWithOffset.left > right || isInHiddenRect) {
-                setHidden(true);
-            } else {
-                setHidden(false);
-            }
-        });
-
-        return () => anchorRectSub.unsubscribe();
-    }, [canvasElement, hideOnInvisible, anchorRect$, hiddenRects$]);
+                return rectWithOffset.bottom < top + insetTop || rectWithOffset.top > bottom ||
+                    rectWithOffset.right < left + insetLeft || rectWithOffset.left > right || isInHiddenRect;
+            }))
+            : null,
+        false,
+        false,
+        [anchorRect$, boundaryInsets, canvasElement, constrainToCanvas, hiddenRects$, hideOnInvisible]
+    );
 
     if ((hidden && hiddenType === 'destroy')) {
         return null;
@@ -87,6 +84,7 @@ export const SingleCanvasPopup = ({ popup, children }: ISingleCanvasPopupProps) 
             {...popup}
             hidden={hidden}
             anchorRect$={anchorRect$}
+            boundaryElement={constrainToCanvas ? canvasElement : popup.boundaryElement}
             direction={popup.direction}
             onClickOutside={popup.onClickOutside}
             excludeOutside={popup.excludeOutside}
@@ -109,20 +107,24 @@ export const SingleCanvasPopup = ({ popup, children }: ISingleCanvasPopupProps) 
 
 export function CanvasPopup() {
     const popupService = useDependency(ICanvasPopupService);
-    const componentManager = useDependency(ComponentManager);
     const popups = useObservable(popupService.popups$, undefined, true);
 
-    return popups.map((item) => {
-        const [key, popup] = item;
-        const Component = componentManager.get(popup.componentKey);
+    return popups.map(([key, popup]) => (
+        <SingleCanvasPopup key={key} popup={popup}>
+            <CanvasPopupContent popup={popup} />
+        </SingleCanvasPopup>
+    ));
+}
 
-        return (
-            <SingleCanvasPopup
-                key={key}
-                popup={popup}
-            >
-                {Component ? <Component popup={popup} /> : null}
-            </SingleCanvasPopup>
-        );
-    });
+function CanvasPopupContent({ popup }: { popup: IPopup }) {
+    const componentManager = useDependency(ComponentManager);
+    const Component = componentManager.get(popup.componentKey);
+    const connectorContext = useMemo(() => ({ injector: popup.connectorInjector ?? null }), [popup.connectorInjector]);
+    if (!Component) {
+        return null;
+    }
+    const content = <Component popup={popup} />;
+    return popup.connectorInjector
+        ? <RediContext.Provider value={connectorContext}>{content}</RediContext.Provider>
+        : content;
 }

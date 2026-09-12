@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-import type { ICellData, IDisposable, IRange, Nullable, Workbook } from '@univerjs/core';
+import type { ICellData, IRange, Workbook } from '@univerjs/core';
 import type { IImageData } from '@univerjs/drawing';
 import { createIdentifier, Disposable, IImageIoService, ImageSourceType, Inject, IUniverInstanceService, IURLImageService, UniverInstanceType } from '@univerjs/core';
-import { SheetsSelectionsService } from '@univerjs/sheets';
+import { isCellImage, SheetsSelectionsService } from '@univerjs/sheets';
 
 declare global {
     // eslint-disable-next-line ts/naming-convention
@@ -143,13 +143,6 @@ export interface IBatchSaveImagesService {
      * Get all column indices that are within the current selection
      */
     getSelectionColumnIndices(): Set<number>;
-
-    /**
-     * Register a custom image downloader for URL images
-     * @param downloader The downloader function that takes a URL and returns a base64 string
-     * @returns A disposable object to unregister the downloader
-     */
-    registerURLImageDownloader(downloader: (url: string) => Promise<string>): IDisposable;
 }
 
 export const IBatchSaveImagesService = createIdentifier<IBatchSaveImagesService>('sheets-drawing-ui.batch-save-images.service');
@@ -186,22 +179,16 @@ function rangeToA1Notation(range: IRange): string {
 }
 
 /**
- * Check if a cell has image
- */
-function cellHasImage(cell: Nullable<ICellData>): boolean {
-    return !!(cell?.p?.drawingsOrder?.length && cell?.p?.drawingsOrder?.length > 0);
-}
-
-/**
  * Get image data from cell
  */
 function getCellImageData(cell: ICellData): IImageData | null {
-    if (!cell.p?.drawingsOrder?.length || !cell.p?.drawings) {
+    const documentData = cell.p;
+    const drawingId = documentData?.drawingsOrder?.[0];
+    if (!isCellImage(documentData) || !drawingId || !documentData?.drawings) {
         return null;
     }
 
-    const drawingId = cell.p.drawingsOrder[0];
-    const drawing = cell.p.drawings[drawingId];
+    const drawing = documentData.drawings[drawingId];
 
     if (!drawing || !('source' in drawing) || !('imageSourceType' in drawing)) {
         return null;
@@ -261,15 +248,8 @@ export class BatchSaveImagesService extends Disposable implements IBatchSaveImag
         super();
     }
 
-    /**
-     * @deprecated Use IURLImageService directly
-     */
-    registerURLImageDownloader(downloader: (url: string) => Promise<string>): IDisposable {
-        return this._urlImageService.registerURLImageDownloader(downloader);
-    }
-
     getCellImagesInSelection(): ICellImageInfo[] {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
         if (!workbook) return [];
 
         const worksheet = workbook.getActiveSheet();
@@ -288,7 +268,7 @@ export class BatchSaveImagesService extends Disposable implements IBatchSaveImag
                 for (let col = startColumn; col <= endColumn; col++) {
                     const cell = cellMatrix.getValue(row, col);
 
-                    if (cellHasImage(cell)) {
+                    if (isCellImage(cell?.p)) {
                         const imageData = getCellImageData(cell!);
                         if (imageData) {
                             images.push({
@@ -325,7 +305,7 @@ export class BatchSaveImagesService extends Disposable implements IBatchSaveImag
                 for (let col = startColumn; col <= endColumn; col++) {
                     const cell = cellMatrix.getValue(row, col);
 
-                    if (cellHasImage(cell)) {
+                    if (isCellImage(cell?.p)) {
                         const imageData = getCellImageData(cell!);
                         if (imageData) {
                             images.push({
@@ -346,7 +326,7 @@ export class BatchSaveImagesService extends Disposable implements IBatchSaveImag
     }
 
     getDataColumns(): Array<{ index: number; label: string }> {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
         if (!workbook) return [];
 
         const worksheet = workbook.getActiveSheet();
@@ -505,7 +485,7 @@ export class BatchSaveImagesService extends Disposable implements IBatchSaveImag
     }
 
     generateFileName(imageInfo: ICellImageInfo, config: IBatchSaveImagesConfig): string {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
         const extension = getFileExtension(imageInfo.source, imageInfo.imageSourceType);
         const parts: string[] = [];
 

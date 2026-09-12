@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-/* eslint-disable max-lines-per-function */
-
 import type {
     ICommandInfo,
     IMutationInfo,
@@ -29,7 +27,8 @@ import type {
     IRemoveRowsMutationParams,
     IRemoveWorksheetMergeMutationParams,
 } from '../basics/interfaces/mutation-interface';
-
+import type { IClearSelectionAllCommandParams } from '../commands/commands/clear-selection-all.command';
+import type { IClearSelectionFormatCommandParams } from '../commands/commands/clear-selection-format.command';
 import type { IDeleteRangeMoveLeftCommandParams } from '../commands/commands/delete-range-move-left.command';
 import type { IDeleteRangeMoveUpCommandParams } from '../commands/commands/delete-range-move-up.command';
 import type { IInsertRangeMoveDownCommandParams } from '../commands/commands/insert-range-move-down.command';
@@ -51,10 +50,11 @@ import {
     InterceptorManager,
     IUniverInstanceService,
     Rectangle,
+    toDisposable,
     Tools,
     UniverInstanceType,
 } from '@univerjs/core';
-import { first } from 'rxjs';
+import { filter, take } from 'rxjs';
 import { ClearSelectionAllCommand } from '../commands/commands/clear-selection-all.command';
 import { ClearSelectionFormatCommand } from '../commands/commands/clear-selection-format.command';
 import { DeleteRangeMoveLeftCommand } from '../commands/commands/delete-range-move-left.command';
@@ -143,29 +143,39 @@ export class MergeCellController extends Disposable {
         @Inject(SheetsSelectionsService) private _selectionManagerService: SheetsSelectionsService
     ) {
         super();
+        this.disposeWithMe(this.disposableCollection);
         this._onRefRangeChange();
         this._initCommandInterceptor();
         this._commandExecutedListener();
     }
 
     private _initCommandInterceptor() {
-        const self = this;
-        this._sheetInterceptorService.interceptCommand({
-            getMutations(commandInfo) {
+        this.disposeWithMe(this._sheetInterceptorService.interceptCommand({
+            getMutations: (commandInfo) => {
                 switch (commandInfo.id) {
-                    case ClearSelectionAllCommand.id:
-                    case ClearSelectionFormatCommand.id: {
-                        // TODO@Gggpound: get by unit id and subUnitId
-                        const workbook = self._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
-                        const unitId = workbook.getUnitId();
-                        const worksheet = workbook?.getActiveSheet();
-                        if (!worksheet) {
+                    case MoveRangeCommand.id: {
+                        const params = commandInfo.params as IMoveRangeCommandParams;
+                        const sourceTarget = getSheetCommandTarget(this._univerInstanceService, {
+                            unitId: params.fromUnitId,
+                            subUnitId: params.fromSubUnitId,
+                        });
+                        if (!sourceTarget) {
                             return { redos: [], undos: [] };
                         }
 
-                        const subUnitId = worksheet.getSheetId();
+                        return this._handleMoveRangeCommand(params, sourceTarget.unitId, sourceTarget.subUnitId);
+                    }
+                    case ClearSelectionAllCommand.id:
+                    case ClearSelectionFormatCommand.id: {
+                        const params = commandInfo.params as IClearSelectionAllCommandParams | IClearSelectionFormatCommandParams | undefined;
+                        const target = getSheetCommandTarget(this._univerInstanceService, params);
+                        if (!target) {
+                            return { redos: [], undos: [] };
+                        }
+
+                        const { unitId, subUnitId, worksheet } = target;
                         const mergeData = worksheet.getConfig().mergeData;
-                        const selections = self._selectionManagerService.getCurrentSelections()?.map((s) => s.range);
+                        const selections = params?.ranges ?? this._selectionManagerService.getCurrentSelections()?.map((s) => s.range);
                         if (selections && selections.length > 0) {
                             const isHasMerge = selections.some((range) =>
                                 mergeData.some((item) => Rectangle.intersects(item, range))
@@ -177,7 +187,7 @@ export class MergeCellController extends Disposable {
                                     ranges: selections,
                                 };
                                 const undoRemoveMergeParams: IAddWorksheetMergeMutationParams =
-                                    RemoveMergeUndoMutationFactory(self._injector, removeMergeParams);
+                                    RemoveMergeUndoMutationFactory(this._injector, removeMergeParams);
                                 const redos: IMutationInfo[] = [
                                     { id: RemoveWorksheetMergeMutation.id, params: removeMergeParams },
                                 ];
@@ -192,9 +202,9 @@ export class MergeCellController extends Disposable {
 
                 return { redos: [], undos: [] };
             },
-        });
+        }));
 
-        this._sheetInterceptorService.interceptRanges({
+        this.disposeWithMe(this._sheetInterceptorService.interceptRanges({
             getMutations: ({ unitId, subUnitId, ranges }) => {
                 const redos: IMutationInfo[] = [];
                 const undos: IMutationInfo[] = [];
@@ -231,7 +241,7 @@ export class MergeCellController extends Disposable {
 
                 return emptyInterceptorArr;
             },
-        });
+        }));
     }
 
     refRangeHandle(config: EffectRefRangeParams, unitId: string, subUnitId: string) {
@@ -265,10 +275,6 @@ export class MergeCellController extends Disposable {
                 return this._handleRemoveRowCommand(params, unitId, subUnitId);
             }
 
-            case MoveRangeCommand.id: {
-                const params = config.params as IMoveRangeCommandParams;
-                return this._handleMoveRangeCommand(params, unitId, subUnitId);
-            }
             case InsertRangeMoveRightCommand.id: {
                 const params = config.params as unknown as IInsertRangeMoveRightCommandParams;
                 return this._handleInsertRangeMoveRightCommand(params, unitId, subUnitId);
@@ -291,7 +297,7 @@ export class MergeCellController extends Disposable {
 
     private _onRefRangeChange() {
         const registerRefRange = (unitId: string, subUnitId: string) => {
-            const workbook = this._univerInstanceService.getUniverSheetInstance(unitId);
+            const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
             if (!workbook) {
                 return;
             }
@@ -333,12 +339,18 @@ export class MergeCellController extends Disposable {
             })
         );
 
-        this._univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET).pipe(first((workbook) => !!workbook)).subscribe((workbook) => {
-            const sheet = workbook!.getActiveSheet();
-            if (!sheet) return;
-
-            registerRefRange(workbook!.getUnitId(), sheet.getSheetId());
-        });
+        this.disposeWithMe(toDisposable(
+            this._univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET).pipe(
+                filter((workbook): workbook is Workbook => !!workbook),
+                take(1)
+            ).subscribe((workbook) => {
+                const sheet = workbook.getActiveSheet();
+                if (!sheet) {
+                    return;
+                }
+                registerRefRange(workbook.getUnitId(), sheet.getSheetId());
+            })
+        ));
     }
 
     private _handleMoveRowsCommand(params: IMoveRowsCommandParams, unitId: string, subUnitId: string) {
@@ -429,13 +441,16 @@ export class MergeCellController extends Disposable {
 
         const fromMergeRanges = sourceWorksheet.getMergeData().filter((item) => Rectangle.intersects(item, params.fromRange));
         const toMergeRanges = targetWorksheet.getMergeData().filter((item) => Rectangle.intersects(item, params.toRange));
+        const remainingTargetMergeRanges = targetWorksheet.getMergeData().filter(
+            (item) => !Rectangle.intersects(item, params.toRange)
+        );
 
         const willMoveToMergeRanges = fromMergeRanges
             .map((mergeRange) => Rectangle.getRelativeRange(mergeRange, params.fromRange))
             .map((relativeRange) => Rectangle.getPositionRange(relativeRange, params.toRange));
 
         const addMergeCellRanges = getAddMergeMutationRangeByType(willMoveToMergeRanges).filter(
-            (range) => !targetWorksheet.getMergeData().some((mergeRange) => Rectangle.equals(range, mergeRange))
+            (range) => !remainingTargetMergeRanges.some((mergeRange) => Rectangle.equals(range, mergeRange))
         );
 
         const redos: Array<{
@@ -447,7 +462,7 @@ export class MergeCellController extends Disposable {
             params: IAddWorksheetMergeMutationParams | IRemoveWorksheetMergeMutationParams;
         }> = [];
 
-        if (subUnitId === sourceSubUnitId && fromMergeRanges.length > 0) {
+        if (fromMergeRanges.length > 0) {
             redos.push({
                 id: RemoveWorksheetMergeMutation.id,
                 params: {
@@ -466,7 +481,7 @@ export class MergeCellController extends Disposable {
             });
         }
 
-        if (subUnitId === targetSubUnitId && toMergeRanges.length > 0) {
+        if (toMergeRanges.length > 0) {
             redos.push({
                 id: RemoveWorksheetMergeMutation.id,
                 params: {
@@ -485,7 +500,7 @@ export class MergeCellController extends Disposable {
             });
         }
 
-        if (subUnitId === targetSubUnitId && addMergeCellRanges.length > 0) {
+        if (addMergeCellRanges.length > 0) {
             redos.push({
                 id: AddWorksheetMergeMutation.id,
                 params: {
@@ -1125,7 +1140,7 @@ export class MergeCellController extends Disposable {
             // 1. MoveRowsOrColsMutation
             if (mutationIdArrByMove.includes(command.id)) {
                 if (!command.params) return;
-                const workbook = this._univerInstanceService.getUniverSheetInstance((command.params as IMoveRowsMutationParams).unitId);
+                const workbook = this._univerInstanceService.getUnit<Workbook>((command.params as IMoveRowsMutationParams).unitId, UniverInstanceType.UNIVER_SHEET);
                 if (!workbook) return;
                 const worksheet = workbook.getSheetBySheetId((command.params as IMoveRowsMutationParams).subUnitId);
                 if (!worksheet) return;
@@ -1180,7 +1195,7 @@ export class MergeCellController extends Disposable {
 
             // 2. InsertRowsOrCols / RemoveRowsOrCols Mutations
             if (mutationIdByRowCol.includes(command.id)) {
-                const workbook = this._univerInstanceService.getUniverSheetInstance((command.params as IInsertColMutationParams).unitId);
+                const workbook = this._univerInstanceService.getUnit<Workbook>((command.params as IInsertColMutationParams).unitId, UniverInstanceType.UNIVER_SHEET);
                 if (!workbook) return;
                 const worksheet = workbook.getSheetBySheetId((command.params as IInsertColMutationParams).subUnitId);
                 if (!worksheet) return;
@@ -1249,9 +1264,9 @@ export class MergeCellController extends Disposable {
 
 function getWorkbook(univerInstanceService: IUniverInstanceService, unitId?: string) {
     if (unitId) {
-        return univerInstanceService.getUniverSheetInstance(unitId);
+        return univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
     }
-    return univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+    return univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
 }
 
 function getWorksheet(workbook: Workbook, subUnitId?: string) {

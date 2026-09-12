@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ICommand, IRange, Nullable } from '@univerjs/core';
+import type { ICommand, IRange, Nullable, Workbook } from '@univerjs/core';
 import type { IScrollState } from '../../services/scroll-manager.service';
 
 import { CommandType, ICommandService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
@@ -30,6 +30,8 @@ export interface ISetScrollRelativeCommandParams {
 }
 
 export interface IScrollCommandParams {
+    unitId?: string;
+    sheetId?: string;
     offsetX?: number;
     offsetY?: number;
     /**
@@ -71,7 +73,7 @@ export const SetScrollRelativeCommand: ICommand<ISetScrollRelativeCommandParams>
         if (!target) return false;
 
         const { unitId, subUnitId } = target;
-        const scrollManagerService = renderManagerSrv.getRenderById(unitId)!.with(SheetScrollManagerService);
+        const scrollManagerService = renderManagerSrv.getRenderUnitById(unitId)!.with(SheetScrollManagerService);
         const currentScroll = scrollManagerService.getCurrentScrollState();
         const { offsetX = 0, offsetY = 0 } = params || {};
         const {
@@ -114,11 +116,16 @@ export const ScrollCommand: ICommand<IScrollCommandParams> = {
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const renderManagerSrv = accessor.get(IRenderManagerService);
 
-        const target = getSheetCommandTarget(univerInstanceService);
+        const target = params.unitId
+            ? getScrollCommandTargetByParams(univerInstanceService, params)
+            : getSheetCommandTarget(univerInstanceService);
         if (!target) return false;
 
         const { workbook, worksheet, unitId } = target;
-        const scrollManagerService = renderManagerSrv.getRenderById(unitId)!.with(SheetScrollManagerService);
+        const renderUnit = renderManagerSrv.getRenderUnitById(unitId);
+        if (!renderUnit) return false;
+
+        const scrollManagerService = renderUnit.with(SheetScrollManagerService);
         const currentScroll: Readonly<Nullable<IScrollState>> = scrollManagerService.getCurrentScrollState();
 
         if (!worksheet) {
@@ -150,10 +157,33 @@ export const ScrollCommand: ICommand<IScrollCommandParams> = {
     },
 };
 
+function getScrollCommandTargetByParams(
+    univerInstanceService: IUniverInstanceService,
+    params: Pick<IScrollCommandParams, 'unitId' | 'sheetId'>
+) {
+    if (!params.unitId) {
+        return null;
+    }
+
+    const workbook = univerInstanceService.getUnit<Workbook>(params.unitId, UniverInstanceType.UNIVER_SHEET);
+    const worksheet = params.sheetId ? workbook?.getSheetBySheetId(params.sheetId) : workbook?.getActiveSheet();
+    if (!workbook || !worksheet) {
+        return null;
+    }
+
+    return {
+        workbook,
+        worksheet,
+        unitId: params.unitId,
+        subUnitId: worksheet.getSheetId(),
+    };
+}
+
 export interface IScrollToCellCommandParams {
     range: IRange;
     forceTop?: boolean;
     forceLeft?: boolean;
+    unitId?: string;
 }
 
 /**
@@ -166,7 +196,7 @@ export const ScrollToCellCommand: ICommand<IScrollToCellCommandParams> = {
         const instanceService = accessor.get(IUniverInstanceService);
         const renderManagerService = accessor.get(IRenderManagerService);
         const scrollController = renderManagerService
-            .getRenderById(instanceService.getCurrentUnitForType(UniverInstanceType.UNIVER_SHEET)!.getUnitId())!
+            .getRenderUnitById(instanceService.getCurrentUnitOfType(UniverInstanceType.UNIVER_SHEET)!.getUnitId())!
             .with(SheetsScrollRenderController);
         return scrollController.scrollToRange(params!.range, params!.forceTop, params!.forceLeft);
     },

@@ -18,15 +18,29 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'Zavrieť odznak',
+            close: 'Zavrieť',
+            menu: 'Ponuka',
+            previous: 'Predchádzajúci',
+            next: 'Nasledujúci',
+            imageGallery: 'Galéria obrázkov',
+            image: 'Obrázok {0} z {1}',
+            zoomIn: 'Priblížiť',
+            zoomOut: 'Oddialiť',
+            resetZoom: 'Obnoviť priblíženie',
+            increment: 'Zvýšiť',
+            decrement: 'Znížiť',
+        },
         Confirm: {
             cancel: 'zrušiť',
-            confirm: 'ok',
+            confirm: 'OK',
         },
         CascaderList: {
             empty: 'Žiadne',
         },
         Calendar: {
-            year: '',
+            year: 'Rok',
             weekDays: ['Ne', 'Po', 'Ut', 'St', 'Št', 'Pi', 'So'],
             months: [
                 'Jan',
@@ -42,14 +56,17 @@ const locale: typeof enUS = {
                 'Nov',
                 'Dec',
             ],
-        },
-        Select: {
-            empty: 'Žiadne',
+            ariaLabels: {
+                previousMonth: 'Predchádzajúci mesiac',
+                nextMonth: 'Nasledujúci mesiac',
+                selectYear: 'Vybrať rok',
+                selectMonth: 'Vybrať mesiac',
+            },
         },
         ColorPicker: {
             more: 'Viac farieb',
             cancel: 'zrušiť',
-            confirm: 'ok',
+            confirm: 'OK',
         },
         GradientColorPicker: {
             linear: 'Lineárny',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: 'Diamantový',
             offset: 'Posun',
             angle: 'Uhol',
-            flip: 'Prevrátiť',
             delete: 'Odstrániť',
+            transparency: 'Priehľadnosť',
         },
     },
 };

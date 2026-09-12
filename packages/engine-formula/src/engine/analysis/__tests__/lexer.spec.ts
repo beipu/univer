@@ -18,8 +18,11 @@ import type { Injector, IWorkbookData, Univer, Workbook } from '@univerjs/core';
 import type { LexerNode } from '../lexer-node';
 import { LocaleType } from '@univerjs/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FUNCTION_NAMES_DATE } from '../../../functions/date/function-names';
+import { Month } from '../../../functions/date/month';
 import { IFormulaCurrentConfigService } from '../../../services/current-data.service';
 import { IDefinedNamesService } from '../../../services/defined-names.service';
+import { IFunctionService } from '../../../services/function.service';
 import { Lexer } from '../lexer';
 import { LexerTreeBuilder } from '../lexer-tree-builder';
 import { createCommandTestBed } from './create-command-test-bed';
@@ -68,6 +71,7 @@ describe('lexer test', () => {
     let workbook: Workbook;
     let definedNamesService: IDefinedNamesService;
     let formulaCurrentConfigService: IFormulaCurrentConfigService;
+    let functionService: IFunctionService;
     let lexerTreeBuilder: LexerTreeBuilder;
 
     beforeEach(() => {
@@ -78,6 +82,7 @@ describe('lexer test', () => {
 
         definedNamesService = get(IDefinedNamesService);
         formulaCurrentConfigService = get(IFormulaCurrentConfigService);
+        functionService = get(IFunctionService);
         lexerTreeBuilder = get(LexerTreeBuilder);
 
         formulaCurrentConfigService.setExecuteUnitId('test');
@@ -89,7 +94,8 @@ describe('lexer test', () => {
         lexer = new Lexer(
             definedNamesService,
             lexerTreeBuilder,
-            formulaCurrentConfigService
+            formulaCurrentConfigService,
+            functionService
         );
     });
 
@@ -147,6 +153,142 @@ describe('lexer test', () => {
                     },
                 ],
             });
+        });
+
+        it('moves sheet-local relative references from the current formula cell and wraps grid edges', () => {
+            definedNamesService.registerDefinedName('test', {
+                id: 'previous-row',
+                name: 'PrevRow',
+                formulaOrRefString: 'sheetName1!$A1048576',
+                localSheetId: 'sheet1',
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'same-row',
+                name: 'SameRow',
+                formulaOrRefString: 'sheetName1!$C1',
+                localSheetId: 'sheet1',
+            });
+
+            const previousRow = lexer.treeBuilder('=PrevRow', true, 'test', 0, 8) as LexerNode;
+            const nextPreviousRow = lexer.treeBuilder('=PrevRow', true, 'test', 0, 9) as LexerNode;
+            const sameRow = lexer.treeBuilder('=SameRow', true, 'test', 5, 73) as LexerNode;
+
+            expect(JSON.stringify(previousRow.serialize())).toContain('sheetName1!$A8');
+            expect(JSON.stringify(nextPreviousRow.serialize())).toContain('sheetName1!$A9');
+            expect(JSON.stringify(sameRow.serialize())).toContain('sheetName1!$C74');
+        });
+
+        it('resolves workbook defined names that point to sheets with underscores', () => {
+            formulaCurrentConfigService.setSheetNameMap({
+                test: {
+                    sheet1: 'sheetName1',
+                    sheet2: 'Parameters_Constants',
+                },
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'test-underscore-sheet',
+                name: 'CONST_GJpt',
+                formulaOrRefString: 'Parameters_Constants!$B$28',
+                localSheetId: 'AllDefaultWorkbook',
+            });
+
+            const node = lexer.treeBuilder('=CONST_GJpt') as LexerNode;
+
+            expect(JSON.stringify(node.serialize())).toContain('Parameters_Constants!$B$28');
+            expect(JSON.stringify(node.serialize())).not.toContain('#NAME?');
+        });
+
+        it('resolves defined names case-insensitively', () => {
+            definedNamesService.registerDefinedName('test', {
+                id: 'test-case-insensitive',
+                name: 'CONST_kNm3',
+                formulaOrRefString: '$B$27',
+                localSheetId: 'AllDefaultWorkbook',
+            });
+
+            const node = lexer.treeBuilder('=CONST_KNM3') as LexerNode;
+
+            expect(JSON.stringify(node.serialize())).toContain('$B$27');
+            expect(JSON.stringify(node.serialize())).not.toContain('#NAME?');
+        });
+
+        it('prefers sheet-local defined names over workbook defined names', () => {
+            formulaCurrentConfigService.setExecuteSubUnitId('sheet-weekly');
+            formulaCurrentConfigService.setSheetNameMap({
+                test: {
+                    'sheet-weekly': 'Weekly',
+                    'sheet-report': 'Report',
+                },
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'date-begin-local',
+                name: 'date_begin',
+                formulaOrRefString: 'Weekly!$F$4',
+                localSheetId: 'sheet-weekly',
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'date-begin-global',
+                name: 'date_begin',
+                formulaOrRefString: 'Report!$F$4',
+                localSheetId: 'AllDefaultWorkbook',
+            });
+
+            const node = lexer.treeBuilder('=date_begin+6') as LexerNode;
+            const serialized = JSON.stringify(node.serialize());
+
+            expect(serialized).toContain('Weekly!$F$4');
+            expect(serialized).not.toContain('Report!$F$4');
+        });
+
+        it('isolates cached defined names by sheet', () => {
+            formulaCurrentConfigService.setSheetNameMap({
+                test: {
+                    'sheet-report': 'Report',
+                    'sheet-weekly': 'Weekly',
+                },
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'date-begin-report',
+                name: 'date_begin',
+                formulaOrRefString: 'Report!$F$4',
+                localSheetId: 'sheet-report',
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'date-begin-weekly',
+                name: 'date_begin',
+                formulaOrRefString: 'Weekly!$F$4',
+                localSheetId: 'sheet-weekly',
+            });
+
+            formulaCurrentConfigService.setExecuteSubUnitId('sheet-report');
+            const reportNode = lexer.treeBuilder('=date_begin+1') as LexerNode;
+            formulaCurrentConfigService.setExecuteSubUnitId('sheet-weekly');
+            const weeklyNode = lexer.treeBuilder('=date_begin+1') as LexerNode;
+
+            expect(JSON.stringify(reportNode.serialize())).toContain('Report!$F$4');
+            expect(JSON.stringify(weeklyNode.serialize())).toContain('Weekly!$F$4');
+        });
+
+        it('resolves defined names next to operators and spaces', () => {
+            definedNamesService.registerDefinedName('test', {
+                id: 'test-operator-left',
+                name: 'CONST_GJ',
+                formulaOrRefString: '$B$25',
+                localSheetId: 'AllDefaultWorkbook',
+            });
+            definedNamesService.registerDefinedName('test', {
+                id: 'test-operator-right',
+                name: 'CONST_t',
+                formulaOrRefString: '$B$26',
+                localSheetId: 'AllDefaultWorkbook',
+            });
+
+            const node = lexer.treeBuilder('=CONST_GJ & "/" &CONST_t') as LexerNode;
+            const serialized = JSON.stringify(node.serialize());
+
+            expect(serialized).toContain('$B$25');
+            expect(serialized).toContain('$B$26');
+            expect(serialized).not.toContain('#NAME?');
         });
 
         it('lambda', () => {
@@ -254,6 +396,37 @@ describe('lexer test', () => {
                     },
                 ],
             });
+        });
+
+        it('prefers a registered function over a same-name defined name', () => {
+            definedNamesService.registerDefinedName('test', {
+                id: 'month-defined-name',
+                name: 'MONTH',
+                formulaOrRefString: '$B$5',
+            });
+            functionService.registerExecutors(new Month(FUNCTION_NAMES_DATE.MONTH));
+
+            const node = lexer.treeBuilder('=MONTH(D10)') as LexerNode;
+            const serialized = JSON.stringify(node.serialize());
+
+            expect(serialized).toContain('MONTH');
+            expect(serialized).toContain('D10');
+            expect(serialized).not.toContain('$B$5');
+        });
+
+        it('resolves a same-name defined name when it is not a function call', () => {
+            definedNamesService.registerDefinedName('test', {
+                id: 'month-defined-name',
+                name: 'month',
+                formulaOrRefString: '$B$5',
+            });
+            functionService.registerExecutors(new Month(FUNCTION_NAMES_DATE.MONTH));
+
+            const node = lexer.treeBuilder('=month+1') as LexerNode;
+            const serialized = JSON.stringify(node.serialize());
+
+            expect(serialized).toContain('$B$5');
+            expect(serialized).not.toContain('#NAME?');
         });
 
         it('defined name nest struct', () => {

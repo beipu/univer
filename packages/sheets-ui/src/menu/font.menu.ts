@@ -16,6 +16,7 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import {
     DEFAULT_STYLES,
     EDITOR_ACTIVATED,
@@ -97,7 +98,7 @@ function updateFontSizeValue(accessor: IAccessor, defaultValue: number) {
     }));
 }
 
-export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<number> {
+export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, number> {
     const defaultValue = DEFAULT_STYLES.fs;
     const disabled$ = getCurrentRangeDisable$(accessor, {
         workbookTypes: [WorkbookEditablePermission],
@@ -108,7 +109,7 @@ export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelec
     return {
         id: SetRangeFontSizeCommand.id,
         type: MenuItemType.SELECTOR,
-        tooltip: 'toolbar.fontSize',
+        tooltip: 'sheets-ui.toolbar.fontSize',
         label: {
             name: FONT_SIZE_COMPONENT,
             props: {
@@ -124,7 +125,7 @@ export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelec
     };
 }
 
-export function FontSizeIncreaseMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FontSizeIncreaseMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const disabled$ = getCurrentRangeDisable$(accessor, {
         workbookTypes: [WorkbookEditablePermission],
         worksheetTypes: [WorksheetEditPermission, WorksheetSetCellStylePermission],
@@ -135,7 +136,7 @@ export function FontSizeIncreaseMenuItemFactory(accessor: IAccessor): IMenuButto
         id: SetRangeFontIncreaseCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'FontSizeIncreaseIcon',
-        tooltip: 'toolbar.fontSizeIncrease',
+        tooltip: 'sheets-ui.toolbar.fontSizeIncrease',
         disabled$,
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
@@ -152,7 +153,7 @@ export function FontSizeDecreaseMenuItemFactory(accessor: IAccessor) {
         id: SetRangeFontDecreaseCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'FontSizeReduceIcon',
-        tooltip: 'toolbar.fontSizeDecrease',
+        tooltip: 'sheets-ui.toolbar.fontSizeDecrease',
         disabled$,
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };

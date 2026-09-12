@@ -14,92 +14,201 @@
  * limitations under the License.
  */
 
+import type { Workbook } from '@univerjs/core';
 import type { IDropdownMenuProps, IDropdownProps, ITooltipProps } from '@univerjs/design';
-import type { ReactNode } from 'react';
-import type { Subscription } from 'rxjs';
+import type { ComponentType, ReactNode } from 'react';
 import type { IMenuItem, IValueOption } from '../../../services/menu/menu';
-import { clsx, Dropdown, DropdownMenu, Tooltip } from '@univerjs/design';
+import { FOCUSING_SHEET, IContextService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import {
+    clsx,
+    ConfigContext,
+    Dropdown,
+    DropdownMenu,
+    Tooltip,
+} from '@univerjs/design';
 import { CheckMarkIcon } from '@univerjs/icons';
-import { createContext, forwardRef, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { combineLatest, of } from 'rxjs';
-import { CustomLabel } from '../../../components/custom-label/CustomLabel';
+import {
+    createContext,
+    forwardRef,
+    useCallback,
+    useContext,
+    useEffect,
+    useImperativeHandle,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+import { combineLatest, map, merge, of, scan, startWith, switchMap } from 'rxjs';
+import { ILayoutService } from '../../../services/layout/layout.service';
 import { IMenuManagerService } from '../../../services/menu/menu-manager.service';
-import { useDependency } from '../../../utils/di';
+import { IShortcutService } from '../../../services/shortcut/shortcut.service';
+import { useDependency, useObservable } from '../../../utils/di';
+import { getEmbedBoundaryOwner, keepInteractionInsideSameEmbedBoundary } from '../../../utils/embed-boundary';
+import { CustomLabel } from '../../custom-label/CustomLabel';
 
 const TooltipWrapperContext = createContext({
     dropdownVisible: false,
     setDropdownVisible: (_visible: boolean) => {},
 });
 
+// Ribbon dropdowns share one open key; disabled items must only clear it when they own it.
+const ToolbarDropdownContext = createContext<{
+    openDropdownKey: string | null;
+    setOpenDropdownKey: (key: string | null) => void;
+} | null>(null);
+
 export interface ITooltipWrapperRef {
     el: HTMLSpanElement | null;
 }
 
-export const TooltipWrapper = forwardRef<ITooltipWrapperRef, ITooltipProps>((props, ref) => {
-    const { children, ...tooltipProps } = props;
+export interface IToolbarTooltipProps extends Omit<ITooltipProps, 'visible' | 'onVisibleChange'> {
+    popupOpen: boolean;
+}
+
+/**
+ * Keeps toolbar tooltips controlled while a related popup opens and closes.
+ * The tooltip stays hidden after the popup closes until a new hover or focus interaction occurs.
+ */
+export function ToolbarTooltip(props: IToolbarTooltipProps) {
+    const { popupOpen, ...tooltipProps } = props;
+    const [tooltipVisible, setTooltipVisible] = useState(false);
+
+    useEffect(() => {
+        if (popupOpen) {
+            setTooltipVisible(false);
+        }
+    }, [popupOpen]);
+
+    return (
+        <Tooltip
+            {...tooltipProps}
+            className={clsx('univer-fill-mode-backwards univer-delay-100', tooltipProps.className, `
+              univer-pointer-events-none
+            `)}
+            visible={!popupOpen && tooltipVisible}
+            onVisibleChange={(visible) => {
+                if (!popupOpen) {
+                    setTooltipVisible(visible);
+                }
+            }}
+        />
+    );
+}
+
+export function ToolbarDropdownProvider(props: { children: ReactNode }) {
+    const [openDropdownKey, setOpenDropdownKey] = useState<string | null>(null);
+    const contextValue = useMemo(() => ({
+        openDropdownKey,
+        setOpenDropdownKey,
+    }), [openDropdownKey]);
+
+    return (
+        <ToolbarDropdownContext.Provider value={contextValue}>
+            {props.children}
+        </ToolbarDropdownContext.Provider>
+    );
+}
+
+export const TooltipWrapper = forwardRef<ITooltipWrapperRef, ITooltipProps & { dropdownKey?: string }>((props, ref) => {
+    const { children, dropdownKey, ...tooltipProps } = props;
 
     const spanRef = useRef<HTMLSpanElement>(null);
 
-    const [tooltipVisible, setTooltipVisible] = useState(false);
-    const [dropdownVisible, setDropdownVisible] = useState(false);
+    const [localDropdownVisible, setLocalDropdownVisible] = useState(false);
+    const toolbarDropdownContext = useContext(ToolbarDropdownContext);
+    const dropdownVisible = dropdownKey && toolbarDropdownContext
+        ? toolbarDropdownContext.openDropdownKey === dropdownKey
+        : localDropdownVisible;
 
-    function handleChangeTooltipVisible(visible: boolean) {
-        if (dropdownVisible) {
-            setTooltipVisible(false);
+    const handleChangeDropdownVisible = useCallback((visible: boolean) => {
+        if (dropdownKey && toolbarDropdownContext) {
+            toolbarDropdownContext.setOpenDropdownKey(visible ? dropdownKey : null);
         } else {
-            setTooltipVisible(visible);
+            setLocalDropdownVisible(visible);
         }
-    }
-
-    function handleChangeDropdownVisible(visible: boolean) {
-        setDropdownVisible(visible);
-
-        setTooltipVisible(false);
-    }
+    }, [dropdownKey, toolbarDropdownContext]);
 
     const contextValue = useMemo(() => ({
         dropdownVisible,
         setDropdownVisible: handleChangeDropdownVisible,
-    }), [dropdownVisible]);
+    }), [dropdownVisible, handleChangeDropdownVisible]);
 
     useImperativeHandle(ref, () => ({
         el: spanRef.current,
     }));
 
+    const content = (
+        <span ref={spanRef}>
+            <TooltipWrapperContext.Provider value={contextValue}>
+                {children}
+            </TooltipWrapperContext.Provider>
+        </span>
+    );
+
     return tooltipProps.title
         ? (
-            <Tooltip
-                visible={tooltipVisible}
-                onVisibleChange={handleChangeTooltipVisible}
+            <ToolbarTooltip
+                popupOpen={dropdownVisible}
                 {...tooltipProps}
             >
-                <span ref={spanRef}>
-                    <TooltipWrapperContext.Provider value={contextValue}>
-                        {children}
-                    </TooltipWrapperContext.Provider>
-                </span>
-            </Tooltip>
+                {content}
+            </ToolbarTooltip>
         )
-        : (
-            <span ref={spanRef}>
-                {children}
-            </span>
-        );
+        : content;
 });
 
-export function DropdownWrapper(props: Omit<Partial<IDropdownProps>, 'overlay'> & { overlay: ReactNode; align?: 'start' | 'end' | 'center' }) {
-    const { children, overlay, disabled, align = 'start' } = props;
+export function DropdownWrapper(props: Omit<Partial<IDropdownProps>, 'overlay'> & {
+    overlay: ReactNode;
+    align?: 'start' | 'end' | 'center';
+    dropdownComponent?: ComponentType<IDropdownProps>;
+}) {
+    const { children, overlay, disabled, align, dropdownComponent: DropdownComponent = Dropdown } = props;
+    const { direction } = useContext(ConfigContext);
     const { dropdownVisible, setDropdownVisible } = useContext(TooltipWrapperContext);
+    const triggerRef = useRef<HTMLDivElement>(null);
+    const overlayRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (disabled && dropdownVisible) {
+            setDropdownVisible(false);
+        }
+    }, [disabled, dropdownVisible, setDropdownVisible]);
+
+    useEffect(() => {
+        const ownerDocument = triggerRef.current?.ownerDocument;
+        if (!dropdownVisible || !ownerDocument) {
+            return;
+        }
+
+        const handlePointerDown = (event: PointerEvent) => {
+            const target = event.target as (Node & Partial<Pick<Element, 'closest'>>) | null;
+            const isPortaledOverlay = typeof target?.closest === 'function' &&
+                target.closest('[data-slot="popover-content"], [role="dialog"]') != null;
+            if (
+                !target ||
+                triggerRef.current?.contains(target) ||
+                overlayRef.current?.contains(target) ||
+                isPortaledOverlay
+            ) {
+                return;
+            }
+
+            setDropdownVisible(false);
+        };
+
+        ownerDocument.addEventListener('pointerdown', handlePointerDown, true);
+        return () => ownerDocument.removeEventListener('pointerdown', handlePointerDown, true);
+    }, [dropdownVisible, setDropdownVisible]);
 
     function handleVisibleChange(visible: boolean) {
         setDropdownVisible(visible);
     }
 
     return (
-        <Dropdown
-            align={align}
+        <DropdownComponent
+            align={align ?? (direction === 'rtl' ? 'end' : 'start')}
             overlay={(
-                <div className="univer-grid univer-gap-2">
+                <div ref={overlayRef} className="univer-grid univer-gap-2">
                     {overlay}
                 </div>
             )}
@@ -107,46 +216,56 @@ export function DropdownWrapper(props: Omit<Partial<IDropdownProps>, 'overlay'> 
             open={dropdownVisible}
             onOpenChange={handleVisibleChange}
         >
-            <div className="univer-h-full" onClick={(e) => e.stopPropagation()}>
+            <div ref={triggerRef} className="univer-h-full" onClick={(e) => e.stopPropagation()}>
                 {children}
             </div>
-        </Dropdown>
+        </DropdownComponent>
     );
 }
 
-function Label({ icon, value, option, onOptionSelect }: {
+export function DropdownMenuLabel({ icon, value, option, preserveStrokeWidth, onOptionSelect }: {
     icon?: IMenuItem['icon'];
     value?: string | number;
     option: IValueOption;
+    preserveStrokeWidth?: boolean;
     onOptionSelect?: (option: IValueOption) => void;
 }) {
     const onChange = (v: string | number) => {
-        onOptionSelect?.({ value: v, label: option?.label, commandId: option?.commandId });
+        onOptionSelect?.({ ...option, value: v });
     };
 
     const hasCheckMark = typeof option.label === 'string' || (typeof option.label === 'object' && option.label?.selectable !== false);
+    const selected = hasCheckMark && String(value) === String(option.value);
 
     return (
-        <div
-            className={clsx('univer-relative univer-flex univer-items-center univer-gap-2', {
-                'univer-pl-6': hasCheckMark,
-            })}
-        >
-            {hasCheckMark && String(value) === String(option.value) && (
-                <CheckMarkIcon
-                    className="univer-absolute univer-left-1 univer-top-0.5 univer-text-primary-600"
+        <div className="univer-flex univer-w-full univer-items-center univer-justify-between univer-gap-2">
+            <div className="univer-flex univer-min-w-0 univer-items-center univer-gap-2">
+                <CustomLabel
+                    className="univer-text-sm"
+                    icon={icon}
+                    preserveStrokeWidth={preserveStrokeWidth}
+                    value$={option.value$}
+                    value={option.value}
+                    label={option.label}
+                    onChange={onChange}
                 />
+            </div>
+            {hasCheckMark && (
+                <span className="univer-ml-auto univer-flex univer-w-4 univer-flex-shrink-0 univer-justify-end">
+                    {selected && (
+                        <CheckMarkIcon
+                            className="univer-text-primary-600"
+                            preserveStrokeWidth={preserveStrokeWidth}
+                        />
+                    )}
+                </span>
             )}
-            <CustomLabel
-                className="univer-text-sm"
-                icon={icon}
-                value$={option.value$}
-                value={option.value}
-                label={option.label}
-                onChange={onChange}
-            />
         </div>
     );
+}
+
+function getOptionKey(option: IValueOption) {
+    return String(option.id ?? option.commandId ?? option.value ?? (typeof option.label === 'string' ? option.label : option.label?.name));
 }
 
 export function DropdownMenuWrapper({
@@ -156,7 +275,10 @@ export function DropdownMenuWrapper({
     options,
     children,
     disabled,
+    preserveStrokeWidth,
     onOptionSelect,
+    dropdownComponent,
+    dropdownMenuComponent: DropdownMenuComponent = DropdownMenu,
 }: {
     menuId: string;
     slot?: boolean;
@@ -164,16 +286,89 @@ export function DropdownMenuWrapper({
     options: IValueOption[];
     children: ReactNode;
     disabled?: boolean;
+    preserveStrokeWidth?: boolean;
     onOptionSelect: (option: IValueOption) => void;
+    dropdownComponent?: ComponentType<IDropdownProps>;
+    dropdownMenuComponent?: ComponentType<IDropdownMenuProps>;
 }) {
     const { dropdownVisible, setDropdownVisible } = useContext(TooltipWrapperContext);
+    const shortcutService = useDependency(IShortcutService);
+    const contextService = useDependency(IContextService);
+    const instanceService = useDependency(IUniverInstanceService);
+    const layoutService = useDependency(ILayoutService);
+    const editorFocusRef = useRef<{ element: HTMLElement; owner?: string } | null>(null);
+    const menuContentRef = useRef<HTMLElement | null>(null);
+    const sheetTargetRef = useRef<{ unitId: string; sheetId: string; valid: boolean } | null>(null);
+    const sheetTarget = sheetTargetRef.current;
+
+    useEffect(() => {
+        const target = sheetTargetRef.current;
+        if (!dropdownVisible || !target) {
+            return undefined;
+        }
+
+        const subscription = instanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET).pipe(
+            switchMap((workbook) => workbook
+                ? workbook.activeSheet$.pipe(map((sheet) => ({ workbook, sheetId: sheet?.getSheetId() })))
+                : of(null))
+        ).subscribe((current) => {
+            if (current?.workbook.getUnitId() !== target.unitId || current?.sheetId !== target.sheetId) {
+                target.valid = false;
+                editorFocusRef.current = null;
+                setDropdownVisible(false);
+            }
+        });
+
+        return () => subscription.unsubscribe();
+    }, [dropdownVisible, instanceService, setDropdownVisible]);
+
+    useEffect(() => () => {
+        if (sheetTargetRef.current) {
+            sheetTargetRef.current.valid = false;
+            sheetTargetRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!dropdownVisible) {
+            return undefined;
+        }
+
+        const shortcutEscape = shortcutService.forceEscape();
+        return () => shortcutEscape.dispose();
+    }, [dropdownVisible, shortcutService]);
+
+    useEffect(() => {
+        if (disabled && dropdownVisible) {
+            setDropdownVisible(false);
+        }
+    }, [disabled, dropdownVisible, setDropdownVisible]);
 
     const menuManagerService = useDependency(IMenuManagerService);
-    const [hiddenStates, setHiddenStates] = useState<Record<string, boolean>>({});
-
-    const menuItems = useMemo(() => {
-        return menuId ? menuManagerService.getMenuByPositionKey(menuId) : [];
-    }, [menuId]);
+    const resolveMenuItems = () => menuId ? menuManagerService.getMenuByPositionKey(menuId) : [];
+    const menuItems = useObservable(
+        () => menuManagerService.menuChanged$.pipe(map(resolveMenuItems), startWith(resolveMenuItems())),
+        resolveMenuItems(),
+        false,
+        [menuId, menuManagerService]
+    );
+    const hiddenStates$ = useMemo(() => {
+        const itemStates = menuItems.map((item) => {
+            const hidden$ = item.children
+                ? combineLatest(item.children.map((subItem) => subItem.item?.hidden$ ?? of(false))).pipe(
+                    map((hiddenValues) => hiddenValues.every(Boolean))
+                )
+                : item.item?.hidden$ ?? of(false);
+            return hidden$.pipe(map((hidden) => [String(item.key), hidden] as const));
+        });
+        return itemStates.length
+            ? merge(...itemStates).pipe(
+                scan((states, [key, hidden]) => ({ ...states, [key]: hidden }), {} as Record<string, boolean>),
+                startWith({})
+            )
+            : of({});
+    }, [menuItems]);
+    const hiddenStates = useObservable<Record<string, boolean>>(hiddenStates$, {});
 
     const filteredMenuItems = useMemo(() => {
         return menuItems.filter((item) => {
@@ -187,54 +382,111 @@ export function DropdownMenuWrapper({
     }, [menuItems, hiddenStates]);
 
     function handleVisibleChange(visible: boolean) {
+        if (visible) {
+            const element = document.activeElement;
+            const workbook = contextService.getContextValue(FOCUSING_SHEET)
+                ? instanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)
+                : null;
+            const sheetId = workbook?.getActiveSheet()?.getSheetId();
+            if (sheetTargetRef.current) {
+                sheetTargetRef.current.valid = false;
+            }
+            sheetTargetRef.current = workbook && sheetId ? { unitId: workbook.getUnitId(), sheetId, valid: true } : null;
+            const owner = getEmbedBoundaryOwner(element);
+            editorFocusRef.current = element instanceof HTMLElement && element.dataset.uComp === 'editor'
+                ? { element, owner }
+                : null;
+        }
         setDropdownVisible(visible);
     }
 
-    useEffect(() => {
-        const subscriptions: Subscription[] = [];
-
-        menuItems.forEach((item) => {
-            if (!item.children) {
-                if (item.item?.hidden$) {
-                    const sub = item.item.hidden$.subscribe((hidden) => {
-                        setHiddenStates((prev) => ({
-                            ...prev,
-                            [item.key]: hidden,
-                        }));
-                    });
-                    subscriptions.push(sub);
-                }
-            } else {
-                const hiddenObservables = item.children.map((subItem) => subItem.item?.hidden$ ?? of(false));
-
-                const sub = combineLatest(hiddenObservables).subscribe((hiddenValues) => {
-                    const isAllHidden = hiddenValues.every((hidden) => hidden === true);
-                    setHiddenStates((prev) => ({
-                        ...prev,
-                        [item.key]: isAllHidden,
-                    }));
-                });
-
-                subscriptions.push(sub);
+    function handleCloseAutoFocus(event: Event) {
+        const editorFocus = editorFocusRef.current;
+        editorFocusRef.current = null;
+        if (sheetTargetRef.current && !sheetTargetRef.current.valid) {
+            event.preventDefault();
+            const activeElement = document.activeElement;
+            const focusInClosingMenu = event.target instanceof HTMLElement && event.target.contains(activeElement);
+            if (activeElement === document.body || focusInClosingMenu) {
+                layoutService.focus();
             }
-        });
+            return;
+        }
+        if (!editorFocus?.element.isConnected || getEmbedBoundaryOwner(editorFocus.element) !== editorFocus.owner) {
+            return;
+        }
 
-        return () => {
-            subscriptions.forEach((sub) => sub?.unsubscribe());
-            setHiddenStates({});
-        };
-    }, [menuItems]);
+        const activeElement = editorFocus.element.ownerDocument.activeElement;
+        const focusInClosingMenu = event.target instanceof HTMLElement && event.target.contains(activeElement);
+        if (activeElement !== editorFocus.element.ownerDocument.body && activeElement !== editorFocus.element && !focusInClosingMenu) {
+            return;
+        }
+
+        event.preventDefault();
+        editorFocus.element.focus({ preventScroll: true });
+    }
+
+    const handleMenuFocus: NonNullable<IDropdownMenuProps['onFocusCapture']> = (event) => {
+        menuContentRef.current = event.currentTarget;
+    };
+
+    const handleClosedMenuPointer: NonNullable<IDropdownMenuProps['onPointerMoveCapture']> = (event) => {
+        if (event.currentTarget.dataset.state === 'closed') {
+            // Exit-animation DOM must not take focus back from the editor or a newly opened menu.
+            event.preventDefault();
+            event.stopPropagation();
+        }
+    };
+
+    const handlePointerDownOutside: NonNullable<IDropdownMenuProps['onPointerDownOutside']> = (event) => {
+        const content = menuContentRef.current;
+        const triggerId = content?.getAttribute('aria-labelledby');
+        const trigger = triggerId ? content?.ownerDocument.getElementById(triggerId) : null;
+        if (trigger?.contains(event.detail.originalEvent.target as Node)) {
+            // The Ribbon trigger owns toggling, including when the previous menu is still exiting.
+            event.preventDefault();
+            return;
+        }
+        if (editorFocusRef.current && (!editorFocusRef.current.owner || getEmbedBoundaryOwner(event.target) !== editorFocusRef.current.owner)) {
+            editorFocusRef.current = null;
+        }
+        keepInteractionInsideSameEmbedBoundary(event);
+    };
+
+    function handleEmbedBoundaryFocusOutside(event: { currentTarget: EventTarget | null; target: EventTarget | null; preventDefault: () => void }) {
+        keepInteractionInsideSameEmbedBoundary(event);
+    }
+
+    function handleOptionSelect(option: IValueOption) {
+        const target = sheetTarget;
+        if (target && target !== sheetTargetRef.current) {
+            return;
+        }
+        if (target && (
+            !target.valid ||
+            instanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)?.getUnitId() !== target.unitId ||
+            instanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)?.getActiveSheet()?.getSheetId() !== target.sheetId
+        )) {
+            editorFocusRef.current = null;
+            setDropdownVisible(false);
+            return;
+        }
+        onOptionSelect(option);
+        setDropdownVisible(false);
+    }
 
     if (slot) {
         return (
             <DropdownWrapper
                 disabled={disabled}
-                overlay={options.map((option, index) => (
-                    <Label
-                        key={index}
+                dropdownComponent={dropdownComponent}
+                overlay={options.map((option) => (
+                    <DropdownMenuLabel
+                        key={getOptionKey(option)}
                         value={value}
                         option={option}
-                        onOptionSelect={onOptionSelect}
+                        preserveStrokeWidth={preserveStrokeWidth}
+                        onOptionSelect={handleOptionSelect}
                     />
                 ))}
             >
@@ -245,28 +497,42 @@ export function DropdownMenuWrapper({
 
     // options menu
     if (options?.length) {
+        const isSingleEmbeddedCustomPanel = filteredMenuItems.length === 0 &&
+            options.length === 1 &&
+            typeof options[0].label === 'object' &&
+            options[0].label?.hoverable === false &&
+            options[0].label.props?.embedded === true;
         const items: IDropdownMenuProps['items'] = options.map((option) => ({
             type: 'item',
             className: clsx({
-                'focus:univer-bg-white': typeof option.label !== 'string' && option.label?.hoverable === false,
+                'focus:univer-bg-gray-0 dark:focus:!univer-bg-gray-800':
+                    typeof option.label !== 'string' && option.label?.hoverable === false,
+                '!univer-p-0': isSingleEmbeddedCustomPanel,
             }),
             children: (
-                <Label
+                <DropdownMenuLabel
                     icon={option.icon}
                     value={value}
                     option={option}
-                    onOptionSelect={onOptionSelect}
+                    preserveStrokeWidth={preserveStrokeWidth}
+                    onOptionSelect={handleOptionSelect}
                 />
             ),
             disabled: option.disabled,
             onSelect: () => {
                 if (typeof option.value === 'undefined') return;
 
-                onOptionSelect?.({
+                handleOptionSelect({
                     ...option,
                 });
             },
         }));
+
+        if (filteredMenuItems.length) {
+            items.push({
+                type: 'separator',
+            });
+        }
 
         for (const menuItem of filteredMenuItems) {
             if (!menuItem.item) continue;
@@ -280,9 +546,10 @@ export function DropdownMenuWrapper({
             items.push({
                 type: 'item',
                 children: (
-                    <Label
+                    <DropdownMenuLabel
                         icon={icon}
                         value={value}
+                        preserveStrokeWidth={preserveStrokeWidth}
                         option={{
                             label: {
                                 name: title,
@@ -292,7 +559,7 @@ export function DropdownMenuWrapper({
                     />
                 ),
                 onSelect: () => {
-                    onOptionSelect?.({
+                    handleOptionSelect({
                         commandId,
                         id,
                     });
@@ -301,15 +568,23 @@ export function DropdownMenuWrapper({
         }
 
         return (
-            <DropdownMenu
+            <DropdownMenuComponent
                 align="start"
+                className={clsx({ '!univer-p-0': isSingleEmbeddedCustomPanel })}
                 items={items}
                 disabled={disabled}
                 open={dropdownVisible}
                 onOpenChange={handleVisibleChange}
+                onFocusCapture={handleMenuFocus}
+                onPointerMoveCapture={handleClosedMenuPointer}
+                onPointerOutCapture={handleClosedMenuPointer}
+                onCloseAutoFocus={handleCloseAutoFocus}
+                onPointerDownOutside={handlePointerDownOutside}
+                onFocusOutside={handleEmbedBoundaryFocusOutside}
+                onInteractOutside={handleEmbedBoundaryFocusOutside}
             >
                 {children}
-            </DropdownMenu>
+            </DropdownMenuComponent>
         );
     } else {
         const items: IDropdownMenuProps['items'] = [];
@@ -325,9 +600,10 @@ export function DropdownMenuWrapper({
                 items.push({
                     type: 'item',
                     children: (
-                        <Label
+                        <DropdownMenuLabel
                             icon={icon}
                             value={value}
+                            preserveStrokeWidth={preserveStrokeWidth}
                             option={{
                                 label: {
                                     name: title,
@@ -337,7 +613,7 @@ export function DropdownMenuWrapper({
                         />
                     ),
                     onSelect: () => {
-                        onOptionSelect?.({
+                        handleOptionSelect({
                             commandId,
                             id,
                         });
@@ -349,15 +625,22 @@ export function DropdownMenuWrapper({
         }
 
         return (
-            <DropdownMenu
+            <DropdownMenuComponent
                 align="start"
                 items={items}
                 disabled={disabled}
                 open={dropdownVisible}
                 onOpenChange={handleVisibleChange}
+                onFocusCapture={handleMenuFocus}
+                onPointerMoveCapture={handleClosedMenuPointer}
+                onPointerOutCapture={handleClosedMenuPointer}
+                onCloseAutoFocus={handleCloseAutoFocus}
+                onPointerDownOutside={handlePointerDownOutside}
+                onFocusOutside={handleEmbedBoundaryFocusOutside}
+                onInteractOutside={handleEmbedBoundaryFocusOutside}
             >
                 {children}
-            </DropdownMenu>
+            </DropdownMenuComponent>
         );
     }
 }

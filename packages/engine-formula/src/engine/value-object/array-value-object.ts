@@ -16,7 +16,7 @@
 
 import type { Nullable } from '@univerjs/core';
 import type { callbackMapFnType, IArrayValueObject } from './base-value-object';
-import { isRealNum } from '@univerjs/core';
+import { DateSystem, isRealNum } from '@univerjs/core';
 import { BooleanValue } from '../../basics/common';
 import { ERROR_TYPE_SET, ErrorType } from '../../basics/error-type';
 import { CELL_INVERTED_INDEX_CACHE } from '../../basics/inverted-index-cache';
@@ -58,11 +58,11 @@ enum ArrayCalculateType {
     SINGLE,
 }
 
-export function fromObjectToString(array: IArrayValueObject) {
-    return '';
-}
-
-export function transformToValueObject(array: Array<Array<number | string | boolean | null>> = [], isIgnoreNumberPattern: boolean = false) {
+export function transformToValueObject(
+    array: Array<Array<number | string | boolean | null>> = [],
+    isIgnoreNumberPattern: boolean = false,
+    dateSystem?: DateSystem
+) {
     const arrayValueList: BaseValueObject[][] = [];
 
     for (let r = 0; r < array.length; r++) {
@@ -75,7 +75,7 @@ export function transformToValueObject(array: Array<Array<number | string | bool
         for (let c = 0; c < row.length; c++) {
             const cell = row[c];
 
-            arrayValueList[r][c] = ValueObjectFactory.create(cell, isIgnoreNumberPattern);
+            arrayValueList[r][c] = ValueObjectFactory.create(cell, isIgnoreNumberPattern, dateSystem);
         }
     }
 
@@ -114,8 +114,8 @@ export class ArrayValueObject extends BaseValueObject {
      * @param rawValue
      * @returns
      */
-    static create(rawValue: string | IArrayValueObject) {
-        return new ArrayValueObject(rawValue);
+    static create(rawValue: string | IArrayValueObject, dateSystem?: DateSystem) {
+        return new ArrayValueObject(rawValue, dateSystem);
     }
 
     /**
@@ -152,6 +152,10 @@ export class ArrayValueObject extends BaseValueObject {
 
     private _currentColumn: number = -1;
 
+    private _useInvertedIndexCache: boolean = false;
+
+    private _legacyImplicitForAggregate: boolean = false;
+
     private _sliceCache = new Map<string, ArrayValueObject>();
 
     private _flattenCache: Nullable<ArrayValueObject>;
@@ -168,10 +172,10 @@ export class ArrayValueObject extends BaseValueObject {
         numberPosition: number[];
     }>;
 
-    constructor(rawValue: string | IArrayValueObject) {
-        super(typeof rawValue === 'string' ? rawValue as string : fromObjectToString(rawValue as IArrayValueObject));
+    constructor(rawValue: string | IArrayValueObject, dateSystem?: DateSystem) {
+        super(dateSystem);
 
-        this._values = this._formatValue(rawValue);
+        this._values = this._formatValue(rawValue, dateSystem);
     }
 
     override dispose(): void {
@@ -239,6 +243,18 @@ export class ArrayValueObject extends BaseValueObject {
 
     getCurrentColumn() {
         return this._currentColumn;
+    }
+
+    usesInvertedIndexCache() {
+        return this._useInvertedIndexCache;
+    }
+
+    usesLegacyImplicitForAggregate() {
+        return this._legacyImplicitForAggregate;
+    }
+
+    setLegacyImplicitForAggregate(value: boolean) {
+        this._legacyImplicitForAggregate = value;
     }
 
     override getArrayValue() {
@@ -639,13 +655,22 @@ export class ArrayValueObject extends BaseValueObject {
         valueObject: BaseValueObject,
         searchType: ArrayOrderSearchType = ArrayOrderSearchType.MIN,
         isDesc = false,
-        isFuzzyMatching = false
+        isFuzzyMatching = false,
+        keepFirstNearest = false
     ) {
         let result: Nullable<BaseValueObject>;
         let maxOrMin: Nullable<BaseValueObject>;
         let resultPosition: Nullable<{ row: number; column: number }>;
 
         let maxOrMinPosition: Nullable<{ row: number; column: number }>;
+
+        const _isNearer = (itemValue: BaseValueObject, currentValue: BaseValueObject) => {
+            const distance = itemValue.minus(valueObject).abs();
+            const currentDistance = currentValue.minus(valueObject).abs();
+            return keepFirstNearest
+                ? distance.isLessThan(currentDistance).getValue() === true
+                : distance.isLessThanOrEqual(currentDistance).getValue() === true;
+        };
 
         const _handleMatch = (itemValue: Nullable<BaseValueObject>, row: number, column: number) => {
             // Skip the blank cells
@@ -656,6 +681,8 @@ export class ArrayValueObject extends BaseValueObject {
             let matchObject: Nullable<BaseValueObject>;
             if (isFuzzyMatching === true) {
                 matchObject = itemValue.compare(valueObject as StringValueObject, compareToken.EQUALS);
+            } else if (searchType === ArrayOrderSearchType.NORMAL && itemValue.isNumber() && valueObject.isNumber()) {
+                matchObject = BooleanValueObject.create(Number(itemValue.getValue()) === Number(valueObject.getValue()));
             } else {
                 matchObject = itemValue.isEqual(valueObject);
             }
@@ -670,11 +697,7 @@ export class ArrayValueObject extends BaseValueObject {
                 if (itemValue.isGreaterThan(valueObject).getValue() === true) {
                     if (
                         maxOrMin == null ||
-                        itemValue
-                            .minus(valueObject)
-                            .abs()
-                            .isLessThanOrEqual(maxOrMin.minus(valueObject).abs())
-                            .getValue() === true
+                        _isNearer(itemValue, maxOrMin)
                     ) {
                         maxOrMin = itemValue;
                         maxOrMinPosition = { row, column };
@@ -684,11 +707,7 @@ export class ArrayValueObject extends BaseValueObject {
                 if (itemValue.isLessThan(valueObject).getValue() === true) {
                     if (
                         maxOrMin == null ||
-                        itemValue
-                            .minus(valueObject)
-                            .abs()
-                            .isLessThanOrEqual(maxOrMin.minus(valueObject).abs())
-                            .getValue() === true
+                        _isNearer(itemValue, maxOrMin)
                     ) {
                         maxOrMin = itemValue;
                         maxOrMinPosition = { row, column };
@@ -869,9 +888,7 @@ export class ArrayValueObject extends BaseValueObject {
                 return true; // continue
             }
 
-            const result = accumulatorAll.isLessThan(valueObject) as BooleanValueObject;
-
-            if (result.getValue()) {
+            if (Number(accumulatorAll.getValue()) < Number(valueObject.getValue())) {
                 accumulatorAll = valueObject as NumberValueObject;
             }
         });
@@ -944,9 +961,16 @@ export class ArrayValueObject extends BaseValueObject {
         return accumulatorAll;
     }
 
+    override withDateSystem(dateSystem: DateSystem): this {
+        super.withDateSystem(dateSystem);
+        // Child values read their own date system during parsing and formatting.
+        this._values.forEach((row) => row.forEach((valueObject) => valueObject?.withDateSystem(dateSystem)));
+        this._defaultValue?.withDateSystem(dateSystem);
+        return this;
+    }
+
     override getNegative(): BaseValueObject {
-        const arrayValueObject = ArrayValueObject.create('{0}');
-        return arrayValueObject.minus(this);
+        return this.mapValue((valueObject) => NumberValueObject.create(0).minus(valueObject));
     }
 
     override getReciprocal(): BaseValueObject {
@@ -1023,12 +1047,11 @@ export class ArrayValueObject extends BaseValueObject {
             const rowList: BaseValueObject[] = [];
             for (let c = 0; c < columnCount; c++) {
                 const row = this._values?.[r];
+                const currentValue = this.getValueOrDefault(r, c);
 
-                if (row == null) {
+                if (row == null && currentValue == null) {
                     rowList[c] = ErrorValueObject.create(ErrorType.VALUE);
                 } else {
-                    const currentValue = row[c] || this._defaultValue;
-
                     if (currentValue) {
                         rowList[c] = callbackFn(currentValue, r, c);
                     } else {
@@ -1522,11 +1545,14 @@ export class ArrayValueObject extends BaseValueObject {
         const sheetId = this.getSheetId();
         const startRow = this.getCurrentRow();
         const startColumn = this.getCurrentColumn();
+        const isWildcardComparison = batchOperatorType === BatchOperatorType.COMPARE &&
+            valueObject.isString() &&
+            isWildcard(String(valueObject.getValue()));
         /**
          * If comparison operations are conducted for a single numerical value,
          * then retrieve the judgment from the inverted index. This enhances performance.
          */
-        if (batchOperatorType === BatchOperatorType.COMPARE) {
+        if (batchOperatorType === BatchOperatorType.COMPARE && this._useInvertedIndexCache && !isWildcardComparison) {
             const { rowsInCache, rowsNotInCache } = CELL_INVERTED_INDEX_CACHE.canUseCache(
                 unitId,
                 sheetId,
@@ -1620,13 +1646,15 @@ export class ArrayValueObject extends BaseValueObject {
                             );
                         }
 
-                        CELL_INVERTED_INDEX_CACHE.setContinueBuildingCache(
-                            unitId,
-                            sheetId,
-                            column + startColumn,
-                            start,
-                            end
-                        );
+                        if (this._useInvertedIndexCache) {
+                            CELL_INVERTED_INDEX_CACHE.setContinueBuildingCache(
+                                unitId,
+                                sheetId,
+                                column + startColumn,
+                                start,
+                                end
+                            );
+                        }
                     }
                 }
 
@@ -1650,13 +1678,15 @@ export class ArrayValueObject extends BaseValueObject {
             );
         }
 
-        CELL_INVERTED_INDEX_CACHE.setContinueBuildingCache(
-            unitId,
-            sheetId,
-            column + startColumn,
-            startRow,
-            startRow + rowCount - 1
-        );
+        if (this._useInvertedIndexCache) {
+            CELL_INVERTED_INDEX_CACHE.setContinueBuildingCache(
+                unitId,
+                sheetId,
+                column + startColumn,
+                startRow,
+                startRow + rowCount - 1
+            );
+        }
     }
 
     // eslint-disable-next-line
@@ -1736,13 +1766,15 @@ export class ArrayValueObject extends BaseValueObject {
             result[r][column] = ErrorValueObject.create(ErrorType.NA);
         }
 
-        CELL_INVERTED_INDEX_CACHE.set(
-            unitId,
-            sheetId,
-            column + startColumn,
-            currentValue?.isNull() ? null : currentValue?.getValue(),
-            r + startRow
-        );
+        if (this._useInvertedIndexCache) {
+            CELL_INVERTED_INDEX_CACHE.set(
+                unitId,
+                sheetId,
+                column + startColumn,
+                currentValue?.isNull() ? null : currentValue?.getValue(),
+                r + startRow
+            );
+        }
     }
 
     // eslint-disable-next-line max-lines-per-function, complexity
@@ -1859,7 +1891,12 @@ export class ArrayValueObject extends BaseValueObject {
             result.push(rowList);
         }
 
-        return this._createNewArray(result, rowCount, columnCount);
+        const newArray = this._createNewArray(result, rowCount, columnCount);
+        if (batchOperatorType === BatchOperatorType.PLUS) {
+            newArray.setLegacyImplicitForAggregate(true);
+        }
+
+        return newArray;
     }
 
     private _checkArrayCalculateType(valueObject: ArrayValueObject) {
@@ -1877,7 +1914,7 @@ export class ArrayValueObject extends BaseValueObject {
         return ArrayCalculateType.PRODUCT;
     }
 
-    private _formatValue(rawValue: string | IArrayValueObject) {
+    private _formatValue(rawValue: string | IArrayValueObject, dateSystem?: DateSystem) {
         if (typeof rawValue !== 'string') {
             rawValue = rawValue as IArrayValueObject;
 
@@ -1892,6 +1929,10 @@ export class ArrayValueObject extends BaseValueObject {
             this._currentRow = rawValue.row;
 
             this._currentColumn = rawValue.column;
+
+            this._useInvertedIndexCache = rawValue.useInvertedIndexCache === true;
+
+            this._legacyImplicitForAggregate = rawValue.legacyImplicitForAggregate === true;
 
             return rawValue.calculateValueList;
         }
@@ -1912,7 +1953,7 @@ export class ArrayValueObject extends BaseValueObject {
             const row: BaseValueObject[] = [];
             for (let c = 0; c < columnArrayCount; c++) {
                 const cellRaw = columnArray[c].trim();
-                row.push(ValueObjectFactory.create(cellRaw));
+                row.push(ValueObjectFactory.create(cellRaw, false, dateSystem));
             }
             result.push(row);
         }
@@ -1928,8 +1969,8 @@ export class ArrayValueObject extends BaseValueObject {
         result: Nullable<BaseValueObject>[][],
         rowCount: number,
         columnCount: number,
-        row: number = -1,
-        column: number = -1
+        row: number = this._currentRow,
+        column: number = this._currentColumn
     ) {
         if (this._currentColumn === -1 || this._currentRow === -1) {
             row = -1;
@@ -1946,12 +1987,16 @@ export class ArrayValueObject extends BaseValueObject {
             column,
         };
 
-        return ArrayValueObject.create(arrayValueObjectData);
+        return ArrayValueObject.create(arrayValueObjectData, this.getDateSystem());
     }
 }
 
 export class ValueObjectFactory {
-    static create(rawValue: string | number | boolean | null, isIgnoreNumberPattern: boolean = false): BaseValueObject {
+    static create(
+        rawValue: string | number | boolean | null,
+        isIgnoreNumberPattern: boolean = false,
+        dateSystem: DateSystem = DateSystem.Date1900
+    ): BaseValueObject {
         if (rawValue == null) {
             return NullValueObject.create();
         }
@@ -1967,28 +2012,33 @@ export class ValueObjectFactory {
                 return createBooleanValueObjectByRawValue(rawValue);
             }
 
+            if (isStringWrappedByDoubleQuotes(rawValue)) {
+                return createStringValueObjectByRawValue(rawValue).withDateSystem(dateSystem);
+            }
+
             // "000123456" should be treated as string, not number, but "123456" should be treated as number
             if (isRealNum(rawValue) && Number(rawValue).toString() === rawValue.trim()) {
-                return NumberValueObject.create(Number(rawValue));
+                return NumberValueObject.create(Number(rawValue)).withDateSystem(dateSystem);
             }
 
             // value ignore whether it is a number pattern
             if (!isIgnoreNumberPattern) {
-                const { isNumberPattern, value, pattern } = stringIsNumberPattern(rawValue);
+                // Date text must be converted to a serial using the current workbook date system.
+                const { isNumberPattern, value, pattern } = stringIsNumberPattern(rawValue, { dateSystem });
                 if (isNumberPattern) {
-                    return NumberValueObject.create(value as number, pattern as string);
+                    return NumberValueObject.create(value as number, pattern as string).withDateSystem(dateSystem);
                 }
             }
 
             const rawValueSingleLine = rawValue.replace(/\n/g, '').replace(/\r/g, '');
             if (!isStringWrappedByDoubleQuotes(rawValueSingleLine) && regexTestArrayValue(rawValueSingleLine)) {
-                return ArrayValueObject.create(rawValueSingleLine);
+                return ArrayValueObject.create(rawValueSingleLine, dateSystem);
             }
 
-            return createStringValueObjectByRawValue(rawValue);
+            return createStringValueObjectByRawValue(rawValue).withDateSystem(dateSystem);
         }
         if (typeof rawValue === 'number') {
-            return createNumberValueObjectByRawValue(rawValue);
+            return createNumberValueObjectByRawValue(rawValue).withDateSystem(dateSystem);
         }
         return ErrorValueObject.create(ErrorType.VALUE);
     }

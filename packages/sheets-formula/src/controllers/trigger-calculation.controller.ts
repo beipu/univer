@@ -14,39 +14,32 @@
  * limitations under the License.
  */
 
-import type { ICommandInfo, IUnitRange, Nullable } from '@univerjs/core';
-import type {
-    IDirtyUnitFeatureMap,
-    IDirtyUnitOtherFormulaMap,
-    IDirtyUnitSheetNameMap,
-    IExecutionInProgressParams,
-    IFormulaDirtyData,
-    ISetFormulaCalculationNotificationMutation,
-    ISetFormulaCalculationStartMutation,
-} from '@univerjs/engine-formula';
-import type { ISetRangeValuesMutationParams } from '@univerjs/sheets';
+import type { ICommandInfo, IUnitRange, Nullable, Workbook } from '@univerjs/core';
+import type { IDirtyUnitDefinedNameMap, IDirtyUnitFeatureMap, IDirtyUnitOtherFormulaMap, IDirtyUnitSheetNameMap, IDirtyUnitSuperTableMap, IExecutionInProgressParams, IFormulaDirtyData, ISetFormulaCalculationNotificationMutation, ISetFormulaCalculationStartMutation } from '@univerjs/engine-formula';
 import type { IUniverSheetsFormulaBaseConfig } from '../config/config';
-import { Disposable, ICommandService, IConfigService, ILogService, Inject, LocaleService } from '@univerjs/core';
+import type { LocaleKey } from '../locale/types';
+import {
+    Disposable,
+    ICommandService,
+    IConfigService,
+    ILogService,
+    Inject,
+    IUniverInstanceService,
+    LocaleService,
+    UniverInstanceType,
+} from '@univerjs/core';
 import {
     ENGINE_FORMULA_CYCLE_REFERENCE_COUNT,
     ENGINE_FORMULA_RETURN_DEPENDENCY_TREE,
     FormulaDataModel,
     FormulaExecutedStateType,
     FormulaExecuteStageType,
-    IActiveDirtyManagerService,
-    RegisterOtherFormulaService,
     SetFormulaCalculationNotificationMutation,
     SetFormulaCalculationStartMutation,
     SetFormulaCalculationStopMutation,
     SetFormulaStringBatchCalculationMutation,
     SetTriggerFormulaCalculationStartMutation,
 } from '@univerjs/engine-formula';
-import {
-    ClearSelectionFormatCommand,
-    SetBorderCommand,
-    SetRangeValuesMutation,
-    SetStyleCommand,
-} from '@univerjs/sheets';
 import { BehaviorSubject } from 'rxjs';
 import { CalculationMode, PLUGIN_CONFIG_KEY_BASE } from '../config/config';
 
@@ -67,20 +60,6 @@ const NilProgress: ICalculationProgress = { done: 0, count: 0 };
 const lo = { onlyLocal: true };
 
 export class TriggerCalculationController extends Disposable {
-    private _waitingCommandQueue: ICommandInfo[] = [];
-
-    private _executingDirtyData: IFormulaDirtyData = {
-        forceCalculation: false,
-        dirtyRanges: [],
-        dirtyNameMap: {},
-        dirtyDefinedNameMap: {},
-        dirtyUnitFeatureMap: {},
-        dirtyUnitOtherFormulaMap: {},
-        clearDependencyTreeCache: {},
-    };
-
-    private _setTimeoutKey: NodeJS.Timeout | number = -1;
-
     private _startExecutionTime: number = 0;
 
     private _totalCalculationTaskCount: number = 0;
@@ -88,8 +67,6 @@ export class TriggerCalculationController extends Disposable {
     private _doneCalculationTaskCount: number = 0;
 
     private _executionInProgressParams: Nullable<IExecutionInProgressParams> = null;
-
-    private _restartCalculation = false;
 
     private readonly _progress$ = new BehaviorSubject<ICalculationProgress>(NilProgress);
 
@@ -103,13 +80,18 @@ export class TriggerCalculationController extends Disposable {
         this._doneCalculationTaskCount = 0;
         this._totalCalculationTaskCount = 1;
 
-        const analyzing = this._localeService.t('formula.progress.analyzing');
+        const analyzing = this._localeService.t<LocaleKey>('sheets-formula.progress.analyzing');
         this._emitProgress(analyzing);
     }
 
     private _calculateProgress(label: string): void {
         if (this._executionInProgressParams) {
-            const { totalFormulasToCalculate, completedFormulasCount, totalArrayFormulasToCalculate, completedArrayFormulasCount } = this._executionInProgressParams;
+            const {
+                totalFormulasToCalculate,
+                completedFormulasCount,
+                totalArrayFormulasToCalculate,
+                completedArrayFormulasCount,
+            } = this._executionInProgressParams;
             this._doneCalculationTaskCount = completedFormulasCount + completedArrayFormulasCount;
             this._totalCalculationTaskCount = totalFormulasToCalculate + totalArrayFormulasToCalculate;
 
@@ -124,7 +106,7 @@ export class TriggerCalculationController extends Disposable {
     private _completeProgress(): void {
         this._doneCalculationTaskCount = this._totalCalculationTaskCount = 1;
 
-        const done = this._localeService.t('formula.progress.done');
+        const done = this._localeService.t<LocaleKey>('sheets-formula.progress.done');
         this._emitProgress(done);
     }
 
@@ -136,18 +118,24 @@ export class TriggerCalculationController extends Disposable {
 
     constructor(
         @ICommandService private readonly _commandService: ICommandService,
-        @IActiveDirtyManagerService private readonly _activeDirtyManagerService: IActiveDirtyManagerService,
+        @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
         @ILogService private readonly _logService: ILogService,
         @IConfigService private readonly _configService: IConfigService,
         @Inject(FormulaDataModel) private readonly _formulaDataModel: FormulaDataModel,
-        @Inject(LocaleService) private readonly _localeService: LocaleService,
-        @Inject(RegisterOtherFormulaService) private readonly _registerOtherFormulaService: RegisterOtherFormulaService
+        @Inject(LocaleService) private readonly _localeService: LocaleService
     ) {
         super();
 
         this._commandExecutedListener();
         this._initialExecuteFormulaProcessListener();
+
         this._initialExecuteFormula();
+
+        this.disposeWithMe(
+            this._univerInstanceService.getTypeOfUnitAdded$<Workbook>(UniverInstanceType.UNIVER_SHEET).subscribe(() => {
+                this._initialExecuteFormula();
+            })
+        );
     }
 
     override dispose(): void {
@@ -155,8 +143,6 @@ export class TriggerCalculationController extends Disposable {
 
         this._progress$.next(NilProgress);
         this._progress$.complete();
-        // clear timer when disposed
-        clearTimeout(this._setTimeoutKey);
     }
 
     private _getCalculationMode(): CalculationMode {
@@ -180,198 +166,6 @@ export class TriggerCalculationController extends Disposable {
                 }
             })
         );
-
-        this.disposeWithMe(
-            this._commandService.onCommandExecuted((command: ICommandInfo, options) => {
-                if (!this._activeDirtyManagerService.get(command.id)) {
-                    return;
-                }
-
-                if (command.id === SetRangeValuesMutation.id) {
-                    const params = command.params as ISetRangeValuesMutationParams;
-
-                    if (
-                        (options && options.onlyLocal === true) ||
-                        params.trigger === SetStyleCommand.id ||
-                        params.trigger === SetBorderCommand.id ||
-                        params.trigger === ClearSelectionFormatCommand.id
-                    ) {
-                        return;
-                    }
-                }
-
-                this._waitingCommandQueue.push(command);
-
-                clearTimeout(this._setTimeoutKey);
-
-                this._setTimeoutKey = setTimeout(() => {
-                    const dirtyData = this._generateDirty(this._waitingCommandQueue);
-                    this._executingDirtyData = this._mergeDirty(this._executingDirtyData, dirtyData);
-
-                    if (this._executionInProgressParams == null) {
-                        this._commandService.executeCommand(SetFormulaCalculationStartMutation.id, { ...this._executingDirtyData }, lo);
-                    } else {
-                        this._restartCalculation = true;
-                        this._commandService.executeCommand(SetFormulaCalculationStopMutation.id, {});
-                    }
-
-                    this._waitingCommandQueue = [];
-                }, 100);
-            })
-        );
-    }
-
-    private _generateDirty(commands: ICommandInfo[]) {
-        const allDirtyRanges: IUnitRange[] = [];
-        const allDirtyNameMap: IDirtyUnitSheetNameMap = {};
-        const allDirtyDefinedNameMap: IDirtyUnitSheetNameMap = {};
-        const allDirtyUnitFeatureMap: IDirtyUnitFeatureMap = {};
-        const allDirtyUnitOtherFormulaMap: IDirtyUnitOtherFormulaMap = {};
-        const allClearDependencyTreeCache: IDirtyUnitSheetNameMap = {};
-        let allForceCalculation = false;
-
-        // const numfmtItemMap: INumfmtItemMap = Tools.deepClone(this._formulaDataModel.getNumfmtItemMap());
-
-        for (const command of commands) {
-            const conversion = this._activeDirtyManagerService.get(command.id);
-
-            if (conversion == null) {
-                continue;
-            }
-
-            const params = conversion.getDirtyData(command);
-
-            const { dirtyRanges, dirtyNameMap, dirtyDefinedNameMap, dirtyUnitFeatureMap, dirtyUnitOtherFormulaMap, clearDependencyTreeCache, forceCalculation = false } = params;
-
-            if (dirtyRanges != null) {
-                this._mergeDirtyRanges(allDirtyRanges, dirtyRanges);
-            }
-
-            if (dirtyNameMap != null) {
-                this._mergeDirtyNameMap(allDirtyNameMap, dirtyNameMap);
-            }
-
-            if (dirtyDefinedNameMap != null) {
-                this._mergeDirtyNameMap(allDirtyDefinedNameMap, dirtyDefinedNameMap);
-            }
-
-            if (dirtyUnitFeatureMap != null) {
-                this._mergeDirtyUnitFeatureOrOtherFormulaMap(allDirtyUnitFeatureMap, dirtyUnitFeatureMap);
-            }
-
-            if (dirtyUnitOtherFormulaMap != null) {
-                this._mergeDirtyUnitFeatureOrOtherFormulaMap(allDirtyUnitOtherFormulaMap, dirtyUnitOtherFormulaMap);
-            }
-
-            if (clearDependencyTreeCache != null) {
-                this._mergeDirtyNameMap(allClearDependencyTreeCache, clearDependencyTreeCache);
-            }
-
-            allForceCalculation = allForceCalculation || forceCalculation;
-        }
-
-        return {
-            dirtyRanges: allDirtyRanges,
-            dirtyNameMap: allDirtyNameMap,
-            dirtyDefinedNameMap: allDirtyDefinedNameMap,
-            dirtyUnitFeatureMap: allDirtyUnitFeatureMap,
-            dirtyUnitOtherFormulaMap: allDirtyUnitOtherFormulaMap,
-            forceCalculation: allForceCalculation,
-            clearDependencyTreeCache: allClearDependencyTreeCache,
-            // numfmtItemMap,
-        };
-    }
-
-    private _mergeDirty(dirtyData1: IFormulaDirtyData, dirtyData2: IFormulaDirtyData) {
-        const allDirtyRanges: IUnitRange[] = [...dirtyData1.dirtyRanges, ...dirtyData2.dirtyRanges];
-        const allDirtyNameMap: IDirtyUnitSheetNameMap = { ...dirtyData1.dirtyNameMap };
-        const allDirtyDefinedNameMap: IDirtyUnitSheetNameMap = { ...dirtyData1.dirtyDefinedNameMap };
-        const allDirtyUnitFeatureMap: IDirtyUnitFeatureMap = { ...dirtyData1.dirtyUnitFeatureMap };
-        const allDirtyUnitOtherFormulaMap: IDirtyUnitOtherFormulaMap = { ...dirtyData1.dirtyUnitOtherFormulaMap };
-        const allClearDependencyTreeCache: IDirtyUnitSheetNameMap = { ...dirtyData1.clearDependencyTreeCache };
-
-        this._mergeDirtyNameMap(allDirtyNameMap, dirtyData2.dirtyNameMap);
-        this._mergeDirtyNameMap(allDirtyDefinedNameMap, dirtyData2.dirtyDefinedNameMap);
-        this._mergeDirtyUnitFeatureOrOtherFormulaMap(allDirtyUnitFeatureMap, dirtyData2.dirtyUnitFeatureMap);
-        this._mergeDirtyUnitFeatureOrOtherFormulaMap(allDirtyUnitOtherFormulaMap, dirtyData2.dirtyUnitOtherFormulaMap);
-        this._mergeDirtyNameMap(allClearDependencyTreeCache, dirtyData2.clearDependencyTreeCache);
-
-        const allForceCalculating = dirtyData1.forceCalculation || dirtyData2.forceCalculation;
-
-        return {
-            dirtyRanges: allDirtyRanges,
-            dirtyNameMap: allDirtyNameMap,
-            dirtyDefinedNameMap: allDirtyDefinedNameMap,
-            dirtyUnitFeatureMap: allDirtyUnitFeatureMap,
-            dirtyUnitOtherFormulaMap: allDirtyUnitOtherFormulaMap,
-            forceCalculation: allForceCalculating,
-            clearDependencyTreeCache: allClearDependencyTreeCache,
-        };
-    }
-
-    /**
-     * dirtyRanges may overlap with the ranges in allDirtyRanges and need to be deduplicated
-     * @param allDirtyRanges
-     * @param dirtyRanges
-     */
-    private _mergeDirtyRanges(allDirtyRanges: IUnitRange[], dirtyRanges: IUnitRange[]) {
-        for (const range of dirtyRanges) {
-            let isDuplicate = false;
-            for (const existingRange of allDirtyRanges) {
-                // Check if the ranges are in the same unit and sheet
-                if (range.unitId === existingRange.unitId && range.sheetId === existingRange.sheetId) {
-                    // Check if the ranges overlap
-                    const { startRow, startColumn, endRow, endColumn } = range.range;
-                    const { startRow: existingStartRow, startColumn: existingStartColumn, endRow: existingEndRow, endColumn: existingEndColumn } = existingRange.range;
-                    if (
-                        startRow === existingStartRow &&
-                        startColumn === existingStartColumn &&
-                        endRow === existingEndRow &&
-                        endColumn === existingEndColumn
-                    ) {
-                        isDuplicate = true;
-                        break;
-                    }
-                }
-            }
-            if (!isDuplicate) {
-                allDirtyRanges.push(range);
-            }
-        }
-    }
-
-    private _mergeDirtyNameMap(allDirtyNameMap: IDirtyUnitSheetNameMap, dirtyNameMap: IDirtyUnitSheetNameMap) {
-        Object.keys(dirtyNameMap).forEach((unitId) => {
-            if (allDirtyNameMap[unitId] == null) {
-                allDirtyNameMap[unitId] = {};
-            }
-
-            Object.keys(dirtyNameMap[unitId]!).forEach((sheetId) => {
-                if (dirtyNameMap[unitId]?.[sheetId]) {
-                    allDirtyNameMap[unitId]![sheetId] = dirtyNameMap[unitId]![sheetId];
-                }
-            });
-        });
-    }
-
-    private _mergeDirtyUnitFeatureOrOtherFormulaMap(
-        allDirtyUnitFeatureOrOtherFormulaMap: IDirtyUnitFeatureMap | IDirtyUnitOtherFormulaMap,
-        dirtyUnitFeatureOrOtherFormulaMap: IDirtyUnitFeatureMap | IDirtyUnitOtherFormulaMap
-    ) {
-        Object.keys(dirtyUnitFeatureOrOtherFormulaMap).forEach((unitId) => {
-            if (allDirtyUnitFeatureOrOtherFormulaMap[unitId] == null) {
-                allDirtyUnitFeatureOrOtherFormulaMap[unitId] = {};
-            }
-            Object.keys(dirtyUnitFeatureOrOtherFormulaMap[unitId]!).forEach((sheetId) => {
-                if (allDirtyUnitFeatureOrOtherFormulaMap[unitId]![sheetId] == null) {
-                    allDirtyUnitFeatureOrOtherFormulaMap[unitId]![sheetId] = {};
-                }
-                Object.keys(dirtyUnitFeatureOrOtherFormulaMap[unitId]![sheetId]).forEach((featureIdOrFormulaId) => {
-                    allDirtyUnitFeatureOrOtherFormulaMap[unitId]![sheetId][featureIdOrFormulaId] =
-                        dirtyUnitFeatureOrOtherFormulaMap[unitId]![sheetId]![featureIdOrFormulaId] || false;
-                });
-            });
-        });
     }
 
     // eslint-disable-next-line max-lines-per-function
@@ -423,21 +217,21 @@ export class TriggerCalculationController extends Disposable {
                         this._executionInProgressParams = params.stageInfo;
 
                         if (startDependencyTimer === null) {
-                            const calculating = this._localeService.t('formula.progress.calculating');
+                            const calculating = this._localeService.t<LocaleKey>('sheets-formula.progress.calculating');
                             this._calculateProgress(calculating);
                         }
                     } else if (stage === FormulaExecuteStageType.START_DEPENDENCY_ARRAY_FORMULA) {
                         this._executionInProgressParams = params.stageInfo;
 
                         if (startDependencyTimer === null) {
-                            const arrayAnalysis = this._localeService.t('formula.progress.array-analysis');
+                            const arrayAnalysis = this._localeService.t<LocaleKey>('sheets-formula.progress.array-analysis');
                             this._calculateProgress(arrayAnalysis);
                         }
                     } else if (stage === FormulaExecuteStageType.CURRENTLY_CALCULATING_ARRAY_FORMULA) {
                         this._executionInProgressParams = params.stageInfo;
 
                         if (startDependencyTimer === null) {
-                            const arrayCalculation = this._localeService.t('formula.progress.array-calculation');
+                            const arrayCalculation = this._localeService.t<LocaleKey>('sheets-formula.progress.array-calculation');
                             this._calculateProgress(arrayCalculation);
                         }
                     }
@@ -451,7 +245,6 @@ export class TriggerCalculationController extends Disposable {
                     switch (state) {
                         case FormulaExecutedStateType.NOT_EXECUTED:
                             result = 'No tasks are being executed anymore';
-                            this._resetExecutingDirtyData();
                             break;
                         case FormulaExecutedStateType.STOP_EXECUTION:
                             result = 'The execution of the formula has been stopped';
@@ -464,12 +257,9 @@ export class TriggerCalculationController extends Disposable {
                             if (calculationProcessCount === 0 || calculationProcessCount === -1) {
                                 result += `. Total time consumed: ${performance.now() - this._startExecutionTime} ms`;
                             }
-
-                            this._resetExecutingDirtyData();
                             break;
                         case FormulaExecutedStateType.INITIAL:
                             result = 'Waiting for calculation';
-                            this._resetExecutingDirtyData();
                             break;
                     }
 
@@ -490,18 +280,7 @@ export class TriggerCalculationController extends Disposable {
                         this._totalCalculationTaskCount = 0;
                     }
 
-                    if (state === FormulaExecutedStateType.STOP_EXECUTION && this._restartCalculation) {
-                        this._restartCalculation = false;
-                        this._commandService.executeCommand(
-                            SetFormulaCalculationStartMutation.id,
-                            {
-                                ...this._executingDirtyData,
-                            },
-                            lo
-                        );
-                    } else {
-                        this._executionInProgressParams = null;
-                    }
+                    this._executionInProgressParams = null;
 
                     this._logService.debug('[TriggerCalculationController]', result);
                 }
@@ -509,24 +288,12 @@ export class TriggerCalculationController extends Disposable {
         );
     }
 
-    private _resetExecutingDirtyData() {
-        this._executingDirtyData = {
-            dirtyRanges: [],
-            dirtyNameMap: {},
-            dirtyDefinedNameMap: {},
-            dirtyUnitFeatureMap: {},
-            dirtyUnitOtherFormulaMap: {},
-            forceCalculation: false,
-            clearDependencyTreeCache: {},
-        };
-    }
-
     private _initialExecuteFormula() {
         const calculationMode = this._getCalculationMode();
-        const params = this._getDirtyDataByCalculationMode(calculationMode);
-        this._commandService.executeCommand(SetTriggerFormulaCalculationStartMutation.id, params, lo);
-
-        this._registerOtherFormulaService.calculateStarted$.next(true);
+        if (calculationMode !== CalculationMode.NO_CALCULATION) {
+            const params = this._getDirtyDataByCalculationMode(calculationMode);
+            this._commandService.executeCommand(SetTriggerFormulaCalculationStartMutation.id, params, lo);
+        }
     }
 
     private _getDirtyDataByCalculationMode(calculationMode: CalculationMode): IFormulaDirtyData {
@@ -536,7 +303,8 @@ export class TriggerCalculationController extends Disposable {
         const dirtyRanges: IUnitRange[] = calculationMode === CalculationMode.WHEN_EMPTY ? this._formulaDataModel.getFormulaDirtyRanges() : [];
 
         const dirtyNameMap: IDirtyUnitSheetNameMap = {};
-        const dirtyDefinedNameMap: IDirtyUnitSheetNameMap = {};
+        const dirtyDefinedNameMap: IDirtyUnitDefinedNameMap = {};
+        const dirtySuperTableMap: IDirtyUnitSuperTableMap = {};
         const dirtyUnitFeatureMap: IDirtyUnitFeatureMap = {};
         const dirtyUnitOtherFormulaMap: IDirtyUnitOtherFormulaMap = {};
         const clearDependencyTreeCache: IDirtyUnitSheetNameMap = {};
@@ -546,6 +314,7 @@ export class TriggerCalculationController extends Disposable {
             dirtyRanges,
             dirtyNameMap,
             dirtyDefinedNameMap,
+            dirtySuperTableMap,
             dirtyUnitFeatureMap,
             dirtyUnitOtherFormulaMap,
             clearDependencyTreeCache,

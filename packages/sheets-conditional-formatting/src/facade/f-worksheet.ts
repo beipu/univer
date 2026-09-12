@@ -45,20 +45,13 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = fWorksheet.getConditionalFormattingRules();
      * console.log(rules);
      * ```
      */
     getConditionalFormattingRules(): IConditionFormattingRule[];
-
-    /**
-     * @deprecated use `newConditionalFormattingRule` instead.
-     * Creates a constructor for conditional formatting
-     * @returns {FConditionalFormattingBuilder} The conditional formatting builder
-     * @memberof IFWorksheetConditionalFormattingMixin
-     */
-    createConditionalFormattingRule(): FConditionalFormattingBuilder;
 
     /**
      * Creates a constructor for conditional formatting
@@ -67,7 +60,8 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a conditional formatting rule that sets the cell format to italic, red background, and green font color when the cell is not empty.
      * const fRange = fWorksheet.getRange('A1:T100');
@@ -91,7 +85,8 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a conditional formatting rule that sets the cell format to italic, red background, and green font color when the cell is not empty.
      * const fRange = fWorksheet.getRange('A1:T100');
@@ -115,7 +110,8 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = fWorksheet.getConditionalFormattingRules();
      *
      * // Delete the first rule
@@ -134,7 +130,8 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = fWorksheet.getConditionalFormattingRules();
      *
      * // Move the third rule before the first rule
@@ -154,7 +151,8 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Create a conditional formatting rule that sets the cell format to italic, red background, and green font color when the cell is not empty.
      * const fRange = fWorksheet.getRange('A1:T100');
@@ -182,7 +180,8 @@ export interface IFWorksheetConditionalFormattingMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * fWorksheet.clearConditionalFormatRules();
      * console.log(fWorksheet.getConditionalFormattingRules()); // []
      * ```
@@ -198,10 +197,6 @@ export class FWorksheetConditionalFormattingMixin extends FWorksheet implements 
     override getConditionalFormattingRules(): IConditionFormattingRule[] {
         const rules = this._getConditionalFormattingRuleModel().getSubunitRules(this._workbook.getUnitId(), this._worksheet.getSheetId()) || [];
         return [...rules];
-    }
-
-    override createConditionalFormattingRule(): FConditionalFormattingBuilder {
-        return new FConditionalFormattingBuilder();
     }
 
     override newConditionalFormattingRule(): FConditionalFormattingBuilder {

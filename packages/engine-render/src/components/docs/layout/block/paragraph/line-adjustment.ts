@@ -15,16 +15,24 @@
  */
 
 import type { IParagraphStyle } from '@univerjs/core';
-import type { ISectionBreakConfig } from '../../../../../basics';
-import type { IDocumentSkeletonDivide, IDocumentSkeletonLine, IDocumentSkeletonPage } from '../../../../../basics/i-document-skeleton-cached';
+import type {
+    IDocumentSkeletonDivide,
+    IDocumentSkeletonLine,
+    IDocumentSkeletonPage,
+} from '../../../../../basics/i-document-skeleton-cached';
+import type { ISectionBreakConfig } from '../../../../../basics/interfaces';
 import type { DataStreamTreeNode } from '../../../view-model/data-stream-tree-node';
 import type { DocumentViewModel } from '../../../view-model/document-view-model';
-import { HorizontalAlign } from '@univerjs/core';
-import { hasCJK, hasCJKText, isCjkLeftAlignedPunctuation, isCjkRightAlignedPunctuation } from '../../../../../basics/tools';
+import { HorizontalAlign, WrapStrategy } from '@univerjs/core';
+import { cjk } from '../../../../../basics/cjk-regexp';
+import {
+    isCjkLeftAlignedPunctuation,
+    isCjkRightAlignedPunctuation,
+} from '../../../../../basics/tools';
 import { BreakPointType } from '../../line-breaker/break';
 import { isLetter } from '../../line-breaker/enhancers/utils';
 import { createHyphenDashGlyph, glyphShrinkLeft, glyphShrinkRight, setGlyphGroupLeft } from '../../model/glyph';
-import { getFontConfigFromLastGlyph, getGlyphGroupWidth, lineIterator } from '../../tools';
+import { getFontConfigFromLastGlyph, getGlyphGroupWidth } from '../../tools';
 
 // How much a character should hang into the end margin.
 // For more discussion, see:
@@ -88,7 +96,7 @@ function getJustifiables(divide: IDocumentSkeletonDivide): number {
     const lastGlyph = divide.glyphGroup[divide.glyphGroup.length - 1];
 
     // CJK character at line end should not be adjusted.
-    if (hasCJK(lastGlyph.content)) {
+    if (cjk.hasCJK(lastGlyph.content)) {
         return justifiables - 1;
     }
 
@@ -118,18 +126,77 @@ function adjustGlyphsInDivide(divide: IDocumentSkeletonDivide, justificationRati
     setGlyphGroupLeft(divide.glyphGroup);
 }
 
+function distributeGlyphsInDivide(divide: IDocumentSkeletonDivide, remaining: number): boolean {
+    if (remaining <= 0) {
+        return false;
+    }
+
+    const visibleGlyphs = divide.glyphGroup.filter((glyph) => glyph.content !== '' && glyph.width > 0);
+
+    if (visibleGlyphs.length < 2) {
+        return false;
+    }
+
+    const extraGap = remaining / (visibleGlyphs.length - 1);
+
+    for (let i = 0; i < visibleGlyphs.length - 1; i++) {
+        visibleGlyphs[i].width += extraGap;
+    }
+
+    setGlyphGroupLeft(divide.glyphGroup);
+    return true;
+}
+
 /**
  * When aligning text horizontally within a document,
  * it may be ineffective if the total line width is not initially calculated.
  * Therefore, multiple calculations are performed, which may impact performance.
  * Needs optimization for efficiency.
  */
-function horizontalAlignHandler(line: IDocumentSkeletonLine, horizontalAlign: HorizontalAlign) {
+function shouldAllowOverflowHorizontalOffset(sectionBreakConfig: ISectionBreakConfig): boolean {
+    const wrapStrategy = sectionBreakConfig.renderConfig?.wrapStrategy;
+
+    return wrapStrategy === WrapStrategy.OVERFLOW;
+}
+
+function getGlyphGroupInkBounds(divide: IDocumentSkeletonDivide): { left: number; right: number } | null {
+    if (divide.glyphGroup.length === 0) {
+        return null;
+    }
+
+    let left = Infinity;
+    let right = -Infinity;
+
+    for (const glyph of divide.glyphGroup) {
+        const glyphLeft = glyph.left + glyph.xOffset;
+        left = Math.min(left, glyphLeft);
+        right = Math.max(right, glyphLeft + glyph.bBox.width);
+    }
+
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+        return null;
+    }
+
+    return { left, right };
+}
+
+function horizontalAlignHandler(
+    line: IDocumentSkeletonLine,
+    horizontalAlign: HorizontalAlign,
+    allowOverflowHorizontalOffset = false
+) {
     const { divides } = line;
 
     for (let i = 0; i < divides.length; i++) {
         const divide = divides[i];
         const { width } = divide;
+
+        if (divide.glyphGroup.length === 0) {
+            divide.glyphGroupWidth = 0;
+            divide.paddingLeft = 0;
+            continue;
+        }
+
         let glyphGroupWidth = getGlyphGroupWidth(divide);
 
         divide.glyphGroupWidth = glyphGroupWidth;
@@ -184,14 +251,28 @@ function horizontalAlignHandler(line: IDocumentSkeletonLine, horizontalAlign: Ho
             }
         }
 
-        if (horizontalAlign === HorizontalAlign.CENTER) {
+        const inkBounds = allowOverflowHorizontalOffset ? getGlyphGroupInkBounds(divide) : null;
+
+        if (horizontalAlign === HorizontalAlign.DISTRIBUTED) {
+            if (distributeGlyphsInDivide(divide, width - glyphGroupWidth)) {
+                glyphGroupWidth = getGlyphGroupWidth(divide);
+                divide.glyphGroupWidth = glyphGroupWidth;
+            }
+            divide.paddingLeft = 0;
+        } else if (horizontalAlign === HorizontalAlign.CENTER && inkBounds) {
+            divide.paddingLeft = width / 2 - (inkBounds.left + inkBounds.right) / 2;
+        } else if (horizontalAlign === HorizontalAlign.RIGHT && inkBounds) {
+            divide.paddingLeft = width - inkBounds.right;
+        } else if (horizontalAlign === HorizontalAlign.CENTER) {
             divide.paddingLeft = (width - glyphGroupWidth) / 2;
         } else if (horizontalAlign === HorizontalAlign.RIGHT) {
             divide.paddingLeft = width - glyphGroupWidth;
         }
 
-        // To fix https://github.com/dream-num/univer-pro/issues/2930
-        divide.paddingLeft = Math.max(divide.paddingLeft, 0);
+        if (!allowOverflowHorizontalOffset) {
+            // To fix https://github.com/dream-num/univer-pro/issues/2930
+            divide.paddingLeft = Math.max(divide.paddingLeft, 0);
+        }
     }
 }
 
@@ -204,7 +285,7 @@ function restoreLastCJKGlyphWidth(line: IDocumentSkeletonLine) {
         if (
             lastGlyph &&
             divide.isFull &&
-            hasCJKText(lastGlyph.content) &&
+            cjk.hasCJKText(lastGlyph.content) &&
             lastGlyph.width - lastGlyph.xOffset > lastGlyph.bBox.width
         ) {
             const shrinkAmount = lastGlyph.width - lastGlyph.xOffset - lastGlyph.bBox.width;
@@ -279,23 +360,35 @@ export function lineAdjustment(
     sectionBreakConfig: ISectionBreakConfig
 ) {
     const { endIndex } = paragraphNode;
-    const paragraph = viewModel.getParagraph(endIndex) || { startIndex: 0 };
+    const paragraph = viewModel.getParagraph(endIndex) || { startIndex: 0, paragraphId: 'para_render_fallback' };
 
-    lineIterator(pages, (line) => {
-        // Only need to adjust the current paragraph.
-        if (line.paragraphIndex !== paragraph.startIndex) {
-            return;
+    const { paragraphStyle = {} } = paragraph;
+    const { horizontalAlign = HorizontalAlign.UNSPECIFIED } = paragraphStyle;
+    for (const page of pages) {
+        for (const section of page.sections) {
+            for (const column of section.columns) {
+                const { lines } = column;
+                // Line breaking appends logical paragraph order; pagination moves
+                // ordered suffixes. A long cell must not rescan its growing prefix
+                // for every paragraph's punctuation and alignment pass.
+                let low = 0;
+                let high = lines.length;
+                while (low < high) {
+                    const middle = Math.floor((low + high) / 2);
+                    if (lines[middle].paragraphIndex < paragraph.startIndex) {
+                        low = middle + 1;
+                    } else {
+                        high = middle;
+                    }
+                }
+                for (let index = low; index < lines.length && lines[index].paragraphIndex === paragraph.startIndex; index++) {
+                    const line = lines[index];
+                    shrinkStartAndEndCJKPunctuation(line);
+                    restoreLastCJKGlyphWidth(line);
+                    addHyphenDash(line, viewModel, paragraphNode, sectionBreakConfig, paragraphStyle);
+                    horizontalAlignHandler(line, horizontalAlign, shouldAllowOverflowHorizontalOffset(sectionBreakConfig));
+                }
+            }
         }
-
-        const { paragraphStyle = {} } = paragraph;
-        const { horizontalAlign = HorizontalAlign.UNSPECIFIED } = paragraphStyle;
-        // If the last glyph is a CJK punctuation, we want to shrink it.
-        shrinkStartAndEndCJKPunctuation(line);
-        // restore the original glyph width.
-        restoreLastCJKGlyphWidth(line);
-        // Add dash to the end of divide when divide is break by Hyphen.
-        addHyphenDash(line, viewModel, paragraphNode, sectionBreakConfig, paragraphStyle);
-        // Handle horizontal align: left\center\right\justified.
-        horizontalAlignHandler(line, horizontalAlign);
-    });
+    }
 }

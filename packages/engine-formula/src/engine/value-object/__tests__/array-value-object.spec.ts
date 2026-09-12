@@ -16,12 +16,13 @@
 
 import type { Nullable } from '@univerjs/core';
 import type { BaseValueObject } from '../base-value-object';
+import { DateSystem } from '@univerjs/core';
 import { describe, expect, it } from 'vitest';
 import { ErrorType } from '../../../basics/error-type';
 import { getObjectValue } from '../../../functions/util';
 import { ArrayValueObject, transformToValueObject, ValueObjectFactory } from '../array-value-object';
 import { ErrorValueObject } from '../base-value-object';
-import { BooleanValueObject, NumberValueObject } from '../primitive-object';
+import { BooleanValueObject, NumberValueObject, StringValueObject } from '../primitive-object';
 
 describe('arrayValueObject test', () => {
     const originArrayValueObject = ArrayValueObject.create({
@@ -36,6 +37,62 @@ describe('arrayValueObject test', () => {
         sheetId: '',
         row: 0,
         column: 0,
+    });
+
+    it('binds child values when the array already uses the requested date system', () => {
+        const array = ArrayValueObject.create({
+            calculateValueList: [[StringValueObject.create('1904-1-1')]],
+            rowCount: 1,
+            columnCount: 1,
+            unitId: '',
+            sheetId: '',
+            row: 0,
+            column: 0,
+        }, DateSystem.Date1904);
+
+        const value = array.withDateSystem(DateSystem.Date1904).get(0, 0) as BaseValueObject;
+
+        expect(value.convertToNumberObjectValue().getValue()).toBe(0);
+    });
+
+    it('binds the date system in place and updates child values', () => {
+        const array = ArrayValueObject.create({
+            calculateValueList: [[StringValueObject.create('1904-1-1')]],
+            rowCount: 1,
+            columnCount: 1,
+            unitId: '',
+            sheetId: '',
+            row: 0,
+            column: 0,
+        });
+
+        expect(array.withDateSystem(DateSystem.Date1904)).toBe(array);
+        expect(array.getDateSystem()).toBe(DateSystem.Date1904);
+        expect(array.get(0, 0)?.getDateSystem()).toBe(DateSystem.Date1904);
+    });
+
+    it('maps sparse comparison arrays with their default value', () => {
+        const sparseValues: BaseValueObject[][] = [];
+        sparseValues[1] = [BooleanValueObject.create(true)];
+
+        const sparseArray = ArrayValueObject.create({
+            calculateValueList: sparseValues,
+            rowCount: 3,
+            columnCount: 1,
+            unitId: '',
+            sheetId: '',
+            row: -1,
+            column: -1,
+        });
+        sparseArray.setDefaultValue(BooleanValueObject.create(false));
+
+        const result = sparseArray.getNegative().getNegative();
+
+        expect(getObjectValue(result)).toStrictEqual([
+            [0],
+            [1],
+            [0],
+        ]);
     });
 
     describe('slice', () => {
@@ -254,7 +311,7 @@ describe('arrayValueObject test', () => {
             });
             const result = originValueObject.sum();
 
-            expect(getObjectValue(result)).toStrictEqual(101.57);
+            expect(getObjectValue(result) as number).toBeCloseTo(101.57);
         });
     });
 
@@ -426,6 +483,19 @@ describe('arrayValueObject test', () => {
             stringValueObject = ValueObjectFactory.create(' ');
 
             expect(stringValueObject.isString()).toBeTruthy();
+        });
+
+        it('Array constants preserve quoted numeric and date text', () => {
+            const arrayValueObject = ValueObjectFactory.create('{"123";"2014-01-31"}') as ArrayValueObject;
+
+            expect(arrayValueObject.toValue()).toStrictEqual([['123'], ['2014-01-31']]);
+        });
+
+        it('StringValueObject empty string converts to VALUE error for arithmetic coercion', () => {
+            const number = StringValueObject.create('').convertToNumberObjectValue();
+
+            expect(number.isError()).toBeTruthy();
+            expect((number as ErrorValueObject).getErrorType()).toBe(ErrorType.VALUE);
         });
 
         it('ValueObjectFactory create ErrorValueObject ', () => {

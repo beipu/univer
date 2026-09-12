@@ -14,7 +14,18 @@
  * limitations under the License.
  */
 
-import type { ICellData, ICellDataForSheetInterceptor, ICommandInfo, IObjectMatrixPrimitiveType, IPermissionTypes, IRange, Nullable, Workbook, WorkbookPermissionPointConstructor } from '@univerjs/core';
+import type {
+    ICellData,
+    ICellDataForSheetInterceptor,
+    ICommandInfo,
+    IObjectMatrixPrimitiveType,
+    IPermissionTypes,
+    IRange,
+    Nullable,
+    Workbook,
+    WorkbookPermissionPointConstructor,
+} from '@univerjs/core';
+import type { ISetDefinedNameMutationParam } from '@univerjs/engine-formula';
 import type { IAutoFillCommandParams } from '../../commands/commands/auto-fill.command';
 import type { IClearSelectionAllCommandParams } from '../../commands/commands/clear-selection-all.command';
 import type { IClearSelectionContentCommandParams } from '../../commands/commands/clear-selection-content.command';
@@ -26,14 +37,25 @@ import type { IInsertRangeMoveRightCommandParams } from '../../commands/commands
 import type { IInsertColCommandParams, IInsertRowCommandParams } from '../../commands/commands/insert-row-col.command';
 import type { IMoveRangeCommandParams } from '../../commands/commands/move-range.command';
 import type { IMoveColsCommandParams, IMoveRowsCommandParams } from '../../commands/commands/move-rows-cols.command';
-import type { IRemoveColByRangeCommandParams, IRemoveRowByRangeCommandParams } from '../../commands/commands/remove-row-col.command';
+import type {
+    IRemoveColByRangeCommandParams,
+    IRemoveRowByRangeCommandParams,
+} from '../../commands/commands/remove-row-col.command';
+import type { ISetBorderCommandParams } from '../../commands/commands/set-border.command';
 import type { ISetSpecificColsVisibleCommandParams } from '../../commands/commands/set-col-visible.command';
 import type { ISetRangeValuesCommandParams } from '../../commands/commands/set-range-values.command';
 import type { ISetSpecificRowsVisibleCommandParams } from '../../commands/commands/set-row-visible.command';
 import type { ISetStyleCommandParams } from '../../commands/commands/set-style.command';
+import type { ISetColWidthCommandParams } from '../../commands/commands/set-worksheet-col-width.command';
 import type { ISetWorksheetNameCommandParams } from '../../commands/commands/set-worksheet-name.command';
 import type { ISetWorksheetOrderCommandParams } from '../../commands/commands/set-worksheet-order.command';
+import type {
+    ISetRowHeightCommandParams,
+    ISetWorksheetRowIsAutoHeightCommandParams,
+} from '../../commands/commands/set-worksheet-row-height.command';
 import type { ISetWorksheetShowCommandParams } from '../../commands/commands/set-worksheet-show.command';
+import type { ITextToNumberCommandParams } from '../../commands/commands/text-to-number.command';
+import type { LocaleKey } from '../../locale/types';
 import {
     CustomCommandExecutionError,
     Direction,
@@ -50,7 +72,14 @@ import {
     Tools,
     UniverInstanceType,
 } from '@univerjs/core';
-import { deserializeRangeWithSheet, deserializeRangeWithSheetWithCache, IDefinedNamesService, LexerTreeBuilder, operatorToken, sequenceNodeType } from '@univerjs/engine-formula';
+import {
+    deserializeRangeWithSheet,
+    deserializeRangeWithSheetWithCache,
+    IDefinedNamesService,
+    LexerTreeBuilder,
+    operatorToken,
+    sequenceNodeType,
+} from '@univerjs/engine-formula';
 import { UnitAction } from '@univerjs/protocol';
 import { Subject } from 'rxjs';
 import { AutoFillCommand } from '../../commands/commands/auto-fill.command';
@@ -59,24 +88,39 @@ import { ClearSelectionContentCommand } from '../../commands/commands/clear-sele
 import { ClearSelectionFormatCommand } from '../../commands/commands/clear-selection-format.command';
 import { DeleteRangeMoveLeftCommand } from '../../commands/commands/delete-range-move-left.command';
 import { DeleteRangeMoveUpCommand } from '../../commands/commands/delete-range-move-up.command';
+import { InsertDefinedNameCommand } from '../../commands/commands/insert-defined-name.command';
 import { InsertRangeMoveDownCommand } from '../../commands/commands/insert-range-move-down.command';
 import { InsertRangeMoveRightCommand } from '../../commands/commands/insert-range-move-right.command';
 import { InsertColByRangeCommand, InsertRowByRangeCommand } from '../../commands/commands/insert-row-col.command';
 import { MoveRangeCommand } from '../../commands/commands/move-range.command';
 import { MoveColsCommand, MoveRowsCommand } from '../../commands/commands/move-rows-cols.command';
+import { RemoveDefinedNameCommand } from '../../commands/commands/remove-defined-name.command';
 import { RemoveColByRangeCommand, RemoveRowByRangeCommand } from '../../commands/commands/remove-row-col.command';
-import { SetSelectedColsVisibleCommand, SetSpecificColsVisibleCommand } from '../../commands/commands/set-col-visible.command';
+import { SetBorderCommand } from '../../commands/commands/set-border.command';
+import {
+    SetSelectedColsVisibleCommand,
+    SetSpecificColsVisibleCommand,
+} from '../../commands/commands/set-col-visible.command';
+import { SetDefinedNameCommand } from '../../commands/commands/set-defined-name.command';
 import { SetRangeValuesCommand } from '../../commands/commands/set-range-values.command';
-import { SetSelectedRowsVisibleCommand, SetSpecificRowsVisibleCommand } from '../../commands/commands/set-row-visible.command';
+import {
+    SetSelectedRowsVisibleCommand,
+    SetSpecificRowsVisibleCommand,
+} from '../../commands/commands/set-row-visible.command';
 import { SetStyleCommand } from '../../commands/commands/set-style.command';
 import { DeltaColumnWidthCommand, SetColWidthCommand } from '../../commands/commands/set-worksheet-col-width.command';
 import { SetWorksheetNameCommand } from '../../commands/commands/set-worksheet-name.command';
 import { SetWorksheetOrderCommand } from '../../commands/commands/set-worksheet-order.command';
-import { DeltaRowHeightCommand, SetRowHeightCommand, SetWorksheetRowIsAutoHeightCommand } from '../../commands/commands/set-worksheet-row-height.command';
+import {
+    DeltaRowHeightCommand,
+    SetRowHeightCommand,
+    SetWorksheetRowIsAutoHeightCommand,
+} from '../../commands/commands/set-worksheet-row-height.command';
 import { SetWorksheetShowCommand } from '../../commands/commands/set-worksheet-show.command';
+import { TextToNumberCommand } from '../../commands/commands/text-to-number.command';
 import { getSheetCommandTarget } from '../../commands/commands/utils/target-util';
 import { SetWorksheetNameMutation } from '../../commands/mutations/set-worksheet-name.mutation';
-import { RangeProtectionRuleModel } from '../../model/range-protection-rule.model';
+import { RangeProtectionRuleModel } from '../../models/range-protection-rule.model';
 import {
     RangeProtectionPermissionEditPoint,
     WorkbookDeleteColumnPermission,
@@ -100,6 +144,7 @@ import {
 } from '../../services/permission/permission-point';
 import { WorksheetProtectionRuleModel } from '../../services/permission/worksheet-permission';
 import { SheetsSelectionsService } from '../../services/selections';
+import { SCOPE_WORKBOOK_VALUE_DEFINED_NAME } from '../defined-name-data.controller';
 
 /* eslint-disable complexity */
 /* eslint-disable max-lines-per-function */
@@ -178,7 +223,7 @@ export class SheetPermissionCheckController extends Disposable {
 
                 if (isICellData(params.value) && params.value.f) {
                     permission = this._permissionCheckWithFormula(params);
-                    errorMsg = this._localeService.t('permission.dialog.formulaErr');
+                    errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.formulaErr');
                 } else {
                     permission = this._permissionCheckBySetRangeValue(
                         {
@@ -188,7 +233,7 @@ export class SheetPermissionCheckController extends Disposable {
                         },
                         params
                     );
-                    errorMsg = this._localeService.t('permission.dialog.editErr');
+                    errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.editErr');
                 }
                 break;
 
@@ -206,7 +251,22 @@ export class SheetPermissionCheckController extends Disposable {
                     params.unitId,
                     params.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.setStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setStyleErr');
+                break;
+            case SetBorderCommand.id:
+                params = commandInfo.params as ISetBorderCommandParams | undefined;
+
+                permission = this.permissionCheckWithRanges(
+                    {
+                        workbookTypes: [WorkbookEditablePermission],
+                        worksheetTypes: [WorksheetSetCellStylePermission, WorksheetEditPermission],
+                        rangeTypes: [RangeProtectionPermissionEditPoint],
+                    },
+                    params?.ranges,
+                    params?.unitId,
+                    params?.subUnitId
+                );
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setStyleErr');
                 break;
 
             // clear all/content/format
@@ -223,7 +283,7 @@ export class SheetPermissionCheckController extends Disposable {
                     params?.unitId,
                     params?.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.editErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.editErr');
                 break;
             case ClearSelectionContentCommand.id:
                 params = commandInfo.params as IClearSelectionContentCommandParams | undefined;
@@ -238,7 +298,7 @@ export class SheetPermissionCheckController extends Disposable {
                     params?.unitId,
                     params?.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.editErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.editErr');
                 break;
             case ClearSelectionFormatCommand.id:
                 params = commandInfo.params as IClearSelectionFormatCommandParams | undefined;
@@ -253,30 +313,52 @@ export class SheetPermissionCheckController extends Disposable {
                     params?.unitId,
                     params?.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.setStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setStyleErr');
                 break;
 
             // set column width
             case DeltaColumnWidthCommand.id:
-            case SetColWidthCommand.id:
                 permission = this.permissionCheckWithoutRange(
                     {
                         worksheetTypes: [WorksheetSetColumnStylePermission],
                     }
                 );
-                errorMsg = this._localeService.t('permission.dialog.setRowColStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
+                break;
+            case SetColWidthCommand.id:
+                params = commandInfo.params as ISetColWidthCommandParams;
+
+                permission = this.permissionCheckWithoutRange(
+                    {
+                        worksheetTypes: [WorksheetSetColumnStylePermission],
+                    },
+                    params.unitId,
+                    params.subUnitId
+                );
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
                 break;
 
             // set row height
             case DeltaRowHeightCommand.id:
-            case SetRowHeightCommand.id:
-            case SetWorksheetRowIsAutoHeightCommand.id:
                 permission = this.permissionCheckWithoutRange(
                     {
                         worksheetTypes: [WorksheetSetRowStylePermission],
                     }
                 );
-                errorMsg = this._localeService.t('permission.dialog.setRowColStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
+                break;
+            case SetRowHeightCommand.id:
+            case SetWorksheetRowIsAutoHeightCommand.id:
+                params = commandInfo.params as ISetRowHeightCommandParams | ISetWorksheetRowIsAutoHeightCommandParams;
+
+                permission = this.permissionCheckWithoutRange(
+                    {
+                        worksheetTypes: [WorksheetSetRowStylePermission],
+                    },
+                    params.unitId,
+                    params.subUnitId
+                );
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
                 break;
 
             // move rows/columns/ranges
@@ -285,13 +367,13 @@ export class SheetPermissionCheckController extends Disposable {
                 params = commandInfo.params as IMoveRowsCommandParams | IMoveColsCommandParams;
 
                 permission = this._permissionCheckByMoveRowsColsCommand(params);
-                errorMsg = this._localeService.t('permission.dialog.moveRowColErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.moveRowColErr');
                 break;
             case MoveRangeCommand.id:
                 params = commandInfo.params as IMoveRangeCommandParams;
 
                 permission = this._permissionCheckByMoveRangeCommand(params);
-                errorMsg = this._localeService.t('permission.dialog.moveRangeErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.moveRangeErr');
                 break;
 
             // insert row/column
@@ -300,7 +382,7 @@ export class SheetPermissionCheckController extends Disposable {
                 params = commandInfo.params as IInsertRowCommandParams | IInsertColCommandParams;
 
                 permission = this._permissionCheckByInsertRowColCommand(params);
-                errorMsg = this._localeService.t('permission.dialog.insertRowColErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.insertRowColErr');
                 break;
 
             // remove row/column
@@ -317,7 +399,7 @@ export class SheetPermissionCheckController extends Disposable {
                     params.unitId,
                     params.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.removeRowColErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.removeRowColErr');
                 break;
             case RemoveColByRangeCommand.id:
                 params = commandInfo.params as IRemoveRowByRangeCommandParams | IRemoveColByRangeCommandParams;
@@ -332,7 +414,7 @@ export class SheetPermissionCheckController extends Disposable {
                     params.unitId,
                     params.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.removeRowColErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.removeRowColErr');
                 break;
 
             // worksheet operations
@@ -340,19 +422,19 @@ export class SheetPermissionCheckController extends Disposable {
                 params = commandInfo.params as ISetWorksheetOrderCommandParams;
 
                 permission = this._permissionCheckByWorksheetCommand([WorkbookEditablePermission, WorkbookMoveSheetPermission], params);
-                errorMsg = this._localeService.t('permission.dialog.operatorSheetErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.operatorSheetErr');
                 break;
             case SetWorksheetNameCommand.id:
                 params = commandInfo.params as ISetWorksheetNameCommandParams;
 
                 permission = this._permissionCheckByWorksheetCommand([WorkbookEditablePermission, WorkbookRenameSheetPermission], params);
-                errorMsg = this._localeService.t('permission.dialog.operatorSheetErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.operatorSheetErr');
                 break;
             case SetWorksheetShowCommand.id:
                 params = commandInfo.params as ISetWorksheetShowCommandParams;
 
                 permission = this._permissionCheckByWorksheetCommand([WorkbookEditablePermission, WorkbookHideSheetPermission], params);
-                errorMsg = this._localeService.t('permission.dialog.operatorSheetErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.operatorSheetErr');
                 break;
 
             // set row/column style
@@ -369,7 +451,7 @@ export class SheetPermissionCheckController extends Disposable {
                     params.unitId,
                     params.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.setRowColStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
                 break;
             case SetSpecificRowsVisibleCommand.id:
                 params = commandInfo.params as ISetSpecificRowsVisibleCommandParams;
@@ -384,7 +466,7 @@ export class SheetPermissionCheckController extends Disposable {
                     params.unitId,
                     params.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.setRowColStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
                 break;
             case SetSelectedColsVisibleCommand.id:
                 permission = this.permissionCheckWithRanges({
@@ -392,7 +474,7 @@ export class SheetPermissionCheckController extends Disposable {
                     worksheetTypes: [WorksheetEditPermission, WorksheetSetColumnStylePermission],
                     rangeTypes: [RangeProtectionPermissionEditPoint],
                 });
-                errorMsg = this._localeService.t('permission.dialog.setRowColStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
                 break;
             case SetSelectedRowsVisibleCommand.id:
                 permission = this.permissionCheckWithRanges({
@@ -400,7 +482,7 @@ export class SheetPermissionCheckController extends Disposable {
                     worksheetTypes: [WorksheetEditPermission, WorksheetSetRowStylePermission],
                     rangeTypes: [RangeProtectionPermissionEditPoint],
                 });
-                errorMsg = this._localeService.t('permission.dialog.setRowColStyleErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.setRowColStyleErr');
                 break;
 
             // insert/delete with move range
@@ -408,25 +490,25 @@ export class SheetPermissionCheckController extends Disposable {
                 params = commandInfo.params as IInsertRangeMoveRightCommandParams | undefined;
 
                 permission = this._permissionCheckWithInsertOrDeleteMoveRange('right', params);
-                errorMsg = this._localeService.t('permission.dialog.insertOrDeleteMoveRangeErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.insertOrDeleteMoveRangeErr');
                 break;
             case InsertRangeMoveDownCommand.id:
                 params = commandInfo.params as IInsertRangeMoveDownCommandParams | undefined;
 
                 permission = this._permissionCheckWithInsertOrDeleteMoveRange('down', params);
-                errorMsg = this._localeService.t('permission.dialog.insertOrDeleteMoveRangeErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.insertOrDeleteMoveRangeErr');
                 break;
             case DeleteRangeMoveLeftCommand.id:
                 params = commandInfo.params as IDeleteRangeMoveLeftCommandParams | undefined;
 
                 permission = this._permissionCheckWithInsertOrDeleteMoveRange('left', params);
-                errorMsg = this._localeService.t('permission.dialog.insertOrDeleteMoveRangeErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.insertOrDeleteMoveRangeErr');
                 break;
             case DeleteRangeMoveUpCommand.id:
                 params = commandInfo.params as IDeleteRangeMoveUpCommandParams | undefined;
 
                 permission = this._permissionCheckWithInsertOrDeleteMoveRange('up', params);
-                errorMsg = this._localeService.t('permission.dialog.insertOrDeleteMoveRangeErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.insertOrDeleteMoveRangeErr');
                 break;
 
             // auto fill
@@ -443,7 +525,49 @@ export class SheetPermissionCheckController extends Disposable {
                     params.unitId,
                     params.subUnitId
                 );
-                errorMsg = this._localeService.t('permission.dialog.autoFillErr');
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.autoFillErr');
+                break;
+
+            // defined name
+            case InsertDefinedNameCommand.id:
+            case SetDefinedNameCommand.id:
+            case RemoveDefinedNameCommand.id:
+                params = commandInfo.params as ISetDefinedNameMutationParam;
+
+                if (!params.localSheetId || params.localSheetId === SCOPE_WORKBOOK_VALUE_DEFINED_NAME) {
+                    permission = this.permissionCheckWithoutRange(
+                        {
+                            workbookTypes: [WorkbookEditablePermission],
+                        },
+                        params.unitId
+                    );
+                } else {
+                    permission = this.permissionCheckWithoutRange(
+                        {
+                            workbookTypes: [WorkbookEditablePermission],
+                            worksheetTypes: [WorksheetEditPermission],
+                        },
+                        params.unitId,
+                        params.localSheetId
+                    );
+                }
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.editErr');
+                break;
+
+            // text to number
+            case TextToNumberCommand.id:
+                params = commandInfo.params as ITextToNumberCommandParams | undefined;
+                permission = this.permissionCheckWithRanges(
+                    {
+                        workbookTypes: [WorkbookEditablePermission],
+                        worksheetTypes: [WorksheetSetCellValuePermission, WorksheetSetCellStylePermission, WorksheetEditPermission],
+                        rangeTypes: [RangeProtectionPermissionEditPoint],
+                    },
+                    params?.ranges,
+                    params?.unitId,
+                    params?.subUnitId
+                );
+                errorMsg = this._localeService.t<LocaleKey>('sheets.permission.dialog.editErr');
                 break;
 
             default:

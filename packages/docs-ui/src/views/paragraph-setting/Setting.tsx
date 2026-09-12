@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-import { HorizontalAlign, LocaleService, SpacingRule } from '@univerjs/core';
-import { borderClassName, clsx, InputNumber, Select, Tooltip } from '@univerjs/design';
+import type { ComponentType, ReactNode } from 'react';
+import type { LocaleKey } from '../../locale/types';
+import { HorizontalAlign, LocaleService } from '@univerjs/core';
+import { borderClassName, Button, clsx, InputNumber, Select, Tooltip } from '@univerjs/design';
 import { AlignTextBothIcon, HorizontallyIcon, LeftJustifyingIcon, RightJustifyingIcon } from '@univerjs/icons';
 import { useDependency } from '@univerjs/ui';
 import { useMemo, useRef } from 'react';
@@ -30,6 +32,57 @@ import {
     useFirstParagraphLineSpacing,
     useFirstParagraphSpaceBelow,
 } from './hook/utils';
+import { getLineSpacingInputConfig, LINE_SPACING_RULE_OPTIONS } from './line-spacing';
+
+const ALIGNMENT_OPTIONS = [
+    { label: 'docs-ui.toolbar.alignLeft', value: String(HorizontalAlign.LEFT), icon: <LeftJustifyingIcon /> },
+    { label: 'docs-ui.toolbar.alignCenter', value: String(HorizontalAlign.CENTER), icon: <HorizontallyIcon /> },
+    { label: 'docs-ui.toolbar.alignRight', value: String(HorizontalAlign.RIGHT), icon: <RightJustifyingIcon /> },
+    { label: 'docs-ui.toolbar.alignJustify', value: String(HorizontalAlign.JUSTIFIED), icon: <AlignTextBothIcon /> },
+] satisfies Array<{ label: LocaleKey; value: string; icon: ReactNode }>;
+
+const ParagraphSettingSection = (props: {
+    title: string;
+    children: ReactNode;
+    first?: boolean;
+}) => {
+    const { title, children, first = false } = props;
+
+    return (
+        <section className={clsx(!first && 'univer-mt-5')}>
+            <div className="univer-text-sm univer-font-medium univer-leading-5">{title}</div>
+            <div className="univer-mt-3">{children}</div>
+        </section>
+    );
+};
+
+const ParagraphSettingRow = (props: {
+    label: string;
+    unit?: string;
+    children: ReactNode;
+}) => {
+    const { label, unit, children } = props;
+
+    return (
+        <div
+            className="univer-grid univer-min-h-8 univer-items-center univer-gap-3"
+            style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(160px, 180px)' }}
+        >
+            <div
+                className="
+                  univer-min-w-0 univer-text-xs univer-leading-5 univer-text-gray-900
+                  dark:!univer-text-gray-100
+                "
+            >
+                {label}
+                {unit}
+            </div>
+            <div className="univer-w-full univer-min-w-0">
+                {children}
+            </div>
+        </div>
+    );
+};
 
 const AutoFocusInputNumber = (props: {
     value: number;
@@ -38,12 +91,14 @@ const AutoFocusInputNumber = (props: {
     min?: number;
     max?: number;
     step?: number;
+    precision?: number;
 }) => {
-    const { value, onChange, className = '', min = 0, max = 100, step = 1 } = props;
+    const { value, onChange, className = '', min = 0, max = 100, step = 0.1, precision = 1 } = props;
     const ref = useRef<HTMLInputElement>(null);
     return (
         <InputNumber
             step={step}
+            precision={precision}
             ref={ref}
             min={min}
             max={max}
@@ -58,22 +113,52 @@ const AutoFocusInputNumber = (props: {
                     }, 30);
                 });
             }}
-            className={className}
+            className={clsx('univer-w-full', className)}
         />
     );
 };
-export function ParagraphSetting() {
+export interface IParagraphSettingProps {
+    RowComponent?: typeof ParagraphSettingRow;
+    NumberComponent?: typeof AutoFocusInputNumber;
+    SelectComponent?: typeof Select;
+    AlignmentButtonComponent?: ComponentType<IParagraphAlignmentButtonProps>;
+}
+
+export interface IParagraphAlignmentButtonProps {
+    label: string;
+    selected: boolean;
+    onClick: () => void;
+    children: ReactNode;
+}
+
+function ParagraphAlignmentButton({ label, selected, onClick, children }: IParagraphAlignmentButtonProps) {
+    return (
+        <Tooltip title={label} placement="bottom">
+            <Button
+                type="button"
+                variant="text"
+                aria-label={label}
+                className={clsx({ '!univer-bg-gray-200 dark:!univer-bg-gray-700': selected })}
+                onClick={onClick}
+            >
+                <span className="univer-flex univer-size-5 univer-items-center univer-justify-center univer-text-lg">
+                    {children}
+                </span>
+            </Button>
+        </Tooltip>
+    );
+}
+
+export function ParagraphSetting({
+    RowComponent = ParagraphSettingRow,
+    NumberComponent = AutoFocusInputNumber,
+    SelectComponent = Select,
+    AlignmentButtonComponent = ParagraphAlignmentButton,
+}: IParagraphSettingProps) {
     const localeService = useDependency(LocaleService);
 
-    const alignmentOptions = useMemo(() => [
-        { label: localeService.t('toolbar.alignLeft'), value: String(HorizontalAlign.LEFT), icon: <LeftJustifyingIcon /> },
-        { label: localeService.t('toolbar.alignCenter'), value: String(HorizontalAlign.CENTER), icon: <HorizontallyIcon /> },
-        { label: localeService.t('toolbar.alignRight'), value: String(HorizontalAlign.RIGHT), icon: <RightJustifyingIcon /> },
-        { label: localeService.t('toolbar.alignJustify'), value: String(HorizontalAlign.JUSTIFIED), icon: <AlignTextBothIcon /> },
-    ], []);
-
     const currentParagraph = useCurrentParagraph();
-    const [horizontalAlignValue, setHorizontalAlign] = useFirstParagraphHorizontalAlign(currentParagraph, alignmentOptions[0].value);
+    const [horizontalAlignValue, setHorizontalAlign] = useFirstParagraphHorizontalAlign(currentParagraph, ALIGNMENT_OPTIONS[0].value);
 
     const [indentStart, setIndentStart] = useFirstParagraphIndentStart(currentParagraph);
     const [indentEnd, setIndentEnd] = useFirstParagraphIndentEnd(currentParagraph);
@@ -85,116 +170,80 @@ export function ParagraphSetting() {
     const [spaceBelow, setSpaceBelow] = useFirstParagraphSpaceBelow(currentParagraph);
     const { lineSpacing: [lineSpacing, setLineSpacing], spacingRule: [spacingRule, setSpacingRule] } = useFirstParagraphLineSpacing(currentParagraph);
 
-    const lineSpaceConfig = useMemo(() => {
-        if (spacingRule === SpacingRule.AUTO) {
-            return { min: 1, max: 5, step: lineSpacing < 2 ? 0.5 : 1 };
-        }
-        return { min: 1, max: 100 };
-    }, [spacingRule, lineSpacing]);
+    const lineSpaceConfig = useMemo(() => getLineSpacingInputConfig(spacingRule), [spacingRule]);
+    const lineSpacingOptions = LINE_SPACING_RULE_OPTIONS.map((option) => ({ ...option, label: localeService.t(option.label) }));
 
     return (
-        <div>
-            <div className="univer-t-4 univer-text-sm univer-font-medium">{localeService.t('doc.paragraphSetting.alignment')}</div>
-            <div
-                className={clsx(`
-                  univer-mt-4 univer-box-border univer-flex univer-w-full univer-items-center univer-justify-between
-                  univer-gap-1 univer-rounded-md univer-p-1
-                `, borderClassName)}
-            >
-                {alignmentOptions.map((item) => {
-                    return (
-                        <Tooltip title={item.label} key={item.value} placement="bottom">
+        <div className="univer-box-border univer-w-full">
+            <ParagraphSettingSection title={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.alignment')} first>
+                <div
+                    className={clsx(`
+                      univer-flex univer-grid-cols-4 univer-items-center univer-justify-around univer-gap-2
+                      univer-rounded-lg univer-bg-gray-0 univer-p-1
+                      dark:!univer-bg-gray-900
+                    `, borderClassName)}
+                >
+                    {ALIGNMENT_OPTIONS.map((item) => {
+                        return (
                             <span
-                                className={clsx(`
-                                  hover:univer-bg-black/60
-                                  univer-flex univer-cursor-pointer univer-items-center univer-justify-center
-                                  univer-rounded univer-bg-none univer-px-3 univer-py-1
-                                `, {
-                                    'univer-bg-blend-color-dodge/90': horizontalAlignValue === item.value,
-                                })}
-                                onClick={() => setHorizontalAlign(item.value)}
+                                key={item.value}
+                                className="univer-flex univer-w-full univer-items-center univer-justify-center"
                             >
-                                {item.icon}
+                                <AlignmentButtonComponent
+                                    label={localeService.t(item.label)}
+                                    selected={horizontalAlignValue === item.value}
+                                    onClick={() => setHorizontalAlign(item.value)}
+                                >
+                                    {item.icon}
+                                </AlignmentButtonComponent>
                             </span>
-                        </Tooltip>
-
-                    );
-                })}
-            </div>
-            <div className="univer-t-4 univer-text-sm univer-font-medium">{localeService.t('doc.paragraphSetting.indentation')}</div>
-            <div>
-                <div className="univer-item-center univer-flex univer-justify-between">
-                    <div className="univer-mt-3 univer-text-xs">
-                        {localeService.t('doc.paragraphSetting.left')}
-                        (px)
-                    </div>
-                    <AutoFocusInputNumber className="univer-mt-4" value={indentStart} onChange={(v) => setIndentStart(v ?? 0)} />
+                        );
+                    })}
                 </div>
-                <div className="univer-item-center univer-flex univer-justify-between">
+            </ParagraphSettingSection>
 
-                    <div className="univer-mt-3 univer-text-xs">
-                        {localeService.t('doc.paragraphSetting.right')}
-                        (px)
-                    </div>
-                    <AutoFocusInputNumber className="univer-mt-4" value={indentEnd} onChange={(v) => setIndentEnd(v ?? 0)} />
+            <ParagraphSettingSection title={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.indentation')}>
+                <div className="univer-grid univer-gap-3">
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.left')} unit="(px)">
+                        <NumberComponent value={indentStart} onChange={(v) => setIndentStart(v ?? 0)} />
+                    </RowComponent>
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.right')} unit="(px)">
+                        <NumberComponent value={indentEnd} onChange={(v) => setIndentEnd(v ?? 0)} />
+                    </RowComponent>
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.firstLine')} unit="(px)">
+                        <NumberComponent value={indentFirstLine} onChange={(v) => setIndentFirstLine(v ?? 0)} />
+                    </RowComponent>
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.hanging')} unit="(px)">
+                        <NumberComponent value={hanging} onChange={(v) => setHanging(v ?? 0)} />
+                    </RowComponent>
                 </div>
-                <div className="univer-item-center univer-flex univer-justify-between">
+            </ParagraphSettingSection>
 
-                    <div className="univer-mt-3 univer-text-xs">
-                        {localeService.t('doc.paragraphSetting.firstLine')}
-                        (px)
-                    </div>
-                    <AutoFocusInputNumber className="univer-mt-4" value={indentFirstLine} onChange={(v) => setIndentFirstLine(v ?? 0)} />
+            <ParagraphSettingSection title={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.spacing')}>
+                <div className="univer-grid univer-gap-3">
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.before')} unit="(px)">
+                        <NumberComponent value={spaceAbove} onChange={(v) => setSpaceAbove(v ?? 0)} />
+                    </RowComponent>
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.after')} unit="(px)">
+                        <NumberComponent value={spaceBelow} onChange={(v) => setSpaceBelow(v ?? 0)} />
+                    </RowComponent>
+                    <RowComponent label={localeService.t<LocaleKey>('docs-ui.doc.paragraphSetting.lineSpace')}>
+                        <div className="univer-flex univer-w-full univer-flex-col univer-gap-2">
+                            <SelectComponent
+                                className="univer-w-full"
+                                value={`${spacingRule}`}
+                                options={lineSpacingOptions}
+                                onChange={(v) => setSpacingRule(Number(v))}
+                            />
+                            <NumberComponent
+                                {...lineSpaceConfig}
+                                value={lineSpacing}
+                                onChange={(v) => setLineSpacing(v ?? 0)}
+                            />
+                        </div>
+                    </RowComponent>
                 </div>
-                <div className="univer-item-center univer-flex univer-justify-between">
-
-                    <div className="univer-mt-3 univer-text-xs">
-                        {localeService.t('doc.paragraphSetting.hanging')}
-                        (px)
-                    </div>
-                    <AutoFocusInputNumber className="univer-mt-4" value={hanging} onChange={(v) => setHanging(v ?? 0)} />
-                </div>
-            </div>
-            <div className="univer-t-4 univer-text-sm univer-font-medium">{localeService.t('doc.paragraphSetting.spacing')}</div>
-            <div>
-                <div className="univer-justify-betweenuniver-item-center univer-flex">
-
-                    <div className="univer-mt-3 univer-text-xs">
-                        {localeService.t('doc.paragraphSetting.before')}
-                        (px)
-                    </div>
-                    <AutoFocusInputNumber className="univer-mt-4" value={spaceAbove} onChange={(v) => setSpaceAbove(v ?? 0)} />
-                </div>
-                <div className="univer-item-center univer-flex univer-justify-between">
-
-                    <div className="univer-mt-3 univer-text-xs">
-                        {localeService.t('doc.paragraphSetting.after')}
-                        (px)
-                    </div>
-                    <AutoFocusInputNumber className="univer-mt-4" value={spaceBelow} onChange={(v) => setSpaceBelow(v ?? 0)} />
-                </div>
-                <div className="item-center univer-flex univer-justify-between">
-                    <div className="univer-mt-3 univer-text-xs">{localeService.t('doc.paragraphSetting.lineSpace')}</div>
-                    <div
-                        className="univer-mt-4 univer-flex univer-w-[162px] univer-flex-col univer-gap-1.5"
-                    >
-                        <Select
-                            value={`${spacingRule}`}
-                            options={[
-                                { label: localeService.t('doc.paragraphSetting.multiSpace'), value: `${SpacingRule.AUTO}` },
-                                { label: localeService.t('doc.paragraphSetting.fixedValue'), value: `${SpacingRule.AT_LEAST}` },
-                            ]}
-                            onChange={(v) => setSpacingRule(Number(v))}
-                        />
-                        <AutoFocusInputNumber
-                            {...lineSpaceConfig}
-                            value={lineSpacing}
-                            onChange={(v) => setLineSpacing(v ?? 0)}
-                        />
-                    </div>
-
-                </div>
-            </div>
+            </ParagraphSettingSection>
         </div>
     );
 }

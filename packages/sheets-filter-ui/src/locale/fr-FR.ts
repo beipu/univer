@@ -17,22 +17,29 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-filter': {
+    'sheets-filter-ui': {
         toolbar: {
             'smart-toggle-filter-tooltip': 'Inverser le filtre',
             'clear-filter-criteria': 'Effacer les conditions de filtre',
             're-calc-filter-conditions': 'Recalculer les conditions de filtre',
         },
-        command: {
-            'not-valid-filter-range': 'La plage sélectionnée n\'a qu\'une seule ligne et n\'est pas valide pour le filtre.',
-        },
         shortcut: {
             'smart-toggle-filter': 'Inverser le filtre',
+        },
+        permission: {
+            filterErr: 'Vous n’avez pas l’autorisation d’utiliser le filtre.',
         },
         panel: {
             'clear-filter': 'Effacer le filtre',
             cancel: 'Annuler',
             confirm: 'Confirmer',
+            mobile: {
+                resize: 'Redimensionner le panneau de filtre',
+                back: 'Retour',
+                column: 'Colonne {0}',
+                'previous-column': 'Colonne précédente',
+                'next-column': 'Colonne suivante',
+            },
             'by-values': 'Par valeurs',
             'by-colors': 'Par couleurs',
             'filter-by-cell-fill-color': 'Filtrer par couleur de remplissage de cellule',
@@ -67,9 +74,6 @@ const locale: typeof enUS = {
             between: 'Entre',
             'not-between': 'Pas entre',
             custom: 'Personnalisé',
-        },
-        msg: {
-            'filter-header-forbidden': 'Vous ne pouvez pas déplacer la ligne d\'en-tête d\'un filtre.',
         },
         date: {
             1: 'Jan',

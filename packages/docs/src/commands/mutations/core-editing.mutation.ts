@@ -14,17 +14,54 @@
  * limitations under the License.
  */
 
-import type { IMutation, IMutationCommonParams, JSONXActions, Nullable } from '@univerjs/core';
-import type { ITextRangeWithStyle } from '@univerjs/engine-render';
+import type {
+    DocumentDataModel,
+    ICustomRange,
+    IDocumentData,
+    IExecutionOptions,
+    IMutation,
+    IMutationCommonParams,
+    JSONXActions,
+    Nullable,
+    TextXAction,
+    TPriority,
+} from '@univerjs/core';
+import type { DocumentViewModel, ITextRangeWithStyle } from '@univerjs/engine-render';
 import type { IDocStateChangeInfo } from '../../services/doc-state-emit.service';
-import { CommandType, IUniverInstanceService, JSONX } from '@univerjs/core';
+import {
+    CommandType,
+    CustomRangeType,
+    IUniverInstanceService,
+    JSON1,
+    JSONX,
+    TextX,
+    TextXActionType,
+    Tools,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { DocSelectionManagerService } from '../../services/doc-selection-manager.service';
 import { DocSkeletonManagerService } from '../../services/doc-skeleton-manager.service';
 import { DocStateEmitService } from '../../services/doc-state-emit.service';
+import { RICH_TEXT_EDITING_MUTATION_ID } from './core-editing.mutation-id';
+import { validateDocStructureMutation } from './doc-structure-mutation-validation';
+
+export enum DocHistoryAction {
+    DeleteChart = 'delete-chart',
+    DeleteDivider = 'delete-divider',
+    DeleteImage = 'delete-image',
+    DeleteShape = 'delete-shape',
+    EditTableCell = 'edit-table-cell',
+    FormatParagraph = 'format-paragraph',
+    InsertCustomRange = 'insert-custom-range',
+    UpdateImage = 'update-image',
+    UpdatePageLayout = 'update-page-layout',
+}
 
 export interface IRichTextEditingMutationParams extends IMutationCommonParams {
     unitId: string;
+    historyAction?: string;
+    historyActions?: string[];
     actions: JSONXActions;
     textRanges: Nullable<ITextRangeWithStyle[]>;
     segmentId?: string;
@@ -41,19 +78,208 @@ export interface IRichTextEditingMutationParams extends IMutationCommonParams {
     syncer?: string;
 }
 
-const RichTextEditingMutationId = 'doc.mutation.rich-text-editing';
+function extractDocumentBodyActions(actions: JSONXActions, segmentId: string): Nullable<JSONXActions> {
+    if (!Array.isArray(actions)) {
+        return;
+    }
+    const bodyActions = actions.indexOf('body') > -1
+        ? actions
+        : actions.find((action) => Array.isArray(action) && action.indexOf('body') > -1);
+    if (!Array.isArray(bodyActions)) {
+        return;
+    }
+
+    const bodyIndex = bodyActions.indexOf('body');
+    if (bodyIndex === -1) {
+        return;
+    }
+    const actionSegmentId = bodyIndex === 0 ? '' : bodyActions[bodyIndex - 1];
+    return actionSegmentId === segmentId ? bodyActions.slice(bodyIndex) : undefined;
+}
+
+/**
+ * Transforms document selections through the same JSONX actions applied by a rich-text mutation.
+ * Collaboration and rendering use this shared offset rule so the Main interaction window follows
+ * the transformed local caret before an authoritative background layout is published.
+ */
+export function transformDocumentTextRanges(
+    actions: JSONXActions,
+    textRanges: ITextRangeWithStyle[],
+    priority: TPriority = 'right'
+): ITextRangeWithStyle[] {
+    if (textRanges.length === 0) {
+        return [];
+    }
+
+    const segmentId = textRanges[0].segmentId ?? '';
+
+    const bodyActions = extractDocumentBodyActions(actions, segmentId);
+    if (bodyActions == null) {
+        return textRanges;
+    }
+
+    return textRanges.map((textRange) => {
+        const startOffset = JSONX.transformPosition(bodyActions, textRange.startOffset, priority);
+        const endOffset = JSONX.transformPosition(bodyActions, textRange.endOffset, priority);
+        return {
+            ...textRange,
+            startOffset,
+            endOffset,
+            collapsed: startOffset === endOffset,
+        };
+    });
+}
+
+function canRemoveFootnoteReference(actions: JSONXActions, references: ICustomRange[]): boolean {
+    let canRemove = false;
+    const cursor = JSON1.type.readCursor(actions);
+    cursor.traverse(null, (component) => {
+        const path = cursor.getPath();
+        if (path.length === 0) {
+            canRemove = true;
+        }
+        if (canRemove || path[0] !== 'body') {
+            return;
+        }
+        if (path.length === 1 && component.et === TextX.id && Array.isArray(component.e)) {
+            let offset = 0;
+            for (const action of component.e as TextXAction[]) {
+                if (action.t === TextXActionType.DELETE && references.some((reference) =>
+                    offset <= reference.endIndex && offset + action.len > reference.startIndex
+                )) {
+                    canRemove = true;
+                    return;
+                }
+                if (action.t === TextXActionType.RETAIN && action.body?.customRanges != null) {
+                    canRemove = true;
+                    return;
+                }
+                if (action.t !== TextXActionType.INSERT) {
+                    offset += action.len;
+                }
+            }
+        } else if (path.length === 1 || path[1] === 'customRanges' || path[1] === 'dataStream') {
+            canRemove = true;
+        }
+    });
+    return canRemove;
+}
+
+function includeFootnoteCleanup(before: IDocumentData, actions: JSONXActions): JSONXActions {
+    if (!before.notes) {
+        return actions;
+    }
+    const references = before.body?.customRanges?.filter((range) => (range.rangeType === CustomRangeType.FOOTNOTE || range.rangeType === CustomRangeType.ENDNOTE)) ?? [];
+    if (references.length === 0 || !canRemoveFootnoteReference(actions, references)) {
+        return actions;
+    }
+    // TextX edits mutate their body. Isolate the cleanup preview, and only run it
+    // for edits that can remove a reference; ordinary typing keeps the fast path.
+    const after = JSONX.apply(Tools.deepClone(before), actions) as unknown as IDocumentData;
+    const remaining = new Set(after.body?.customRanges?.filter((range) => (range.rangeType === CustomRangeType.FOOTNOTE || range.rangeType === CustomRangeType.ENDNOTE))
+        .map((range) => range.properties?.noteId));
+    let cleanup: JSONXActions = null;
+    const previousIds = new Set(references.map((reference) => reference.properties?.noteId));
+    for (const id of previousIds) {
+        if (typeof id === 'string' && !remaining.has(id) && after.notes?.[id]) {
+            cleanup = JSONX.compose(cleanup, JSONX.getInstance().removeOp(['notes', id], after.notes[id]));
+        }
+    }
+    return JSONX.isNoop(cleanup) ? actions : JSONX.compose(actions, cleanup);
+}
+
+function applyValidatedDocumentActions(
+    documentDataModel: DocumentDataModel,
+    segmentId: string,
+    actions: JSONXActions
+): { actions: JSONXActions; undoActions: JSONXActions; preservesStructure: boolean } {
+    const before = documentDataModel.getSnapshot();
+    const appliedActions = includeFootnoteCleanup(before, actions);
+    const undoActions = JSONX.invertWithDoc(appliedActions, before);
+    documentDataModel.apply(appliedActions);
+    try {
+        return {
+            actions: appliedActions,
+            undoActions,
+            preservesStructure: validateDocStructureMutation(documentDataModel, segmentId, appliedActions, undoActions),
+        };
+    } catch (error) {
+        documentDataModel.apply(undoActions);
+        throw error;
+    }
+}
+
+function resetDocumentViewModel(
+    documentViewModel: DocumentViewModel | null | undefined,
+    documentDataModel: DocumentDataModel,
+    segmentId: string,
+    actions: JSONXActions,
+    preservesStructure: boolean
+): void {
+    if (documentViewModel == null) {
+        return;
+    }
+    const didResetIncrementally = segmentId === '' && preservesStructure && (
+        documentViewModel.resetByValidatedTextMutation?.(documentDataModel, actions) ||
+        documentViewModel.resetByValidatedMetadataMutation?.(documentDataModel, actions)
+    );
+    if (!didResetIncrementally) {
+        documentViewModel.reset(documentDataModel);
+    }
+}
+
+function scheduleDocumentSelectionUpdate(
+    selectionManager: DocSelectionManagerService,
+    params: IRichTextEditingMutationParams,
+    isSync: boolean
+): void {
+    const { unitId, textRanges, trigger, noNeedSetTextRange, isEditing = true } = params;
+    if (noNeedSetTextRange || textRanges == null || textRanges.length === 0 || trigger == null || isSync) {
+        return;
+    }
+    const selectionTarget = { unitId, subUnitId: unitId };
+    const currentSelection = selectionManager.getSelectionInfo(selectionTarget);
+    const logicalTextRanges = textRanges.map((textRange, index) => ({
+        ...textRange,
+        segmentId: textRange.segmentId ?? params.segmentId ?? '',
+        collapsed: textRange.startOffset === textRange.endOffset,
+        isActive: index === textRanges.length - 1,
+    }));
+    if (currentSelection != null) {
+        // Advance logical intent with the mutation. Only its visual refresh is
+        // deferred; a later input or pointer selection must supersede this one.
+        selectionManager.replaceSelectionInfoWithoutRefresh({
+            ...currentSelection,
+            segmentId: logicalTextRanges[logicalTextRanges.length - 1].segmentId,
+            textRanges: logicalTextRanges,
+            rectRanges: [],
+            isEditing,
+            options: params.options,
+        }, selectionTarget);
+    }
+    const updatedSelection = selectionManager.getSelectionInfo(selectionTarget);
+    queueMicrotask(() => {
+        if (selectionManager.getSelectionInfo(selectionTarget) !== updatedSelection) {
+            return;
+        }
+        if (updatedSelection == null) {
+            selectionManager.replaceDocRanges(logicalTextRanges, selectionTarget, isEditing, params.options);
+        } else {
+            selectionManager.refreshSelection(selectionTarget, isEditing);
+        }
+    });
+}
 
 /**
  * The core mutator to change rich text actions. The execution result would be undo mutation params. Could be directly
  * send to undo redo service (will be used by the triggering command).
  */
 export const RichTextEditingMutation: IMutation<IRichTextEditingMutationParams, IRichTextEditingMutationParams> = {
-    id: RichTextEditingMutationId,
+    id: RICH_TEXT_EDITING_MUTATION_ID,
 
     type: CommandType.MUTATION,
 
-    // eslint-disable-next-line max-lines-per-function
-    handler: (accessor, params) => {
+    handler: (accessor, params, options?: IExecutionOptions) => {
         const {
             unitId,
             segmentId = '',
@@ -63,24 +289,26 @@ export const RichTextEditingMutation: IMutation<IRichTextEditingMutationParams, 
             trigger,
             noHistory,
             isCompositionEnd,
-            noNeedSetTextRange,
             debounce,
             isEditing = true,
-            isSync,
+            isSync: paramsIsSync,
             syncer,
         } = params;
+        const isSync = Boolean(paramsIsSync || options?.fromCollab || options?.fromChangeset);
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const renderManagerService = accessor.get(IRenderManagerService);
         const docStateEmitService = accessor.get(DocStateEmitService);
 
-        const documentDataModel = univerInstanceService.getUniverDocInstance(unitId);
-        const documentViewModel = renderManagerService.getRenderById(unitId)?.with(DocSkeletonManagerService).getViewModel();
-        if (documentDataModel == null || documentViewModel == null) {
-            throw new Error(`DocumentDataModel or documentViewModel not found for unitId: ${unitId}`);
+        const documentDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
+        const documentViewModel = renderManagerService.getRenderUnitById(unitId)?.with(DocSkeletonManagerService).getViewModel();
+        if (documentDataModel == null) {
+            throw new Error(`DocumentDataModel not found for unitId: ${unitId}`);
         }
 
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
         const docRanges = docSelectionManagerService.getDocRanges() ?? [];
+        // Capture selection intent before applying actions so undo can restore structural selections.
+        const selectionInfo = docSelectionManagerService.getSelectionInfo();
 
         // TODO: `disabled` is only used for read only demo, and will be removed in the future.
         const disabled = !!documentDataModel.getSnapshot().disabled;
@@ -95,35 +323,36 @@ export const RichTextEditingMutation: IMutation<IRichTextEditingMutationParams, 
             };
         }
 
-        // Step 1: Update Doc Data Model.
-        const undoActions = JSONX.invertWithDoc(actions, documentDataModel.getSnapshot());
-        documentDataModel.apply(actions);
+        const { actions: appliedActions, undoActions, preservesStructure } = applyValidatedDocumentActions(
+            documentDataModel,
+            segmentId,
+            actions
+        );
 
-        // Step 2: Update Doc View Model.
-        documentViewModel.reset(documentDataModel);
-        // Step 3: Update cursor & selection.
-        // Make sure update cursor & selection after doc skeleton is calculated.
-        if (!noNeedSetTextRange && textRanges && trigger != null && !isSync) {
-            queueMicrotask(() => {
-                docSelectionManagerService.replaceDocRanges(textRanges, { unitId, subUnitId: unitId }, isEditing, params.options);
-            });
-        }
+        // Publish reference deletion and note cleanup in the same deterministic mutation.
+        params.actions = appliedActions;
+        resetDocumentViewModel(documentViewModel, documentDataModel, segmentId, appliedActions, preservesStructure);
+        scheduleDocumentSelectionUpdate(docSelectionManagerService, params, isSync);
 
         // Step 4: Emit state change event.
         const changeState: IDocStateChangeInfo = {
-            commandId: RichTextEditingMutationId,
+            commandId: RICH_TEXT_EDITING_MUTATION_ID,
             unitId,
             segmentId,
             trigger,
             noHistory,
             debounce,
             redoState: {
-                actions,
+                actions: appliedActions,
                 textRanges,
+                options: params.options,
+                isEditing,
             },
             undoState: {
                 actions: undoActions,
                 textRanges: prevTextRanges ?? docRanges,
+                options: selectionInfo?.options,
+                isEditing: selectionInfo?.isEditing,
             },
             isCompositionEnd,
             isSync,

@@ -14,11 +14,20 @@
  * limitations under the License.
  */
 
-import type { ICellData, Injector, Nullable, Univer } from '@univerjs/core';
-import type { IEditorService } from '@univerjs/docs-ui';
+import type { ICellData, Injector, Nullable, Univer, Workbook } from '@univerjs/core';
 import type { IInsertFunctionOperationParams } from '../insert-function.operation';
-import { DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY, DOCS_NORMAL_EDITOR_UNIT_ID_KEY, ICommandService, IUniverInstanceService, ObjectMatrix, RANGE_TYPE, RedoCommand, UndoCommand } from '@univerjs/core';
-import { IEditorService as IEditorServiceToken } from '@univerjs/docs-ui';
+import {
+    DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
+    DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
+    ICommandService,
+    IUniverInstanceService,
+    ObjectMatrix,
+    RANGE_TYPE,
+    RedoCommand,
+    UndoCommand,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { IEditorService } from '@univerjs/docs-ui';
 import {
     SetRangeValuesCommand,
     SetRangeValuesMutation,
@@ -42,25 +51,25 @@ describe('Test insert function operation', () => {
     let commandService: ICommandService;
     let editorService: IEditorService;
 
-    beforeEach(() => {
-        const fakeEditorService = {
-            getEditor: vi.fn(() => null),
-            register: vi.fn(),
-            getAllEditor: vi.fn(() => new Map()),
-            isEditor: vi.fn(() => false),
-            isSheetEditor: vi.fn(() => false),
-            blur$: { subscribe: vi.fn() },
-            blur: vi.fn(),
-            focus$: { subscribe: vi.fn() },
-            focus: vi.fn(),
-            getFocusId: vi.fn(() => null),
-            getFocusEditor: vi.fn(() => null),
-        } as unknown as IEditorService;
+    class TestEditorService {
+        getEditor = vi.fn(() => null);
+        register = vi.fn();
+        getAllEditor = vi.fn(() => new Map());
+        isEditor = vi.fn(() => false);
+        isSheetEditor = vi.fn(() => false);
+        blur$ = { subscribe: vi.fn() };
+        blur = vi.fn();
+        focus$ = { subscribe: vi.fn() };
+        focus = vi.fn();
+        getFocusId = vi.fn(() => null);
+        getFocusEditor = vi.fn(() => null);
+    }
 
-        const testBed = createCommandTestBed(undefined, [[IEditorServiceToken, { useValue: fakeEditorService }]]);
+    beforeEach(() => {
+        const testBed = createCommandTestBed(undefined, [[IEditorService, { useClass: TestEditorService as never }]]);
         univer = testBed.univer;
         get = testBed.get;
-        editorService = get(IEditorServiceToken);
+        editorService = get(IEditorService);
 
         commandService = get(ICommandService);
         commandService.registerCommand(InsertFunctionOperation);
@@ -91,7 +100,7 @@ describe('Test insert function operation', () => {
 
                 function getValues() {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getRange(2, 1, 3, 1)
                         .getValues();
@@ -128,7 +137,7 @@ describe('Test insert function operation', () => {
 
                 function getValues() {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getRange(1, 2, 1, 3)
                         .getValues();
@@ -194,14 +203,14 @@ describe('Test insert function operation', () => {
                     },
                 });
                 await commandService.executeCommand(SetRangeValuesCommand.id, {
-                    value: cellMatrix.getData(),
+                    value: cellMatrix.clone(),
                     sheetId: 'sheet1',
                     range,
                 });
 
                 function getValues(range: { startRow: number; startColumn: number; endRow: number; endColumn: number }) {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getRange(range.startRow, range.startColumn, range.endRow, range.endColumn)
                         .getValues();

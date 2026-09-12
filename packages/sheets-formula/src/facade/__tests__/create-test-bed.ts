@@ -31,8 +31,15 @@ import {
     UniverInstanceType,
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
-import { DefinedNamesService, FormulaDataModel, FunctionService, IDefinedNamesService, IFunctionService, LexerTreeBuilder } from '@univerjs/engine-formula';
-import { Engine, IRenderingEngine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
+import {
+    DefinedNamesService,
+    FormulaDataModel,
+    FunctionService,
+    IDefinedNamesService,
+    IFunctionService,
+    LexerTreeBuilder,
+} from '@univerjs/engine-formula';
+import { Engine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
 import {
     RangeProtectionRuleModel,
     RefRangeService,
@@ -46,7 +53,6 @@ import {
 } from '@univerjs/sheets';
 import enUS from '@univerjs/sheets/locale/en-US';
 import zhCN from '@univerjs/sheets/locale/zh-CN';
-
 import '@univerjs/sheets/facade';
 import '../f-workbook';
 import '../f-range';
@@ -134,7 +140,6 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
             injector.add([SheetInterceptorService]);
 
             injector.add([IFunctionService, { useClass: FunctionService }]);
-            injector.add([IRenderingEngine, { useFactory: () => new Engine() }]);
             injector.add([IRenderManagerService, { useClass: RenderManagerServiceTestBed }]);
             injector.add([SheetSkeletonService]);
             injector.add([FormulaDataModel]);
@@ -165,7 +170,7 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
     // load theme service
     const themeService = injector.get(ThemeService);
     const theme = themeService.getCurrentTheme();
-    const newTheme = set(theme, 'black', '#35322b');
+    const newTheme = set(theme, 'gray.1000', '#35322b');
     themeService.setTheme(newTheme);
 
     // register builtin plugins

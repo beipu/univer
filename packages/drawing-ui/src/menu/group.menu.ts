@@ -16,13 +16,20 @@
 
 import type { IAccessor, IDrawingParam } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { DrawingTypeEnum } from '@univerjs/core';
-import { IDrawingManagerService } from '@univerjs/drawing';
+import { IDrawingManagerService, isGroupableDrawingType } from '@univerjs/drawing';
 import { MenuItemType } from '@univerjs/ui';
 import { Observable } from 'rxjs';
-import { CancelDrawingGroupOperation, DRAWING_GROUP_TYPES, SetDrawingGroupOperation } from '../commands/operations/drawing-group.operation';
+import {
+    CancelDrawingGroupOperation,
+    SetDrawingGroupOperation,
+} from '../commands/operations/drawing-group.operation';
 
-const getMenuStateByDrawingFocusChangedObservable$ = (accessor: IAccessor, type?: 'group' | 'unGroup'): Observable<boolean> => {
+function getMenuStateByDrawingFocusChangedObservable$(
+    accessor: IAccessor,
+    type?: 'group' | 'unGroup'
+): Observable<boolean> {
     const drawingManagerService = accessor.get(IDrawingManagerService);
 
     return new Observable((subscriber) => {
@@ -37,7 +44,7 @@ const getMenuStateByDrawingFocusChangedObservable$ = (accessor: IAccessor, type?
                     return subscriber.next(true);
                 }
 
-                if (!drawings.every((drawing) => DRAWING_GROUP_TYPES.includes(drawing.drawingType))) {
+                if (!drawings.every((drawing) => isGroupableDrawingType(drawing.drawingType))) {
                     return subscriber.next(true);
                 }
             } else if (type === 'unGroup') {
@@ -49,7 +56,7 @@ const getMenuStateByDrawingFocusChangedObservable$ = (accessor: IAccessor, type?
                 }
             } else {
                 // If there are drawings that cannot be grouped or ungrouped, hide the context menu
-                if (!drawings.every((drawing) => DRAWING_GROUP_TYPES.includes(drawing.drawingType))) {
+                if (!drawings.every((drawing) => isGroupableDrawingType(drawing.drawingType))) {
                     return subscriber.next(true);
                 }
             }
@@ -72,32 +79,32 @@ const getMenuStateByDrawingFocusChangedObservable$ = (accessor: IAccessor, type?
 };
 
 export const DRAWING_GROUP_CONTEXT_MENU_ID = 'contextMenu.drawing-group';
-export function DrawingGroupContextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function DrawingGroupContextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: DRAWING_GROUP_CONTEXT_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'GroupIcon',
-        title: 'image-panel.group.title',
+        title: 'drawing-ui.image-panel.group.title',
         hidden$: getMenuStateByDrawingFocusChangedObservable$(accessor),
     };
 }
 
-export function SetDrawingGroupMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function SetDrawingGroupMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingGroupOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'GroupIcon',
-        title: 'image-panel.group.group',
+        title: 'drawing-ui.image-panel.group.group',
         disabled$: getMenuStateByDrawingFocusChangedObservable$(accessor, 'group'),
     };
 }
 
-export function CancelDrawingGroupMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function CancelDrawingGroupMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: CancelDrawingGroupOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'UngroupIcon',
-        title: 'image-panel.group.unGroup',
+        title: 'drawing-ui.image-panel.group.unGroup',
         disabled$: getMenuStateByDrawingFocusChangedObservable$(accessor, 'unGroup'),
     };
 }

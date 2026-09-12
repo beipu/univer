@@ -27,6 +27,8 @@ import {
     UniverInstanceType,
 } from '@univerjs/core';
 import { UniverDataValidationPlugin } from '@univerjs/data-validation';
+import { UniverFormulaEnginePlugin } from '@univerjs/engine-formula';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { UniverSheetsFormulaPlugin } from '@univerjs/sheets-formula';
 import pkg from '../package.json';
 import {
@@ -50,9 +52,14 @@ import { DataValidationCacheService } from './services/dv-cache.service';
 import { DataValidationCustomFormulaService } from './services/dv-custom-formula.service';
 import { DataValidationFormulaService } from './services/dv-formula.service';
 import { DataValidationListCacheService } from './services/dv-list-cache.service';
-import { SheetsDataValidationValidatorService } from './services/dv-validator-service';
+import { SheetsDataValidationValidatorService } from './services/dv-validator.service';
 
-@DependentOn(UniverSheetsFormulaPlugin, UniverDataValidationPlugin)
+@DependentOn(
+    UniverDataValidationPlugin,
+    UniverFormulaEnginePlugin,
+    UniverSheetsPlugin,
+    UniverSheetsFormulaPlugin
+)
 export class UniverSheetsDataValidationPlugin extends Plugin {
     static override pluginName = DATA_VALIDATION_PLUGIN_NAME;
     static override packageName = pkg.name;

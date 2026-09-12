@@ -23,14 +23,22 @@ import {
     Injector,
     merge,
     Plugin,
+    registerDependencies,
+    touchDependencies,
     UniverInstanceType,
 } from '@univerjs/core';
+import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { SHEET_CONDITIONAL_FORMATTING_PLUGIN, UniverSheetsConditionalFormattingPlugin } from '@univerjs/sheets-conditional-formatting';
+import { UniverSheetsFormulaPlugin } from '@univerjs/sheets-formula';
+import { UniverSheetsFormulaMobileUIPlugin } from '@univerjs/sheets-formula-ui';
+import { UniverSheetsMobileUIPlugin } from '@univerjs/sheets-ui';
 import pkg from '../package.json';
 import { AddAverageCfCommand } from './commands/commands/add-average-cf.command';
 import { AddColorScaleConditionalRuleCommand } from './commands/commands/add-color-scale-cf.command';
 import { AddDataBarConditionalRuleCommand } from './commands/commands/add-data-bar-cf.command';
 import { AddDuplicateValuesCfCommand } from './commands/commands/add-duplicate-values-cf.command';
+import { AddIconSetConditionalRuleCommand } from './commands/commands/add-icon-set-cf.command';
 import { AddNumberCfCommand } from './commands/commands/add-number-cf.command';
 import { AddRankCfCommand } from './commands/commands/add-rank-cf.command';
 import { AddTextCfCommand } from './commands/commands/add-text-cf.command';
@@ -41,12 +49,22 @@ import { defaultPluginConfig, SHEETS_CONDITIONAL_FORMATTING_UI_PLUGIN_CONFIG_KEY
 import { ConditionalFormattingFormulaRefRangeController } from './controllers/cf-formula-ref-range.controller';
 import { ConditionalFormattingCopyPasteController } from './controllers/cf.copy-paste.controller';
 import { ConditionalFormattingI18nController } from './controllers/cf.i18n.controller';
+import { ConditionalFormattingPanelController } from './controllers/cf.panel.controller';
 import { ConditionalFormattingPermissionController } from './controllers/cf.permission.controller';
 import { SheetsCfRenderController } from './controllers/cf.render.controller';
+import { MobileComponentsController } from './controllers/mobile/components.controller';
+import { ConditionalFormattingMobileMenuController } from './menu/mobile-cf.menu.controller';
 
-@DependentOn(UniverSheetsConditionalFormattingPlugin)
+@DependentOn(
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverSheetsFormulaPlugin,
+    UniverSheetsFormulaMobileUIPlugin,
+    UniverSheetsConditionalFormattingPlugin,
+    UniverSheetsMobileUIPlugin
+)
 export class UniverSheetsConditionalFormattingMobileUIPlugin extends Plugin {
-    static override pluginName = `${SHEET_CONDITIONAL_FORMATTING_PLUGIN}_MOBILE_UI_PLUGIN`;
+    static override pluginName = `${SHEET_CONDITIONAL_FORMATTING_PLUGIN}_UI_PLUGIN`;
     static override packageName = pkg.name;
     static override version = pkg.version;
     static override type = UniverInstanceType.UNIVER_SHEET;
@@ -71,12 +89,39 @@ export class UniverSheetsConditionalFormattingMobileUIPlugin extends Plugin {
         this._configService.setConfig(SHEETS_CONDITIONAL_FORMATTING_UI_PLUGIN_CONFIG_KEY, rest);
 
         this._initCommand();
+    }
 
-        this._injector.add([SheetsCfRenderController]);
-        this._injector.add([ConditionalFormattingCopyPasteController]);
-        this._injector.add([ConditionalFormattingPermissionController]);
-        this._injector.add([ConditionalFormattingI18nController]);
-        this._injector.add([ConditionalFormattingFormulaRefRangeController]);
+    override onStarting(): void {
+        registerDependencies(this._injector, [
+            [MobileComponentsController],
+            [SheetsCfRenderController],
+            [ConditionalFormattingCopyPasteController],
+            [ConditionalFormattingPermissionController],
+            [ConditionalFormattingI18nController],
+            [ConditionalFormattingFormulaRefRangeController],
+            [ConditionalFormattingPanelController],
+            [ConditionalFormattingMobileMenuController],
+        ]);
+        touchDependencies(this._injector, [
+            [MobileComponentsController],
+            [SheetsCfRenderController],
+            [ConditionalFormattingFormulaRefRangeController],
+        ]);
+    }
+
+    override onReady(): void {
+        touchDependencies(this._injector, [
+            [ConditionalFormattingMobileMenuController],
+            [ConditionalFormattingPanelController],
+        ]);
+    }
+
+    override onRendered(): void {
+        touchDependencies(this._injector, [
+            [ConditionalFormattingCopyPasteController],
+            [ConditionalFormattingPermissionController],
+            [ConditionalFormattingI18nController],
+        ]);
     }
 
     private _initCommand() {
@@ -84,6 +129,7 @@ export class UniverSheetsConditionalFormattingMobileUIPlugin extends Plugin {
             AddAverageCfCommand,
             AddColorScaleConditionalRuleCommand,
             AddDataBarConditionalRuleCommand,
+            AddIconSetConditionalRuleCommand,
             AddDuplicateValuesCfCommand,
             AddNumberCfCommand,
             AddRankCfCommand,

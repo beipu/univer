@@ -27,6 +27,8 @@ export class Median extends BaseFunction {
 
     override maxParams = 255;
 
+    override lazyIfReferenceArrayArgumentIndexes = Array.from({ length: this.maxParams }, (_, index) => index);
+
     override calculate(...variants: BaseValueObject[]): BaseValueObject {
         const values: number[] = [];
 
@@ -65,7 +67,12 @@ export class Median extends BaseFunction {
                     return variant;
                 }
 
-                if (variant.isNull() || variant.isBoolean()) {
+                if (variant.isNull()) {
+                    continue;
+                }
+
+                if (variant.isBoolean()) {
+                    values.push(variant.getValue() ? 1 : 0);
                     continue;
                 }
 

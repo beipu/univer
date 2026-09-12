@@ -29,12 +29,22 @@ interface IRefType {
     refNumbers: number[];
 }
 
+function isSameRankNumber(left: number, right: number): boolean {
+    if (left === right || Number.isInteger(left) || Number.isInteger(right)) {
+        return left === right;
+    }
+    const scale = Math.max(1, Math.abs(left), Math.abs(right));
+    return Math.abs(left - right) <= Number.EPSILON * scale * 2;
+}
+
 export class RankAvg extends BaseFunction {
     override minParams = 2;
 
     override maxParams = 3;
 
     override needsReferenceObject = true;
+
+    override lazyIfReferenceArrayArgumentIndexes = [1];
 
     override calculate(number: FunctionVariantType, ref: FunctionVariantType, order?: FunctionVariantType): BaseValueObject {
         let _number = number;
@@ -97,15 +107,14 @@ export class RankAvg extends BaseFunction {
     }
 
     private _getResult(numberValue: number, orderValue: number, refNumbers: number[]): BaseValueObject {
-        const refOrderNumbers = refNumbers.sort((a, b) => !orderValue ? b - a : a - b);
+        const refOrderNumbers = [...refNumbers].sort((a, b) => !orderValue ? b - a : a - b);
 
-        let index = refOrderNumbers.indexOf(numberValue);
         const results = [];
 
-        while (index >= 0) {
-            const start = index + 1;
-            results.push(start);
-            index = refOrderNumbers.indexOf(numberValue, start);
+        for (let index = 0; index < refOrderNumbers.length; index++) {
+            if (isSameRankNumber(refOrderNumbers[index], numberValue)) {
+                results.push(index + 1);
+            }
         }
 
         if (results.length === 0) {
@@ -122,7 +131,7 @@ export class RankAvg extends BaseFunction {
         let refErrorObject = ErrorValueObject.create(ErrorType.NA);
         const refNumbers: number[] = [];
 
-        if (!ref.isReferenceObject()) {
+        if (!ref.isReferenceObject() && !ref.isArray()) {
             return {
                 refHasError: true,
                 refErrorObject,
@@ -130,7 +139,9 @@ export class RankAvg extends BaseFunction {
             };
         }
 
-        const _ref = (ref as BaseReferenceObject).toArrayValueObject();
+        const _ref = ref.isReferenceObject()
+            ? (ref as BaseReferenceObject).toArrayValueObject()
+            : ref as ArrayValueObject;
 
         _ref.iterator((refObject) => {
             const _refObject = refObject as BaseValueObject;

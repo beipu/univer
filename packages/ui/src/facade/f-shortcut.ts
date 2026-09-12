@@ -79,7 +79,8 @@ export class FShortcut extends FBase {
      * ```typescript
      * // Assum the current sheet is empty sheet.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1');
      *
      * // Set A1 cell active and set value to 'Hello Univer'.
@@ -102,12 +103,12 @@ export class FShortcut extends FBase {
      * ```
      */
     triggerShortcut(e: KeyboardEvent): IShortcutItem<object> | undefined {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
         if (!workbook) {
             return;
         }
 
-        const renderUnit = this._renderManagerService.getRenderById(workbook.getUnitId());
+        const renderUnit = this._renderManagerService.getRenderUnitById(workbook.getUnitId());
         if (!renderUnit) {
             return;
         }

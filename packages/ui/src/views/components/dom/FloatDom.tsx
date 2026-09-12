@@ -14,86 +14,81 @@
  * limitations under the License.
  */
 
-import type { CSSProperties } from 'react';
+import type { ComponentType, CSSProperties } from 'react';
 import type { IFloatDom } from '../../../services/dom/canvas-dom-layer.service';
 import { DocumentDataModel, IUniverInstanceService } from '@univerjs/core';
 import { memo, useEffect, useMemo, useRef } from 'react';
-import { distinctUntilChanged, first } from 'rxjs';
-import { ComponentManager } from '../../../common';
-import { CanvasFloatDomService } from '../../../services/dom/canvas-dom-layer.service';
+import { first } from 'rxjs';
+import { ComponentManager } from '../../../common/component-manager';
+import { CanvasFloatDomService, shouldForwardFloatDomEvents, shouldRenderFloatDomLayer } from '../../../services/dom/canvas-dom-layer.service';
 import { useDependency, useObservable } from '../../../utils/di';
+import { resolveFloatDomLayout } from './float-dom-layout';
+
+function applyFloatDomLayout(
+    wrapper: HTMLDivElement,
+    inner: HTMLDivElement,
+    layout: ReturnType<typeof resolveFloatDomLayout>
+): void {
+    const { wrapper: wrapperLayout, inner: innerLayout } = layout;
+    const wrapperStyle = wrapper.style;
+    wrapperStyle.top = `${wrapperLayout.top}px`;
+    wrapperStyle.left = `${wrapperLayout.left}px`;
+    wrapperStyle.width = `${wrapperLayout.width}px`;
+    wrapperStyle.height = `${wrapperLayout.height}px`;
+    wrapperStyle.transform = wrapperLayout.transform;
+    wrapperStyle.opacity = `${wrapperLayout.opacity}`;
+
+    const innerStyle = inner.style;
+    innerStyle.width = `${innerLayout.width}px`;
+    innerStyle.height = `${innerLayout.height}px`;
+    innerStyle.left = innerLayout.left === 'auto' ? 'auto' : `${innerLayout.left}px`;
+    innerStyle.top = innerLayout.top === 'auto' ? 'auto' : `${innerLayout.top}px`;
+    innerStyle.right = innerLayout.right === 'auto' ? 'auto' : `${innerLayout.right}px`;
+    innerStyle.bottom = innerLayout.bottom === 'auto' ? 'auto' : `${innerLayout.bottom}px`;
+}
 
 export const FloatDomSingle = memo((props: { layer: IFloatDom; id: string }) => {
-    const { layer, id } = props;
+    const { layer } = props;
 
-    const size$ = useMemo(() => layer.position$.pipe(
-        distinctUntilChanged(
-            (prev, curr) => prev.absolute.left === curr.absolute.left &&
-                prev.absolute.top === curr.absolute.top &&
-                prev.endX - prev.startX === curr.endX - curr.startX &&
-                prev.endY - prev.startY === curr.endY - curr.startY
-        )
-    ), [layer.position$]);
+    return typeof layer.componentKey === 'string'
+        ? <RegisteredFloatDomSingle {...props} componentKey={layer.componentKey} />
+        : <FloatDomSingleContent {...props} Component={layer.componentKey} />;
+});
+
+function RegisteredFloatDomSingle(props: { layer: IFloatDom; id: string; componentKey: string }) {
+    const componentManager = useDependency(ComponentManager);
+    return <FloatDomSingleContent {...props} Component={componentManager.get(props.componentKey)} />;
+}
+
+function FloatDomSingleContent(props: { layer: IFloatDom; id: string; Component?: ComponentType<any> }) {
+    const { layer, id, Component } = props;
+
     const univerInstanceService = useDependency(IUniverInstanceService);
     const position = useObservable(useMemo(() => layer.position$.pipe(first()), [layer.position$]));
     const domRef = useRef<HTMLDivElement>(null);
     const innerDomRef = useRef<HTMLDivElement>(null);
-    const transformRef = useRef<string>(`transform: rotate(${position?.rotate}deg) translate(${position?.startX}px, ${position?.startY}px)`);
-    const topRef = useRef<number>(position?.startY ?? 0);
-    const leftRef = useRef<number>(position?.startX ?? 0);
-    const innerStyle = useRef<CSSProperties>({
 
-    });
-    const Component = typeof layer.componentKey === 'string' ? useDependency(ComponentManager).get(layer.componentKey) : layer.componentKey;
     const layerProps: any = useMemo(() => ({
         data: layer.data,
         ...layer.props,
-    }), [layer.data, layer.props]);
+        hostFloatDomLayout$: layer.position$,
+    }), [layer.data, layer.position$, layer.props]);
+    const floatDomOverflow = resolveFloatDomOverflow(layerProps);
+    const wrapperInset = layer.contentBox?.wrapperInset;
+    const contentInset = layer.contentBox?.contentInset;
+    const forwardEvents = shouldForwardFloatDomEvents(layer);
 
     useEffect(() => {
         const subscription = layer.position$.subscribe((position) => {
-            transformRef.current = `rotate(${position.rotate}deg)`;
-            topRef.current = position.startY;
-            leftRef.current = position.startX;
-            if (domRef.current) {
-                domRef.current.style.transform = transformRef.current;
-                domRef.current.style.top = `${topRef.current}px`;
-                domRef.current.style.left = `${leftRef.current}px`;
-                domRef.current.style.opacity = `${position.opacity ?? 1}`;
+            if (domRef.current && innerDomRef.current) {
+                applyFloatDomLayout(domRef.current, innerDomRef.current, resolveFloatDomLayout(position, { wrapperInset, contentInset }));
             }
         });
 
-        const sizeSubscription = size$.subscribe((size) => {
-            if (domRef.current) {
-                domRef.current.style.width = `${Math.max(size.endX - size.startX - 2, 0)}px`;
-                domRef.current.style.height = `${Math.max(size.endY - size.startY - 2, 0)}px`;
-            }
-
-            if (innerDomRef.current) {
-                const style = {
-                    width: `${size.width - 4}px`,
-                    height: `${size.height - 4}px`,
-                    left: `${size.absolute.left ? 0 : 'auto'}`,
-                    top: `${size.absolute.top ? 0 : 'auto'}`,
-                    right: `${size.absolute.left ? 'auto' : 0}`,
-                    bottom: `${size.absolute.top ? 'auto' : 0}`,
-                };
-
-                innerDomRef.current.style.width = style.width;
-                innerDomRef.current.style.height = style.height;
-                innerDomRef.current.style.left = style.left;
-                innerDomRef.current.style.top = style.top;
-                innerDomRef.current.style.right = style.right;
-                innerDomRef.current.style.bottom = style.bottom;
-
-                innerStyle.current = style;
-            }
-        });
         return () => {
             subscription.unsubscribe();
-            sizeSubscription.unsubscribe();
         };
-    }, [layer.position$, size$]);
+    }, [contentInset, layer.position$, wrapperInset]);
 
     const instance = univerInstanceService.getUnit(layer.unitId);
     const docDisabled = instance instanceof DocumentDataModel ? instance.getDisabled() : undefined;
@@ -116,55 +111,100 @@ export const FloatDomSingle = memo((props: { layer: IFloatDom; id: string }) => 
         return null;
     }
 
-    //domRef univer-float-dom-wrapper
-    //innerDomRef univer-float-dom
+    const layout = resolveFloatDomLayout(position, layer.contentBox);
+
     return (
         <div
             ref={domRef}
-            className="univer-z-10"
+            className="univer-absolute univer-z-10 univer-origin-center"
             style={{
-                position: 'absolute',
-                top: topRef.current,
-                left: leftRef.current,
-                width: Math.max(position.endX - position.startX - 2, 0),
-                height: Math.max(position.endY - position.startY - 2, 0),
-                transform: transformRef.current,
-                overflow: 'hidden',
-                transformOrigin: 'center center',
+                ...layout.wrapper,
+                overflow: floatDomOverflow.outerOverflow,
+                touchAction: forwardEvents ? 'none' : undefined,
             }}
             onPointerMove={(e) => {
-                layer.onPointerMove(e.nativeEvent);
+                if (forwardEvents) {
+                    layer.onPointerMove(e.nativeEvent);
+                }
             }}
             onPointerDown={(e) => {
-                layer.onPointerDown(e.nativeEvent);
+                if (forwardEvents) {
+                    // Keep pointerup on the original descendant so its activation handler still runs.
+                    if (e.target instanceof Element) {
+                        e.target.setPointerCapture?.(e.pointerId);
+                    }
+                    layer.onPointerDown(e.nativeEvent);
+                }
             }}
             onPointerUp={(e) => {
-                layer.onPointerUp(e.nativeEvent);
+                if (!forwardEvents) {
+                    return;
+                }
+
+                try {
+                    layer.onPointerUp(e.nativeEvent);
+                } finally {
+                    if (e.target instanceof Element && e.target.hasPointerCapture?.(e.pointerId)) {
+                        e.target.releasePointerCapture?.(e.pointerId);
+                    }
+                }
+            }}
+            onPointerCancel={(e) => {
+                if (!forwardEvents) {
+                    return;
+                }
+
+                try {
+                    // The layer forwards the original event type, so the canvas receives pointercancel rather than pointerup.
+                    layer.onPointerUp(e.nativeEvent);
+                } finally {
+                    if (e.target instanceof Element && e.target.hasPointerCapture?.(e.pointerId)) {
+                        e.target.releasePointerCapture?.(e.pointerId);
+                    }
+                }
             }}
             onWheel={(e) => {
-                layer.onWheel(e.nativeEvent);
+                if (forwardEvents) {
+                    layer.onWheel(e.nativeEvent);
+                }
             }}
         >
             <div
                 id={id}
                 ref={innerDomRef}
                 className="univer-absolute univer-overflow-hidden"
-                style={{ ...innerStyle.current }}
+                style={{ ...layout.inner, overflow: floatDomOverflow.innerOverflow }}
             >
                 {component}
             </div>
         </div>
     );
-});
+}
 
 export const FloatDom = ({ unitId }: { unitId?: string }) => {
     const instanceService = useDependency(IUniverInstanceService);
     const domLayerService = useDependency(CanvasFloatDomService);
     const layers = useObservable(domLayerService.domLayers$);
     const focusUnit = useObservable(instanceService.focused$);
-    const currentUnitId = unitId || focusUnit;
+    const currentUnitId = resolveFloatDomCurrentUnitId(unitId, focusUnit);
 
-    return layers?.filter((layer) => layer[1].unitId === currentUnitId)?.map((layer) => (
+    useEffect(() => {
+        if (typeof unitId !== 'string') {
+            return;
+        }
+
+        const disposable = domLayerService.registerScopedRenderRoot(unitId);
+        return () => disposable.dispose();
+    }, [domLayerService, unitId]);
+
+    const visibleLayers = typeof unitId === 'string'
+        ? layers?.filter((layer) => layer[1].unitId === unitId)
+        : layers?.filter((layer) =>
+            !domLayerService.hasScopedRenderRoot(layer[1].unitId) &&
+            shouldRenderFloatDomLayer(layer[1], currentUnitId)
+        );
+
+    return visibleLayers?.map((layer) => (
         <FloatDomSingle
             id={layer[1].domId ?? layer[0]}
             layer={layer[1]}
@@ -172,3 +212,46 @@ export const FloatDom = ({ unitId }: { unitId?: string }) => {
         />
     ));
 };
+
+export function resolveFloatDomCurrentUnitId(unitId: string | undefined, focusedUnit: unknown): string | null {
+    if (typeof unitId === 'string') {
+        return unitId;
+    }
+
+    if (typeof focusedUnit === 'string') {
+        return focusedUnit;
+    }
+
+    if (
+        focusedUnit != null &&
+        typeof focusedUnit === 'object' &&
+        'getUnitId' in focusedUnit &&
+        typeof focusedUnit.getUnitId === 'function'
+    ) {
+        const focusedUnitId = focusedUnit.getUnitId();
+        return typeof focusedUnitId === 'string' ? focusedUnitId : null;
+    }
+
+    return null;
+}
+
+export function resolveFloatDomOverflow(props: {
+    customBlockRenderViewport?: {
+        bleedLeft?: number;
+        bleedWidth?: number;
+    };
+}): { outerOverflow: CSSProperties['overflow']; innerOverflow: CSSProperties['overflow'] } {
+    const viewport = props.customBlockRenderViewport;
+    const hasBleedViewport = Number.isFinite(viewport?.bleedWidth) && (viewport?.bleedWidth ?? 0) > 0;
+    if (!hasBleedViewport) {
+        return {
+            outerOverflow: 'hidden',
+            innerOverflow: 'hidden',
+        };
+    }
+
+    return {
+        outerOverflow: 'visible',
+        innerOverflow: 'visible',
+    };
+}

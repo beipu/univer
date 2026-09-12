@@ -15,14 +15,23 @@
  */
 
 import type { DocumentDataModel, IDisposable, IDocumentBody, IDocumentData, Nullable } from '@univerjs/core';
-import type { ISuccinctDocRangeParam, Scene } from '@univerjs/engine-render';
+import type { DocBackground, ISuccinctDocRangeParam, Scene } from '@univerjs/engine-render';
 import type { Observable } from 'rxjs';
-import type { IEditorConfigParams } from './editor';
-import { createIdentifier, DEFAULT_EMPTY_DOCUMENT_VALUE, Disposable, EDITOR_ACTIVATED, FOCUSING_COMMENT_EDITOR, FOCUSING_EDITOR_STANDALONE, HorizontalAlign, ICommandService, IContextService, Inject, Injector, isCommentEditorID, isInternalEditorID, IUndoRedoService, IUniverInstanceService, toDisposable, UniverInstanceType, VerticalAlign } from '@univerjs/core';
+import type { IEditorCanvasStyle, IEditorConfigParams } from './editor';
+import { createIdentifier, createParagraphId, DEFAULT_EMPTY_DOCUMENT_VALUE, Disposable, EDITOR_ACTIVATED, FOCUSING_COMMENT_EDITOR, FOCUSING_EDITOR_STANDALONE, HorizontalAlign, ICommandService, IContextService, Inject, Injector, isCommentEditorID, isInternalEditorID, IUndoRedoService, IUniverInstanceService, toDisposable, UniverInstanceType, VerticalAlign } from '@univerjs/core';
 import { DocSelectionManagerService } from '@univerjs/docs';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { fromEvent, Subject } from 'rxjs';
+import { DOCS_VIEW_KEY } from '../../basics/docs-view-key';
+import { resolveDocRenderBackground } from '../doc-render-background';
 import { Editor } from './editor';
+
+export interface IEditorRenderConfig {
+    canvasStyle: IEditorCanvasStyle;
+    preserveHostFocus?: boolean;
+    scrollBar?: boolean;
+    backScrollOffset?: number;
+}
 
 /**
  * Not these elements will be considered as editor blur.
@@ -54,6 +63,8 @@ export interface IEditorService {
 
     isEditor(editorUnitId: string): boolean;
 
+    getEditorRenderConfig(editorUnitId: string): Nullable<IEditorRenderConfig>;
+
     isSheetEditor(editorUnitId: string): boolean;
 
     blur$: Observable<unknown>;
@@ -69,7 +80,11 @@ export interface IEditorService {
 export class EditorService extends Disposable implements IEditorService, IDisposable {
     private _editors = new Map<string, Editor>();
 
+    private _editorRenderConfigs = new Map<string, IEditorRenderConfig>();
+
     private _focusEditorUnitId: Nullable<string>;
+
+    private _preservedHostUnitId: Nullable<string>;
 
     private readonly _blur$ = new Subject();
     readonly blur$ = this._blur$.asObservable();
@@ -128,7 +143,7 @@ export class EditorService extends Disposable implements IEditorService, IDispos
     }
 
     isEditor(editorUnitId: string) {
-        return this._editors.has(editorUnitId);
+        return this._editorRenderConfigs.has(editorUnitId) || this._editors.has(editorUnitId);
     }
 
     isSheetEditor(editorUnitId: string) {
@@ -138,6 +153,7 @@ export class EditorService extends Disposable implements IEditorService, IDispos
 
     blur(force?: boolean) {
         const focusingEditor = this.getFocusEditor();
+        const preservedHostUnitId = this._preservedHostUnitId;
         if (force) {
             focusingEditor?.setSelectionRanges([]);
         }
@@ -147,6 +163,13 @@ export class EditorService extends Disposable implements IEditorService, IDispos
         this._contextService.setContextValue(FOCUSING_EDITOR_STANDALONE, false);
         this._contextService.setContextValue(FOCUSING_COMMENT_EDITOR, false);
         this._setFocusId(null);
+        this._preservedHostUnitId = null;
+        if (
+            preservedHostUnitId &&
+            this._univerInstanceService.getUnit(preservedHostUnitId, UniverInstanceType.UNIVER_DOC)
+        ) {
+            this._univerInstanceService.setCurrentUnitForType(preservedHostUnitId);
+        }
         this._blur$.next(null);
     }
 
@@ -166,8 +189,16 @@ export class EditorService extends Disposable implements IEditorService, IDispos
             return;
         }
 
+        const currentDoc = this._univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(
+            UniverInstanceType.UNIVER_DOC
+        );
+        this._preservedHostUnitId = this._editorRenderConfigs.get(editorUnitId)?.preserveHostFocus &&
+            currentDoc?.getUnitId() !== editorUnitId
+            ? currentDoc?.getUnitId()
+            : null;
         this._univerInstanceService.setCurrentUnitForType(editorUnitId);
-        const valueCount = editor.getValue().length;
+        const dataStream = editor.getDocumentData().body?.dataStream ?? '';
+        const valueCount = dataStream.replace(/\r?\n/g, '').length;
 
         this._contextService.setContextValue(EDITOR_ACTIVATED, true);
 
@@ -189,7 +220,16 @@ export class EditorService extends Disposable implements IEditorService, IDispos
     }
 
     override dispose(): void {
-        this._editors.clear();
+        if (this._disposed) {
+            return;
+        }
+
+        for (const editorUnitId of this._editors.keys()) {
+            this._unRegister(editorUnitId);
+        }
+        this._editorRenderConfigs.clear();
+        this._blur$.complete();
+        this._focus$.complete();
         super.dispose();
     }
 
@@ -201,9 +241,24 @@ export class EditorService extends Disposable implements IEditorService, IDispos
         return this._editors;
     }
 
+    getEditorRenderConfig(editorUnitId: string): Nullable<IEditorRenderConfig> {
+        const editor = this._editors.get(editorUnitId);
+        return this._editorRenderConfigs.get(editorUnitId) ?? editor?.getRenderConfig() ?? null;
+    }
+
     register(config: IEditorConfigParams, container: HTMLDivElement): IDisposable {
+        this.ensureNotDisposed();
         const { initialSnapshot, canvasStyle = {} } = config;
         const editorUnitId = initialSnapshot.id;
+        this._editors.get(editorUnitId)?.dispose(false);
+        this._editors.delete(editorUnitId);
+        const renderConfig: IEditorRenderConfig = {
+            canvasStyle,
+            scrollBar: config.scrollBar,
+            ...(config.backScrollOffset === undefined ? {} : { backScrollOffset: config.backScrollOffset }),
+            ...(config.preserveHostFocus === undefined ? {} : { preserveHostFocus: config.preserveHostFocus }),
+        };
+        this._editorRenderConfigs.set(editorUnitId, renderConfig);
 
         const documentDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(editorUnitId, UniverInstanceType.UNIVER_DOC);
 
@@ -215,14 +270,13 @@ export class EditorService extends Disposable implements IEditorService, IDispos
             );
         }
 
-        let render = this._renderManagerService.getRenderById(editorUnitId);
+        let render = this._renderManagerService.getRenderUnitById(editorUnitId);
         if (render == null) {
-            this._renderManagerService.create(editorUnitId);
-            render = this._renderManagerService.getRenderById(editorUnitId);
+            render = this._renderManagerService.createRender(editorUnitId);
         }
 
         if (render) {
-            render.engine.setContainer(container);
+            render.engine.mount(container);
 
             const editor = new Editor(
                 { ...config, render, editorDom: container, canvasStyle },
@@ -235,30 +289,77 @@ export class EditorService extends Disposable implements IEditorService, IDispos
 
             this._editors.set(editorUnitId, editor);
 
+            const resolvedEditorBackground = resolveDocRenderBackground({
+                canvasColorService: render.engine.canvasColorService,
+                editorBackgroundColor: canvasStyle.backgroundColor,
+                isEditor: true,
+            });
+            render.engine.getCanvas().getCanvasEle().style.backgroundColor = resolvedEditorBackground.canvasElementBackgroundColor;
+            const docBackground = render.components.get(DOCS_VIEW_KEY.BACKGROUND) as DocBackground | undefined;
+            docBackground?.setFillColors(
+                resolvedEditorBackground.docBackgroundFillColor,
+                resolvedEditorBackground.docBackgroundFillColor,
+                resolvedEditorBackground.docBackgroundFillColor,
+                resolvedEditorBackground.docBackgroundFillColor
+            );
+
             // Delete scroll bar
             if (!config.scrollBar) {
-                (render.mainComponent?.getScene() as Scene)?.getViewports()?.[0].getScrollBar()?.dispose();
+                const viewport = (render.mainComponent?.getScene() as Scene)?.getViewports()?.[0];
+                viewport?.getScrollBar()?.dispose();
+                viewport?.updateScrollVal({
+                    scrollX: 0,
+                    scrollY: 0,
+                    viewportScrollX: 0,
+                    viewportScrollY: 0,
+                });
             }
         }
         return toDisposable(() => {
-            this._unRegister(editorUnitId);
+            // An older container may unmount after a replacement has registered the same ID.
+            if (this._editorRenderConfigs.get(editorUnitId) === renderConfig) {
+                this._unRegister(editorUnitId);
+            }
         });
     }
 
     private _unRegister(editorUnitId: string) {
         const editor = this._editors.get(editorUnitId);
         if (editor == null) {
+            this._editorRenderConfigs.delete(editorUnitId);
             return;
+        }
+
+        if (this._focusEditorUnitId === editorUnitId) {
+            this.blur(true);
+        }
+
+        const preserveHostFocus = this._editorRenderConfigs.get(editorUnitId)?.preserveHostFocus === true;
+        const currentDoc = this._univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const focusedHost = preserveHostFocus ? this._univerInstanceService.getFocusedUnit() : null;
+        const focusedHostId = focusedHost?.getUnitId();
+        const restoreHostUnitId = currentDoc?.getUnitId() === editorUnitId
+            && focusedHostId != null
+            && focusedHostId !== editorUnitId
+            && this._univerInstanceService.getUnitType(focusedHostId) === UniverInstanceType.UNIVER_DOC
+            ? focusedHostId
+            : null;
+        if (this._focusEditorUnitId === editorUnitId) {
+            this.blur();
         }
 
         this._renderManagerService.removeRender(editorUnitId);
         editor.dispose();
         this._editors.delete(editorUnitId);
+        this._editorRenderConfigs.delete(editorUnitId);
         this._univerInstanceService.disposeUnit(editorUnitId);
+        if (restoreHostUnitId != null) {
+            this._univerInstanceService.setCurrentUnitForType(restoreHostUnitId);
+        }
     }
 
     private _getCurrentEditorUnitId() {
-        const current = this._univerInstanceService.getCurrentUniverDocInstance()!;
+        const current = this._univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC)!;
         return current.getUnitId();
     }
 
@@ -271,6 +372,7 @@ export class EditorService extends Disposable implements IEditorService, IDispos
                 paragraphs: [
                     {
                         startIndex: 0,
+                        paragraphId: createParagraphId(new Set()),
                     },
                 ],
             },

@@ -15,15 +15,23 @@
  */
 
 import type { IShortcutItem } from '@univerjs/ui';
-import { KeyCode } from '@univerjs/ui';
+import { KeyCode, MetaKeys } from '@univerjs/ui';
 import { EnterCommand } from '../commands/commands/auto-format.command';
+import { BreakLineCommand } from '../commands/commands/break-line.command';
 import { DeleteLeftCommand, DeleteRightCommand } from '../commands/commands/doc-delete.command';
+import { CloseHeaderFooterCommand } from '../commands/commands/doc-header-footer.command';
 import { whenDocAndEditorFocused, whenDocAndEditorFocusedWithBreakLine } from './utils';
 
 export const BreakLineShortcut: IShortcutItem = {
     id: EnterCommand.id,
     preconditions: whenDocAndEditorFocusedWithBreakLine,
     binding: KeyCode.ENTER,
+};
+
+export const SoftBreakLineShortcut: IShortcutItem = {
+    id: BreakLineCommand.id,
+    preconditions: whenDocAndEditorFocusedWithBreakLine,
+    binding: KeyCode.ENTER | MetaKeys.SHIFT,
 };
 
 export const DeleteLeftShortcut: IShortcutItem = {
@@ -36,6 +44,12 @@ export const DeleteRightShortcut: IShortcutItem = {
     id: DeleteRightCommand.id,
     preconditions: whenDocAndEditorFocused,
     binding: KeyCode.DELETE,
+};
+
+export const CloseHeaderFooterShortcut: IShortcutItem = {
+    id: CloseHeaderFooterCommand.id,
+    preconditions: whenDocAndEditorFocused,
+    binding: KeyCode.ESC,
 };
 
 // export const TabShortcut: IShortcutItem = {

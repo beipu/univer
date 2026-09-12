@@ -17,27 +17,41 @@
 import type { Dependency } from '@univerjs/core';
 import type { IUniverDocsDrawingUIConfig } from './config/config';
 import { DependentOn, IConfigService, Inject, Injector, merge, Plugin, UniverInstanceType } from '@univerjs/core';
+import { UniverDocsPlugin } from '@univerjs/docs';
 import { UniverDocsDrawingPlugin } from '@univerjs/docs-drawing';
+import { UniverDocsUIPlugin } from '@univerjs/docs-ui';
 import { UniverDrawingPlugin } from '@univerjs/drawing';
 import { UniverDrawingUIPlugin } from '@univerjs/drawing-ui';
-import { IRenderManagerService } from '@univerjs/engine-render';
-import { UniverUIPlugin } from '@univerjs/ui';
+import { IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render';
 import pkg from '../package.json';
-import { defaultPluginConfig, DOCS_DRAWING_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { defaultPluginConfig, DOCS_DRAWING_UI_PLUGIN_CONFIG_KEY, DOCS_DRAWING_UI_PLUGIN_NAME } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { DocDrawingAddRemoveController } from './controllers/doc-drawing-notification.controller';
 import { DocDrawingPrintingController } from './controllers/doc-drawing-printing.controller';
 import { DocDrawingTransformerController } from './controllers/doc-drawing-transformer-update.controller';
-import { DocDrawingUIController } from './controllers/doc-drawing.controller';
 import { DocFloatDomController } from './controllers/doc-float-dom.controller';
-import { DocDrawingTransformUpdateController } from './controllers/render-controllers/doc-drawing-transform-update.controller';
-import { DocDrawingUpdateRenderController } from './controllers/render-controllers/doc-drawing-update.render-controller';
+import {
+    DocDrawingTransformUpdateController,
+} from './controllers/render-controllers/doc-drawing-transform-update.controller';
+import {
+    DocDrawingUpdateRenderController,
+} from './controllers/render-controllers/doc-drawing-update.render-controller';
+import { DocDrawingUIController } from './controllers/ui.controller';
 import { DocDrawingPopupMenuController } from './menu/drawing-popup-menu.controller';
+import { DocDrawingFloatingToolbarAdapterService } from './services/doc-drawing-floating-toolbar-adapter.service';
 import { DocRefreshDrawingsService } from './services/doc-refresh-drawings.service';
 
-@DependentOn(UniverDrawingUIPlugin, UniverDrawingPlugin, UniverDocsDrawingPlugin, UniverUIPlugin)
+@DependentOn(
+    UniverDocsPlugin,
+    UniverDrawingPlugin,
+    UniverRenderEnginePlugin,
+    UniverDocsDrawingPlugin,
+    UniverDocsUIPlugin,
+    UniverDrawingUIPlugin
+)
 export class UniverDocsDrawingUIPlugin extends Plugin {
     static override type = UniverInstanceType.UNIVER_DOC;
-    static override pluginName = 'DOC_DRAWING_UI_PLUGIN';
+    static override pluginName = DOCS_DRAWING_UI_PLUGIN_NAME;
     static override packageName = pkg.name;
     static override version = pkg.version;
 
@@ -60,16 +74,19 @@ export class UniverDocsDrawingUIPlugin extends Plugin {
 
     override onStarting(): void {
         const dependencies: Dependency[] = [
+            [ComponentsController],
             [DocDrawingUIController],
             [DocDrawingPopupMenuController],
             [DocDrawingTransformerController],
             [DocDrawingAddRemoveController],
             [DocRefreshDrawingsService],
+            [DocDrawingFloatingToolbarAdapterService],
             [DocFloatDomController],
             [DocDrawingPrintingController],
         ];
 
         dependencies.forEach((dependency) => this._injector.add(dependency));
+        this._injector.get(ComponentsController);
     }
 
     override onReady(): void {

@@ -14,22 +14,48 @@
  * limitations under the License.
  */
 
-import type { Dependency, IOperation, IWorkbookData, Workbook } from '@univerjs/core';
+import type { IOperation, IWorkbookData, Workbook } from '@univerjs/core';
+import type { IInsertColMutationParams } from '@univerjs/sheets';
 import type { IEditorBridgeServiceVisibleParam } from '@univerjs/sheets-ui';
 import type { IOpenFilterPanelOperationParams } from '../../commands/operations/sheets-filter.operation';
 import type { IFilterConditionFormParams } from '../../models/conditions';
 import type { IFilterByValueWithTreeItem } from '../sheets-filter-panel.service';
-import { CommandType, ICommandService, Inject, Injector, LocaleService, Plugin, Univer, UniverInstanceType } from '@univerjs/core';
-import { ActiveDirtyManagerService, IActiveDirtyManagerService, ISheetRowFilteredService, SheetRowFilteredService } from '@univerjs/engine-formula';
-import { MarkDirtyFilterChangeMutation, RefRangeService, SheetInterceptorService, SheetRangeThemeModel, SheetsSelectionsService, ZebraCrossingCacheController } from '@univerjs/sheets';
+import {
+    awaitTime,
+    CommandType,
+    ICommandService,
+    Inject,
+    Injector,
+    LocaleService,
+    LocaleType,
+    Plugin,
+    Univer,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { InsertColMutation } from '@univerjs/sheets';
 import { CustomFilterOperator, FilterBy, SheetsFilterService, UniverSheetsFilterPlugin } from '@univerjs/sheets-filter';
-import { SetSheetsFilterCriteriaCommand } from '@univerjs/sheets-filter/commands/commands/sheets-filter.command.js';
 import { afterEach, beforeEach, describe, expect, it, vitest } from 'vitest';
-import { E_ITEMS, ITEMS, ITEMS_WITH_EMPTY, WithCustomFilterModelFactory, WithMergedCellFilterFactory, WithMultiEmptyCellsModelFactory, WithTwoFilterColumnsFactory, WithValuesAndEmptyFilterModelFactory, WithValuesFilterModelFactory } from '../../__testing__/data';
+import {
+    E_ITEMS,
+    ITEMS,
+    ITEMS_WITH_EMPTY,
+    WithCustomFilterModelFactory,
+    WithMergedCellFilterFactory,
+    WithMultiEmptyCellsModelFactory,
+    WithTwoFilterColumnsFactory,
+    WithValuesAndEmptyFilterModelFactory,
+    WithValuesFilterModelFactory,
+} from '../../__tests__/data';
 import { CloseFilterPanelOperation, OpenFilterPanelOperation } from '../../commands/operations/sheets-filter.operation';
 import { FilterConditionItems } from '../../models/conditions';
 import { ExtendCustomFilterOperator } from '../../models/extended-operators';
-import { ByConditionsModel, ByValuesModel, SheetsFilterPanelService } from '../sheets-filter-panel.service';
+import {
+    ByColorsModel,
+    ByConditionsModel,
+    ByValuesModel,
+    ISheetsFilterPanelService,
+    SheetsFilterPanelService,
+} from '../sheets-filter-panel.service';
 
 const SetCellEditVisibleOperation: IOperation<IEditorBridgeServiceVisibleParam> = {
     id: 'sheet.operation.set-cell-edit-visible',
@@ -90,16 +116,7 @@ function createSheetsFilterPanelServiceTestBed(workbookData: IWorkbookData) {
         }
 
         override onStarting(): void {
-            ([
-                [RefRangeService],
-                [SheetsSelectionsService],
-                [SheetInterceptorService],
-                [SheetsFilterPanelService],
-                [SheetRangeThemeModel],
-                [ZebraCrossingCacheController],
-                [IActiveDirtyManagerService, { useClass: ActiveDirtyManagerService }],
-                [ISheetRowFilteredService, { useClass: SheetRowFilteredService }],
-            ] as Dependency[]).forEach((d) => this._injector.add(d));
+            this._injector.add([ISheetsFilterPanelService, { useClass: SheetsFilterPanelService }]);
         }
     }
 
@@ -115,9 +132,7 @@ function createSheetsFilterPanelServiceTestBed(workbookData: IWorkbookData) {
     [
         OpenFilterPanelOperation,
         CloseFilterPanelOperation,
-        SetSheetsFilterCriteriaCommand,
         SetCellEditVisibleOperation,
-        MarkDirtyFilterChangeMutation,
     ].forEach((command) => commandService.registerCommand(command));
 
     return { univer, get };
@@ -128,7 +143,7 @@ describe('test "SheetsFilterPanelService"', () => {
     let get: Injector['get'];
     let commandService: ICommandService;
     let sheetsFilterService: SheetsFilterService;
-    let sheetsFilterPanelService: SheetsFilterPanelService;
+    let sheetsFilterPanelService: ISheetsFilterPanelService;
 
     function prepare(workbookData: IWorkbookData) {
         const testBed = createSheetsFilterPanelServiceTestBed(workbookData);
@@ -138,7 +153,7 @@ describe('test "SheetsFilterPanelService"', () => {
 
         commandService = get(ICommandService);
         sheetsFilterService = get(SheetsFilterService);
-        sheetsFilterPanelService = get(SheetsFilterPanelService);
+        sheetsFilterPanelService = get(ISheetsFilterPanelService);
     }
 
     afterEach(() => {
@@ -245,6 +260,125 @@ describe('test "SheetsFilterPanelService"', () => {
         });
     });
 
+    describe('test filter type switching and color filters', () => {
+        beforeEach(() => {
+            vitest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vitest.useRealTimers();
+        });
+
+        it('should switch the active panel model by filter type for the same filter column', async () => {
+            prepare(WithValuesFilterModelFactory());
+
+            expect(commandService.syncExecuteCommand(OpenFilterPanelOperation.id, {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                col: 0,
+            } as IOpenFilterPanelOperationParams)).toBe(true);
+            await tick();
+
+            expect(sheetsFilterPanelService.filterModel).toBe(sheetsFilterService.activeFilterModel);
+            expect(sheetsFilterPanelService.col).toBe(0);
+            expect(sheetsFilterPanelService.filterByModel).toBeInstanceOf(ByValuesModel);
+
+            expect(sheetsFilterPanelService.changeFilterBy(FilterBy.CONDITIONS)).toBe(true);
+            expect(sheetsFilterPanelService.filterBy).toBe(FilterBy.CONDITIONS);
+            expect(sheetsFilterPanelService.filterByModel).toBeInstanceOf(ByConditionsModel);
+
+            expect(sheetsFilterPanelService.changeFilterBy(FilterBy.COLORS)).toBe(true);
+            await tick();
+            expect(sheetsFilterPanelService.filterBy).toBe(FilterBy.COLORS);
+            expect(sheetsFilterPanelService.filterByModel).toBeInstanceOf(ByColorsModel);
+
+            expect(sheetsFilterPanelService.changeFilterBy(FilterBy.VALUES)).toBe(true);
+            await tick();
+            expect(sheetsFilterPanelService.filterBy).toBe(FilterBy.VALUES);
+            expect(sheetsFilterPanelService.filterByModel).toBeInstanceOf(ByValuesModel);
+        });
+
+        it('should build and apply color filter options from cell fill and text colors', async () => {
+            prepare(WithColorFilterModelFactory());
+
+            expect(commandService.syncExecuteCommand(OpenFilterPanelOperation.id, {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                col: 0,
+            } as IOpenFilterPanelOperationParams)).toBe(true);
+            expect(sheetsFilterPanelService.changeFilterBy(FilterBy.COLORS)).toBe(true);
+            await tick();
+
+            const filterByModel = sheetsFilterPanelService.filterByModel as ByColorsModel;
+            expect(filterByModel).toBeInstanceOf(ByColorsModel);
+            expect(filterByModel.cellFillColors).toEqual([
+                { color: 'rgb(255,0,0)', checked: false },
+                { color: null, checked: false },
+            ]);
+            expect(filterByModel.cellTextColors).toEqual([
+                { color: 'rgb(0,0,0)', checked: false },
+                { color: 'rgb(0,0,255)', checked: false },
+            ]);
+
+            filterByModel.onFilterCheckToggled({ color: 'rgb(255,0,0)', checked: false });
+            expect(filterByModel.cellFillColors).toEqual([
+                { color: 'rgb(255,0,0)', checked: true },
+                { color: null, checked: false },
+            ]);
+
+            expect(await filterByModel.apply()).toBe(true);
+            expect(sheetsFilterService.activeFilterModel!.getFilterColumn(0)!.getColumnData().colorFilters).toEqual({
+                cellFillColors: ['rgb(255,0,0)'],
+            });
+
+            filterByModel.onFilterCheckToggled({ color: 'rgb(0,0,255)', checked: false }, false);
+            expect(filterByModel.cellFillColors).toEqual([
+                { color: 'rgb(255,0,0)', checked: false },
+                { color: null, checked: false },
+            ]);
+            expect(filterByModel.cellTextColors).toEqual([
+                { color: 'rgb(0,0,0)', checked: false },
+                { color: 'rgb(0,0,255)', checked: true },
+            ]);
+
+            expect(await filterByModel.apply()).toBe(true);
+            expect(sheetsFilterService.activeFilterModel!.getFilterColumn(0)!.getColumnData().colorFilters).toEqual({
+                cellTextColors: ['rgb(0,0,255)'],
+            });
+
+            filterByModel.onFilterCheckToggled({ color: 'rgb(0,0,255)', checked: true }, false);
+            expect(await filterByModel.apply()).toBe(true);
+            expect(sheetsFilterService.activeFilterModel!.getFilterColumn(0)).toBeNull();
+        });
+
+        it('should keep the panel target column aligned when columns are inserted before the filter header', async () => {
+            prepare(WithValuesFilterModelFactory());
+
+            expect(commandService.syncExecuteCommand(OpenFilterPanelOperation.id, {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                col: 0,
+            } as IOpenFilterPanelOperationParams)).toBe(true);
+            await tick();
+
+            const filterByModel = sheetsFilterPanelService.filterByModel as ByValuesModel;
+            expect(filterByModel.col).toBe(0);
+
+            expect(commandService.syncExecuteCommand(InsertColMutation.id, {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                range: {
+                    startRow: 0,
+                    endRow: 999,
+                    startColumn: 0,
+                    endColumn: 0,
+                },
+            } as IInsertColMutationParams)).toBe(true);
+
+            expect(filterByModel.col).toBe(1);
+        });
+    });
+
     describe('test filter by values', () => {
         beforeEach(() => {
             vitest.useFakeTimers();
@@ -262,7 +396,7 @@ describe('test "SheetsFilterPanelService"', () => {
                 subUnitId: 'sheet1',
                 col: 0,
             } as IOpenFilterPanelOperationParams)).toBeTruthy();
-            await await tick();
+            await tick();
 
             expect(sheetsFilterPanelService.filterBy).toBe(FilterBy.VALUES);
             const filterByModel = sheetsFilterPanelService.filterByModel as ByValuesModel;
@@ -302,7 +436,7 @@ describe('test "SheetsFilterPanelService"', () => {
             const filterItems = filterByModel.filterItems;
             const emptyItem = filterItems.find((item) => item.key === 'empty');
             expect(emptyItem).toEqual({
-                title: 'sheets-filter.panel.empty',
+                title: 'sheets-filter-ui.panel.empty',
                 count: 4,
                 leaf: true,
                 checked: true,
@@ -347,7 +481,7 @@ describe('test "SheetsFilterPanelService"', () => {
                     count: 1,
                 },
                 {
-                    title: 'sheets-filter.panel.empty',
+                    title: 'sheets-filter-ui.panel.empty',
                     count: 3,
                     leaf: true,
                     checked: true,
@@ -386,7 +520,7 @@ describe('test "SheetsFilterPanelService"', () => {
                     count: 1,
                 },
                 {
-                    title: 'sheets-filter.panel.empty',
+                    title: 'sheets-filter-ui.panel.empty',
                     count: 3,
                     leaf: true,
                     checked: true,
@@ -507,20 +641,71 @@ describe('test "SheetsFilterPanelService"', () => {
             });
         });
     });
-
-    describe('test behavior when filter range or filter column changes', () => {
-        it('should close the panel when the filter removed or the column in not in the filter range', () => {
-            // TODO@wzhudev
-        });
-
-        it('should close the panel when the active sheet changes', () => {
-            // TODO@wzhudev
-        });
-    });
 });
 
 function tick(milliseconds: number = 0): Promise<void> {
-    const result = new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+    const result = awaitTime(milliseconds);
     vitest.advanceTimersByTime(milliseconds + 1);
     return result;
+}
+
+function WithColorFilterModelFactory(): IWorkbookData {
+    return {
+        id: 'test',
+        sheetOrder: ['sheet1'],
+        name: '',
+        appVersion: '3.0.0-alpha',
+        locale: LocaleType.ZH_CN,
+        styles: {
+            redFill: {
+                bg: {
+                    rgb: '#ff0000',
+                },
+            },
+            blueText: {
+                cl: {
+                    rgb: '#0000ff',
+                },
+            },
+        },
+        sheets: {
+            sheet1: {
+                id: 'sheet1',
+                name: 'Sheet1',
+                rowCount: 20,
+                columnCount: 5,
+                cellData: {
+                    0: {
+                        0: { v: 'Status' },
+                    },
+                    1: {
+                        0: { v: 'Blocked', s: 'redFill' },
+                    },
+                    2: {
+                        0: { v: 'Ready', s: 'blueText' },
+                    },
+                    3: {
+                        0: { v: 'Backlog' },
+                    },
+                },
+            },
+        },
+        resources: [
+            {
+                name: 'SHEET_FILTER_PLUGIN',
+                data: JSON.stringify({
+                    sheet1: {
+                        ref: {
+                            startRow: 0,
+                            startColumn: 0,
+                            endRow: 3,
+                            endColumn: 0,
+                        },
+                        filterColumns: [],
+                        cachedFilteredOut: [],
+                    },
+                }),
+            },
+        ],
+    };
 }

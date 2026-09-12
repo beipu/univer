@@ -155,7 +155,7 @@ export const FlipSheetDrawingCommand: ICommand = {
 
         const result = sequenceExecute([updateMutation], commandService);
 
-        if (result) {
+        if (result.result) {
             undoRedoService.pushUndoRedo({
                 unitID: opUnitId,
                 undoMutations: [undoUpdateMutation, { id: ClearSheetDrawingTransformerOperation.id, params: unitIds }],
@@ -171,7 +171,7 @@ export const FlipSheetDrawingCommand: ICommand = {
 
 function getSceneByDrawingSearch(accessor: IAccessor, unitId: string) {
     const renderManagerService = accessor.get(IRenderManagerService);
-    const render = renderManagerService.getRenderById(unitId);
+    const render = renderManagerService.getRenderUnitById(unitId);
     if (!render) {
         return null;
     }

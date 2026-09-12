@@ -14,19 +14,25 @@
  * limitations under the License.
  */
 
+import { Injector, IUniverInstanceService } from '@univerjs/core';
 import { describe, expect, it } from 'vitest';
-import { DefinedNamesService } from '../defined-names.service';
+import { DefinedNamesService, IDefinedNamesService } from '../defined-names.service';
+
+const worksheet = { id: 'sheet-a' };
+
+class TestUniverInstanceService {
+    getUnit() {
+        return {
+            getSheetBySheetName: (sheetName: string) => (sheetName === 'Sheet1' ? worksheet : null),
+        };
+    }
+}
 
 function createDefinedNamesService() {
-    const worksheet = { id: 'sheet-a' };
-    const workbook = {
-        getSheetBySheetName: (sheetName: string) => (sheetName === 'Sheet1' ? worksheet : null),
-    };
-    const univerInstanceService = {
-        getUnit: () => workbook,
-    };
-
-    const service = new DefinedNamesService(univerInstanceService as never);
+    const injector = new Injector();
+    injector.add([IUniverInstanceService, { useClass: TestUniverInstanceService as never }]);
+    injector.add([IDefinedNamesService, { useClass: DefinedNamesService }]);
+    const service = injector.get(IDefinedNamesService);
     return {
         service,
         worksheet,
@@ -73,6 +79,28 @@ describe('DefinedNamesService', () => {
 
         service.removeUnitDefinedName('unit-2');
         expect(service.getDefinedNameMap('unit-2')).toBeUndefined();
+    });
+
+    it('should prefer sheet-local defined names over workbook-scope names', () => {
+        const { service } = createDefinedNamesService();
+        service.registerDefinedNames('unit-local', {
+            local: {
+                id: 'local',
+                name: 'date_begin',
+                localSheetId: 'sheet-weekly',
+                formulaOrRefString: 'Weekly!$F$4',
+            },
+            global: {
+                id: 'global',
+                name: 'date_begin',
+                localSheetId: 'AllDefaultWorkbook',
+                formulaOrRefString: 'Report!$F$4',
+            },
+        });
+
+        expect(service.getValueByName('unit-local', 'date_begin', 'sheet-weekly')?.id).toBe('local');
+        expect(service.getValueByName('unit-local', 'date_begin', 'sheet-report')?.id).toBe('global');
+        expect(service.getValueByName('unit-local', 'DATE_BEGIN')?.id).toBe('global');
     });
 
     it('should emit update/current/focus streams', () => {

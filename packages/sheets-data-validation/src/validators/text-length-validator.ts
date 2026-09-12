@@ -17,18 +17,20 @@
 import type { CellValue, IDataValidationRule, IDataValidationRuleBase, ISheetDataValidationRule, Nullable } from '@univerjs/core';
 import type { IFormulaResult, IFormulaValidResult, IValidatorCellInfo } from '@univerjs/data-validation';
 import type { ISheetLocationBase } from '@univerjs/sheets';
+import type { LocaleKey } from '../locale/types';
 import { DataValidationOperator, DataValidationType, isFormulaString, Tools } from '@univerjs/core';
-import { BaseDataValidator, TextLengthErrorTitleMap } from '@univerjs/data-validation';
 import { LexerTreeBuilder } from '@univerjs/engine-formula';
 import { DataValidationCustomFormulaService } from '../services/dv-custom-formula.service';
+import { TextLengthErrorTitleMap } from '../types/const/operator-text-map';
 import { TWO_FORMULA_OPERATOR_COUNT } from '../types/const/two-formula-operators';
 import { isLegalFormulaResult } from '../utils/formula';
+import { BaseSheetValidator } from './base-sheet-validator';
 import { FORMULA1, FORMULA2 } from './const';
 import { getTransformedFormula } from './util';
 
-export class TextLengthValidator extends BaseDataValidator {
+export class TextLengthValidator extends BaseSheetValidator {
     id: string = DataValidationType.TEXT_LENGTH;
-    title: string = 'dataValidation.textLength.title';
+    title: string = 'sheets-data-validation.textLength.title';
     private readonly _lexerTreeBuilder = this.injector.get(LexerTreeBuilder);
     order = 30;
 
@@ -61,7 +63,7 @@ export class TextLengthValidator extends BaseDataValidator {
         const formula1Success = Tools.isDefine(rule.formula1) && this._isFormulaOrInt(rule.formula1);
         const formula2Success = Tools.isDefine(rule.formula2) && this._isFormulaOrInt(rule.formula2);
         const isTwoFormula = TWO_FORMULA_OPERATOR_COUNT.includes(operator);
-        const errorMsg = this.localeService.t('dataValidation.validFail.number');
+        const errorMsg = this.localeService.t<LocaleKey>('sheets-data-validation.validFail.number');
         if (isTwoFormula) {
             return {
                 success: formula1Success && formula2Success,

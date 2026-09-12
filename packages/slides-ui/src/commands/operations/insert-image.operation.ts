@@ -16,8 +16,8 @@
 
 import type { ICommand } from '@univerjs/core';
 import type { SlideDataModel } from '@univerjs/slides';
-import { CommandType, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-import { DRAWING_IMAGE_ALLOW_IMAGE_LIST, getImageSize, IImageIoService } from '@univerjs/drawing';
+import { CommandType, IImageIoService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import { DRAWING_IMAGE_ALLOW_IMAGE_LIST, getImageSize } from '@univerjs/drawing';
 import { PageElementType } from '@univerjs/slides';
 import { ILocalFileService } from '@univerjs/ui';
 import { CanvasView } from '../../controllers/canvas-view';
@@ -27,7 +27,7 @@ export const InsertSlideFloatImageCommand: ICommand<{}> = {
     type: CommandType.COMMAND,
     handler: async (accessor, params) => {
         const univerInstanceService = accessor.get(IUniverInstanceService);
-        const unitId = univerInstanceService.getCurrentUnitForType(UniverInstanceType.UNIVER_SLIDE)?.getUnitId();
+        const unitId = univerInstanceService.getCurrentUnitOfType(UniverInstanceType.UNIVER_SLIDE)?.getUnitId();
         if (!unitId) return false;
 
         const fileOpenerService = accessor.get(ILocalFileService);

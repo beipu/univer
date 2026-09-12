@@ -14,16 +14,68 @@
  * limitations under the License.
  */
 
-import type { ICustomBlock, ICustomDecoration, ICustomRange, IDocumentBody, IParagraph, ISectionBreak, ITextRun } from '../../../types/interfaces/i-document-data';
+import type {
+    ICustomBlock,
+    ICustomColumnGroup,
+    ICustomDecoration,
+    ICustomRange,
+    IDocumentBlockRange,
+    IDocumentBody,
+    IDocxExportExcludedRange,
+    IDocxRawBlock,
+    IParagraph,
+    ISectionBreak,
+    ITextRun,
+} from '../../../types/interfaces/i-document-data';
+import type { DocumentDataModel } from '../../data-model';
 import type { IRetainAction } from './action-types';
+import { merge } from '../../../common/lodash';
 import { UpdateDocsAttributeType } from '../../../shared/command-enum';
 import { Tools } from '../../../shared/tools';
+import { DataStreamTreeTokenType } from '../types';
+import { PRESERVE_INSERTED_PARAGRAPH_IDS } from './action-types';
 import { normalizeTextRuns } from './apply-utils/common';
 import { coverTextRuns } from './apply-utils/update-apply';
+import { getParagraphContentStartOffsets } from './build-utils/paragraph';
 
 export enum SliceBodyType {
     copy,
     cut,
+}
+
+export enum SliceStructuralRangeMode {
+    // General copy/slice behavior: keep the intersecting portion for backward compatibility.
+    intersect,
+    // Mutation builders: only emit metadata for structural ranges fully carried by this action body.
+    contained,
+    // ActionIterator splits: keep metadata on the chunk that carries the structural range end.
+    ending,
+}
+
+function hasStructuralRangeInSlice(startIndex: number, endIndex: number, startOffset: number, endOffset: number, mode: SliceStructuralRangeMode) {
+    if (mode === SliceStructuralRangeMode.contained) {
+        return startIndex >= startOffset && endIndex <= endOffset;
+    }
+
+    if (mode === SliceStructuralRangeMode.ending) {
+        return startIndex < endOffset && endIndex > startOffset && endIndex <= endOffset;
+    }
+
+    return Math.max(startIndex, startOffset) < Math.min(endIndex, endOffset);
+}
+
+function getSlicedStructuralRange(startIndex: number, endIndex: number, startOffset: number, endOffset: number, mode: SliceStructuralRangeMode) {
+    if (mode === SliceStructuralRangeMode.intersect) {
+        return {
+            startIndex: Math.max(startIndex, startOffset) - startOffset,
+            endIndex: Math.min(endIndex, endOffset) - startOffset,
+        };
+    }
+
+    return {
+        startIndex: startIndex - startOffset,
+        endIndex: endIndex - startOffset,
+    };
 }
 
 export function getTextRunSlice(
@@ -38,10 +90,10 @@ export function getTextRunSlice(
         const newTextRuns: ITextRun[] = [];
 
         for (const textRun of textRuns) {
-            const clonedTextRun = Tools.deepClone(textRun);
-            const { st, ed } = clonedTextRun;
+            const { st, ed } = textRun;
 
             if (Tools.hasIntersectionBetweenTwoRanges(st, ed, startOffset, endOffset)) {
+                const clonedTextRun = Tools.deepClone(textRun);
                 if (startOffset >= st && startOffset <= ed) {
                     newTextRuns.push({
                         ...clonedTextRun,
@@ -84,7 +136,8 @@ export function getTextRunSlice(
 export function getTableSlice(
     body: IDocumentBody,
     startOffset: number,
-    endOffset: number
+    endOffset: number,
+    mode = SliceStructuralRangeMode.intersect
 ) {
     const { tables = [] } = body;
     const newTables = [];
@@ -92,29 +145,106 @@ export function getTableSlice(
         const clonedTable = Tools.deepClone(table);
         const { startIndex, endIndex } = clonedTable;
 
-        if (startIndex >= startOffset && endIndex <= endOffset) {
+        if (hasStructuralRangeInSlice(startIndex, endIndex, startOffset, endOffset, mode)) {
             newTables.push({
                 ...clonedTable,
-                startIndex: startIndex - startOffset,
-                endIndex: endIndex - startOffset,
+                ...getSlicedStructuralRange(startIndex, endIndex, startOffset, endOffset, mode),
             });
         }
     }
     return newTables;
 }
 
+export function getBlockRangeSlice(
+    body: IDocumentBody,
+    startOffset: number,
+    endOffset: number,
+    mode = SliceStructuralRangeMode.intersect
+) {
+    const { blockRanges = [] } = body;
+    const newBlockRanges: IDocumentBlockRange[] = [];
+
+    for (const blockRange of blockRanges) {
+        const clonedBlockRange = Tools.deepClone(blockRange);
+        const { startIndex, endIndex } = clonedBlockRange;
+
+        if (hasStructuralRangeInSlice(startIndex, endIndex, startOffset, endOffset, mode)) {
+            newBlockRanges.push({
+                ...clonedBlockRange,
+                ...getSlicedStructuralRange(startIndex, endIndex, startOffset, endOffset, mode),
+            });
+        }
+    }
+
+    return newBlockRanges;
+}
+
+export function getColumnGroupSlice(
+    body: IDocumentBody,
+    startOffset: number,
+    endOffset: number,
+    mode = SliceStructuralRangeMode.intersect
+) {
+    const { columnGroups = [] } = body;
+    const newColumnGroups: ICustomColumnGroup[] = [];
+
+    for (const columnGroup of columnGroups) {
+        const clonedColumnGroup = Tools.deepClone(columnGroup);
+        const { startIndex, endIndex } = clonedColumnGroup;
+        if (body.dataStream[startIndex] !== DataStreamTreeTokenType.COLUMN_GROUP_START) {
+            continue;
+        }
+
+        if (hasStructuralRangeInSlice(startIndex, endIndex, startOffset, endOffset, mode)) {
+            newColumnGroups.push({
+                ...clonedColumnGroup,
+                ...getSlicedStructuralRange(startIndex, endIndex, startOffset, endOffset, mode),
+            });
+        }
+    }
+
+    return newColumnGroups;
+}
+
 export function getParagraphsSlice(
     body: IDocumentBody,
     startOffset: number,
-    endOffset: number
+    endOffset: number,
+    type = SliceBodyType.cut
 ) {
     const { paragraphs = [] } = body;
     const newParagraphs: IParagraph[] = [];
 
-    for (const paragraph of paragraphs) {
-        const { startIndex } = paragraph;
-        if (startIndex >= startOffset && startIndex < endOffset) {
+    if (type === SliceBodyType.cut) {
+        for (const paragraph of paragraphs) {
+            const { startIndex } = paragraph;
+            if (startIndex >= startOffset && startIndex < endOffset) {
+                newParagraphs.push(Tools.deepClone(paragraph));
+            }
+        }
+
+        if (newParagraphs.length) {
+            return newParagraphs.map((p) => ({
+                ...p,
+                startIndex: p.startIndex - startOffset,
+            }));
+        }
+
+        return;
+    }
+
+    const sortedParagraphs = [...paragraphs].sort((a, b) => a.startIndex - b.startIndex);
+    const paragraphStartOffsets = getParagraphContentStartOffsets(body);
+
+    for (const paragraph of sortedParagraphs) {
+        const paragraphStart = paragraphStartOffsets.get(paragraph.startIndex) ?? 0;
+        const paragraphEnd = paragraph.startIndex;
+        const paragraphMarkInRange = paragraphEnd >= startOffset && paragraphEnd < endOffset;
+        const paragraphTextIntersectsRange = Math.max(paragraphStart, startOffset) < Math.min(paragraphEnd, endOffset);
+
+        if (paragraphMarkInRange || paragraphTextIntersectsRange) {
             const copy = Tools.deepClone(paragraph);
+            copy.startIndex = Math.min(Math.max(paragraphEnd, startOffset), endOffset);
             newParagraphs.push(copy);
         }
     }
@@ -155,7 +285,22 @@ export function getCustomBlockSlice(
     startOffset: number,
     endOffset: number
 ) {
-    const { customBlocks = [] } = body;
+    return getCustomBlockMetadataSlice(body.customBlocks ?? [], startOffset, endOffset);
+}
+
+function getDocxRawCustomBlockSlice(
+    body: IDocumentBody,
+    startOffset: number,
+    endOffset: number
+) {
+    return getCustomBlockMetadataSlice(body.docxRawCustomBlocks ?? [], startOffset, endOffset);
+}
+
+function getCustomBlockMetadataSlice(
+    customBlocks: ICustomBlock[],
+    startOffset: number,
+    endOffset: number
+) {
     const newCustomBlocks: ICustomBlock[] = [];
 
     for (const block of customBlocks) {
@@ -173,12 +318,31 @@ export function getCustomBlockSlice(
     }
 }
 
+function getDocxRawBlockSlice(body: IDocumentBody, startOffset: number, endOffset: number): IDocxRawBlock[] {
+    return (body.docxRawBlocks ?? [])
+        .filter((rawBlock) => rawBlock.startIndex >= startOffset && rawBlock.startIndex < endOffset)
+        .map((rawBlock) => ({ ...Tools.deepClone(rawBlock), startIndex: rawBlock.startIndex - startOffset }));
+}
+
+function getDocxExportExcludedRangeSlice(
+    body: IDocumentBody,
+    startOffset: number,
+    endOffset: number
+): IDocxExportExcludedRange[] {
+    return (body.docxExportExcludedRanges ?? []).flatMap((range) => {
+        const start = Math.max(range.start, startOffset);
+        const end = Math.min(range.end, endOffset);
+        return end > start ? [{ start: start - startOffset, end: end - startOffset }] : [];
+    });
+}
+
 export function getBodySlice(
     body: IDocumentBody,
     startOffset: number,
     endOffset: number,
     returnEmptyArray = true,
-    type = SliceBodyType.cut
+    type = SliceBodyType.cut,
+    structuralRangeMode = SliceStructuralRangeMode.intersect
 ): IDocumentBody {
     const { dataStream } = body;
 
@@ -186,14 +350,34 @@ export function getBodySlice(
         dataStream: dataStream.slice(startOffset, endOffset),
     };
 
+    if ((body as IDocumentBody & Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS]) {
+        (docBody as IDocumentBody & Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS] = true;
+    }
+
     docBody.textRuns = getTextRunSlice(body, startOffset, endOffset, returnEmptyArray);
 
-    const newTables = getTableSlice(body, startOffset, endOffset);
+    const newTables = getTableSlice(body, startOffset, endOffset, structuralRangeMode);
     if (newTables.length) {
         docBody.tables = newTables;
     }
 
-    docBody.paragraphs = getParagraphsSlice(body, startOffset, endOffset);
+    const newBlockRanges = getBlockRangeSlice(body, startOffset, endOffset, structuralRangeMode);
+    if (newBlockRanges.length) {
+        docBody.blockRanges = newBlockRanges;
+    }
+
+    const newColumnGroups = getColumnGroupSlice(body, startOffset, endOffset, structuralRangeMode);
+    if (newColumnGroups.length) {
+        docBody.columnGroups = newColumnGroups;
+    }
+
+    docBody.paragraphs = getParagraphsSlice(body, startOffset, endOffset, type);
+    const sectionBreaks = getSectionBreakSlice(body, startOffset, endOffset - 1);
+    if (sectionBreaks) {
+        docBody.sectionBreaks = sectionBreaks;
+    } else if (returnEmptyArray) {
+        docBody.sectionBreaks = [];
+    }
 
     if (type === SliceBodyType.cut) {
         const customDecorations = getCustomDecorationSlice(body, startOffset, endOffset);
@@ -211,12 +395,80 @@ export function getBodySlice(
     }
 
     docBody.customBlocks = getCustomBlockSlice(body, startOffset, endOffset);
+    if (body.docxRawCustomBlocks != null) {
+        docBody.docxRawCustomBlocks = getDocxRawCustomBlockSlice(body, startOffset, endOffset) ?? [];
+    }
+    if (body.docxRawBlocks != null) {
+        docBody.docxRawBlocks = getDocxRawBlockSlice(body, startOffset, endOffset);
+    }
+    if (body.docxExportExcludedRanges != null) {
+        docBody.docxExportExcludedRanges = getDocxExportExcludedRangeSlice(body, startOffset, endOffset);
+    }
 
     return docBody;
 }
 
+export function getBodySliceForTextXAction(
+    body: IDocumentBody,
+    startOffset: number,
+    endOffset: number,
+    returnEmptyArray = true,
+    type = SliceBodyType.cut
+): IDocumentBody {
+    return getBodySlice(body, startOffset, endOffset, returnEmptyArray, type, SliceStructuralRangeMode.contained);
+}
+
+export function getBodySliceForSplitTextXAction(
+    body: IDocumentBody,
+    startOffset: number,
+    endOffset: number,
+    returnEmptyArray = true,
+    type = SliceBodyType.cut
+): IDocumentBody {
+    return getBodySlice(body, startOffset, endOffset, returnEmptyArray, type, SliceStructuralRangeMode.ending);
+}
+
+function shiftBodyMetadata(body: IDocumentBody, leftOffset: number, rightOffset: number): void {
+    body.textRuns?.forEach((textRun) => {
+        textRun.st += leftOffset;
+        textRun.ed += leftOffset;
+    });
+    body.paragraphs?.forEach((paragraph) => {
+        paragraph.startIndex += leftOffset;
+    });
+    body.customBlocks?.forEach((customBlock) => {
+        customBlock.startIndex += leftOffset;
+    });
+    body.docxRawCustomBlocks?.forEach((customBlock) => {
+        customBlock.startIndex += leftOffset;
+    });
+    body.docxRawBlocks?.forEach((rawBlock) => {
+        rawBlock.startIndex += leftOffset;
+    });
+    body.docxExportExcludedRanges?.forEach((range) => {
+        range.start += leftOffset;
+        range.end += leftOffset;
+    });
+    body.customRanges?.forEach((range) => {
+        range.startIndex += leftOffset;
+        range.endIndex += leftOffset;
+    });
+    body.customDecorations?.forEach((decoration) => {
+        decoration.startIndex += leftOffset;
+        decoration.endIndex += rightOffset;
+    });
+    body.tables?.forEach((table) => {
+        table.startIndex += leftOffset;
+        table.endIndex += rightOffset;
+    });
+    body.columnGroups?.forEach((columnGroup) => {
+        columnGroup.startIndex += leftOffset;
+        columnGroup.endIndex += rightOffset;
+    });
+}
+
 export function normalizeBody(body: IDocumentBody): IDocumentBody {
-    const { dataStream, textRuns, paragraphs, customRanges, customDecorations, tables } = body;
+    const { dataStream, textRuns, customRanges } = body;
     let leftOffset = 0;
     let rightOffset = 0;
 
@@ -242,38 +494,11 @@ export function normalizeBody(body: IDocumentBody): IDocumentBody {
         }
     }
 
-    textRuns?.forEach((textRun) => {
-        textRun.st += leftOffset;
-        textRun.ed += leftOffset;
-    });
-
-    paragraphs?.forEach((p) => {
-        p.startIndex += leftOffset;
-    });
-
-    customRanges?.forEach((range) => {
-        range.startIndex += leftOffset;
-        range.endIndex += leftOffset;
-    });
-
-    customDecorations?.forEach((d) => {
-        d.startIndex += leftOffset;
-        d.endIndex += rightOffset;
-    });
-
-    tables?.forEach((table) => {
-        table.startIndex += leftOffset;
-        table.endIndex += rightOffset;
-    });
+    shiftBodyMetadata(body, leftOffset, rightOffset);
 
     return {
         ...body,
         dataStream: newData,
-        textRuns,
-        paragraphs,
-        customRanges,
-        customDecorations,
-        tables,
     };
 }
 
@@ -404,17 +629,28 @@ export function composeBody(
         dataStream: thisBody.dataStream,
     };
 
+    if (
+        (thisBody as IDocumentBody & Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS] ||
+        (otherBody as IDocumentBody & Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS]
+    ) {
+        (retBody as IDocumentBody & Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS] = true;
+    }
+
     const {
         textRuns: thisTextRuns,
         paragraphs: thisParagraphs = [],
         customRanges: thisCustomRanges,
         customDecorations: thisCustomDecorations = [],
+        columnGroups: thisColumnGroups = [],
+        blockRanges: thisBlockRanges = [],
     } = thisBody;
     const {
         textRuns: otherTextRuns,
         paragraphs: otherParagraphs = [],
         customRanges: otherCustomRanges,
         customDecorations: otherCustomDecorations = [],
+        columnGroups: otherColumnGroups = [],
+        blockRanges: otherBlockRanges = [],
     } = otherBody;
 
     retBody.textRuns = composeTextRuns(otherTextRuns, thisTextRuns, coverType);
@@ -439,7 +675,7 @@ export function composeBody(
         const { startIndex: otherStart } = otherParagraph;
 
         if (thisStart === otherStart) {
-            paragraphs.push(Tools.deepMerge(thisParagraph, otherParagraph));
+            paragraphs.push(merge(thisParagraph, otherParagraph));
             thisIndex++;
             otherIndex++;
         } else if (thisStart < otherStart) {
@@ -463,7 +699,53 @@ export function composeBody(
         retBody.paragraphs = paragraphs;
     }
 
+    const blockRanges = composeDocumentBlockRanges(thisBlockRanges, otherBlockRanges);
+    if (blockRanges.length) {
+        retBody.blockRanges = blockRanges;
+    }
+
+    const columnGroups = composeColumnGroups(thisColumnGroups, otherColumnGroups);
+    if (columnGroups.length) {
+        retBody.columnGroups = columnGroups;
+    }
+
     return retBody;
+}
+
+function composeDocumentBlockRanges(
+    thisRanges: IDocumentBlockRange[],
+    otherRanges: IDocumentBlockRange[]
+): IDocumentBlockRange[] {
+    if (!thisRanges.length) {
+        return otherRanges;
+    }
+
+    if (!otherRanges.length) {
+        return thisRanges;
+    }
+
+    const byId = new Map(thisRanges.map((range) => [range.blockId, Tools.deepClone(range)]));
+    otherRanges.forEach((range) => byId.set(range.blockId, Tools.deepClone(range)));
+
+    return Array.from(byId.values()).sort((left, right) => left.startIndex - right.startIndex);
+}
+
+function composeColumnGroups(
+    thisRanges: ICustomColumnGroup[],
+    otherRanges: ICustomColumnGroup[]
+): ICustomColumnGroup[] {
+    if (!thisRanges.length) {
+        return otherRanges;
+    }
+
+    if (!otherRanges.length) {
+        return thisRanges;
+    }
+
+    const byId = new Map(thisRanges.map((range) => [range.columnGroupId, Tools.deepClone(range)]));
+    otherRanges.forEach((range) => byId.set(range.columnGroupId, Tools.deepClone(range)));
+
+    return Array.from(byId.values()).sort((left, right) => left.startIndex - right.startIndex);
 }
 
 export function isUselessRetainAction(action: IRetainAction): boolean {
@@ -473,11 +755,34 @@ export function isUselessRetainAction(action: IRetainAction): boolean {
         return true;
     }
 
-    const { textRuns, paragraphs, customRanges, customBlocks, customDecorations, tables } = body;
+    const { textRuns, paragraphs, customRanges, customBlocks, docxRawCustomBlocks, docxRawBlocks, docxExportExcludedRanges, customDecorations, tables, columnGroups, blockRanges } = body;
 
-    if (textRuns == null && paragraphs == null && customRanges == null && customBlocks == null && customDecorations == null && tables == null) {
+    if (textRuns == null && paragraphs == null && customRanges == null && customBlocks == null && docxRawCustomBlocks == null && docxRawBlocks == null && docxExportExcludedRanges == null && customDecorations == null && tables == null && columnGroups == null && blockRanges == null) {
         return true;
     }
 
     return false;
+}
+
+export function getRichTextEditPath(docDataModel: DocumentDataModel, segmentId = '') {
+    if (!segmentId) {
+        return ['body'];
+    }
+
+    const { headers, footers } = docDataModel.getSnapshot();
+    if (docDataModel.getSnapshot().notes?.[segmentId] != null) {
+        return ['notes', segmentId, 'body'];
+    }
+
+    if (headers == null && footers == null) {
+        throw new Error('Document data model must have headers or footers when update by segment id');
+    }
+
+    if (headers?.[segmentId] != null) {
+        return ['headers', segmentId, 'body'];
+    } else if (footers?.[segmentId] != null) {
+        return ['footers', segmentId, 'body'];
+    } else {
+        throw new Error('Segment id not found in headers or footers');
+    }
 }

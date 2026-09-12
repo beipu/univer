@@ -17,12 +17,11 @@
 import type { IDisposable, Nullable } from '@univerjs/core';
 import { Disposable, IContextService, Inject } from '@univerjs/core';
 import { SheetCanvasPopManagerService } from '@univerjs/sheets-ui';
-import { ComponentManager, IDialogService } from '@univerjs/ui';
+import { IDialogService } from '@univerjs/ui';
 import { distinctUntilChanged, startWith } from 'rxjs';
 import { SHEETS_TABLE_FILTER_PANEL_OPENED_KEY, UNIVER_SHEET_TABLE_FILTER_PANEL_ID } from '../const';
-import { SheetTableFilterPanel } from '../views/components/SheetTableFilterPanel';
 
-interface ITableFilterPanelInfo {
+export interface ITableFilterPanelInfo {
     unitId: string;
     subUnitId: string;
     tableId: string;
@@ -33,20 +32,37 @@ export class SheetsTableComponentController extends Disposable {
     private _popupDisposable?: Nullable<IDisposable>;
     private _currentTableFilterInfo: Nullable<ITableFilterPanelInfo> = null;
     constructor(
-
-        @Inject(ComponentManager) private readonly _componentManager: ComponentManager,
-        @IContextService private readonly _contextService: IContextService,
+        @IContextService protected readonly _contextService: IContextService,
         @Inject(SheetCanvasPopManagerService) private _sheetCanvasPopupService: SheetCanvasPopManagerService,
-        @Inject(IDialogService) private readonly _dialogService: IDialogService
+        @Inject(IDialogService) protected readonly _dialogService: IDialogService
 
     ) {
         super();
-        this._initComponents();
         this._initUIPopup();
     }
 
     public setCurrentTableFilterInfo(info: ITableFilterPanelInfo): void {
         this._currentTableFilterInfo = info;
+    }
+
+    public openOrToggleFilterPanel(info: ITableFilterPanelInfo): void {
+        const opened = this._contextService.getContextValue(SHEETS_TABLE_FILTER_PANEL_OPENED_KEY);
+
+        if (opened && this._isSameFilterPanelInfo(this._currentTableFilterInfo, info)) {
+            this.closeFilterPanel();
+            return;
+        }
+
+        this.setCurrentTableFilterInfo(info);
+
+        if (opened) {
+            this._popupDisposable?.dispose();
+            this._popupDisposable = null;
+            this._openFilterPopup();
+            return;
+        }
+
+        this._contextService.setContextValue(SHEETS_TABLE_FILTER_PANEL_OPENED_KEY, true);
     }
 
     public clearCurrentTableFilterInfo(): void {
@@ -55,14 +71,6 @@ export class SheetsTableComponentController extends Disposable {
 
     public getCurrentTableFilterInfo(): Nullable<ITableFilterPanelInfo> {
         return this._currentTableFilterInfo;
-    }
-
-    private _initComponents() {
-        ([
-            [SHEETS_TABLE_FILTER_PANEL_OPENED_KEY, SheetTableFilterPanel],
-        ] as const).forEach(([key, comp]) => {
-            this.disposeWithMe(this._componentManager.register(key, comp));
-        });
     }
 
     private _initUIPopup() {
@@ -82,7 +90,7 @@ export class SheetsTableComponentController extends Disposable {
         this._contextService.setContextValue(SHEETS_TABLE_FILTER_PANEL_OPENED_KEY, false);
     }
 
-    private _openFilterPopup(): void {
+    protected _openFilterPopup(): void {
         const currentFilterModel = this._currentTableFilterInfo;
         if (!currentFilterModel) {
             throw new Error('[SheetsFilterUIController]: no filter model when opening filter popup!');
@@ -102,8 +110,13 @@ export class SheetsTableComponentController extends Disposable {
     }
 
     private _closeFilterPopup(): void {
+        this._dialogService.close(UNIVER_SHEET_TABLE_FILTER_PANEL_ID);
         this._popupDisposable?.dispose();
         this._popupDisposable = null;
         this.clearCurrentTableFilterInfo();
+    }
+
+    private _isSameFilterPanelInfo(a: Nullable<ITableFilterPanelInfo>, b: ITableFilterPanelInfo): boolean {
+        return Boolean(a && a.unitId === b.unitId && a.subUnitId === b.subUnitId && a.tableId === b.tableId && a.column === b.column && a.row === b.row);
     }
 }

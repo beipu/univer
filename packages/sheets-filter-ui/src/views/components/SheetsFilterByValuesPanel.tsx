@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { LocaleKey } from '../../locale/types';
 import type { ByValuesModel, IFilterByValueWithTreeItem } from '../../services/sheets-filter-panel.service';
 import { LocaleService } from '@univerjs/core';
 import { borderClassName, Checkbox, clsx, Input, Tree } from '@univerjs/design';
@@ -31,7 +32,7 @@ export function FilterByValue(props: { model: ByValuesModel }) {
 
     const searchText = useObservable(model.searchString$, '', true);
     const items = useObservable(model.filterItems$, undefined, true);
-    const filterOnly = localeService.t('sheets-filter.panel.filter-only');
+    const filterOnly = localeService.t<LocaleKey>('sheets-filter-ui.panel.filter-only');
 
     const stat = statisticFilterByValueItems(items);
     const allChecked = stat.checked > 0 && stat.unchecked === 0;
@@ -68,7 +69,7 @@ export function FilterByValue(props: { model: ByValuesModel }) {
             <Input
                 autoFocus
                 value={searchText}
-                placeholder={localeService.t('sheets-filter.panel.search-placeholder')}
+                placeholder={localeService.t<LocaleKey>('sheets-filter-ui.panel.search-placeholder')}
                 onChange={onSearchValueChange}
             />
             <div
@@ -100,10 +101,10 @@ export function FilterByValue(props: { model: ByValuesModel }) {
                             data-u-comp="sheets-filter-panel-values-item-text"
                             className={`
                               univer-mx-1 univer-inline-block univer-flex-shrink univer-truncate univer-text-gray-900
-                              dark:!univer-text-white
+                              dark:!univer-text-gray-0
                             `}
                         >
-                            {`${localeService.t('sheets-filter.panel.select-all')}`}
+                            {`${localeService.t<LocaleKey>('sheets-filter-ui.panel.select-all')}`}
                         </span>
                         <span
                             data-u-comp="sheets-filter-panel-values-item-count"
@@ -132,7 +133,7 @@ export function FilterByValue(props: { model: ByValuesModel }) {
                           [&:hover_a]:univer-inline-block
                           hover:univer-bg-gray-50 univer-h-full
                           univer-text-gray-900 dark:hover:!univer-bg-gray-900
-                          dark:!univer-text-white
+                          dark:!univer-text-gray-0
                         `}
                         attachRender={(item) => (
                             <div

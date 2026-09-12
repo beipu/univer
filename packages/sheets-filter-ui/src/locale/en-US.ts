@@ -15,22 +15,29 @@
  */
 
 const locale = {
-    'sheets-filter': {
+    'sheets-filter-ui': {
         toolbar: {
             'smart-toggle-filter-tooltip': 'Toggle Filter',
             'clear-filter-criteria': 'Clear Filter Conditions',
             're-calc-filter-conditions': 'Re-calc Filter Conditions',
         },
-        command: {
-            'not-valid-filter-range': 'The selected range only has one row and not valid for filter.',
-        },
         shortcut: {
             'smart-toggle-filter': 'Toggle Filter',
+        },
+        permission: {
+            filterErr: 'You do not have permission to use the filter.',
         },
         panel: {
             'clear-filter': 'Clear Filter',
             cancel: 'Cancel',
             confirm: 'Confirm',
+            mobile: {
+                resize: 'Resize filter panel',
+                back: 'Back',
+                column: 'Column {0}',
+                'previous-column': 'Previous column',
+                'next-column': 'Next column',
+            },
             'by-values': 'By Values',
             'by-colors': 'By Colors',
             'filter-by-cell-fill-color': 'Filter by cell fill color',
@@ -65,9 +72,6 @@ const locale = {
             between: 'Between',
             'not-between': 'Not Between',
             custom: 'Custom',
-        },
-        msg: {
-            'filter-header-forbidden': 'You can\'t move the header row of a filter.',
         },
         date: {
             1: 'January',

@@ -20,6 +20,7 @@ import type {
     IInsertRangeMutationParams,
     IRemoveColMutationParams,
 } from '../../basics/interfaces/mutation-interface';
+import type { LocaleKey } from '../../locale/types';
 
 import {
     BooleanNumber,
@@ -37,7 +38,8 @@ import { SheetsSelectionsService } from '../../services/selections/selection.ser
 import { SheetInterceptorService } from '../../services/sheet-interceptor/sheet-interceptor.service';
 import { InsertColMutation, InsertColMutationUndoFactory } from '../mutations/insert-row-col.mutation';
 import { RemoveColMutation } from '../mutations/remove-row-col.mutation';
-import { getInsertRangeMutations } from '../utils/handle-range-mutation';
+import { getInsertRangeMutations } from '../utils/handle-range.mutation';
+import { hasOverlappingRanges } from '../utils/selection-command-util';
 import { followSelectionOperation } from './utils/selection-utils';
 import { getSheetCommandTarget } from './utils/target-util';
 
@@ -62,8 +64,8 @@ export const InsertRangeMoveRightCommand: ICommand = {
         const errorService = accessor.get(ErrorService);
         const localeService = accessor.get(LocaleService);
 
-        if (selectionManagerService.isOverlapping()) {
-            errorService.emit(localeService.t('sheets.info.overlappingSelections'));
+        if (hasOverlappingRanges(selectionManagerService.getCurrentSelections().map(({ range }) => range))) {
+            errorService.emit(localeService.t<LocaleKey>('sheets.info.overlappingSelections'));
             return false;
         }
 

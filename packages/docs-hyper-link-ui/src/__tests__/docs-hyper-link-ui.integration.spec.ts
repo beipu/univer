@@ -16,13 +16,17 @@
 
 import type { DocumentDataModel, ICommand, IDisposable, IDocumentData, Injector } from '@univerjs/core';
 import {
+    awaitTime,
     CustomRangeType,
     ICommandService,
     IUniverInstanceService,
+    toDisposable,
     UniverInstanceType,
 } from '@univerjs/core';
 import { DocSelectionManagerService, RichTextEditingMutation, SetTextSelectionsOperation } from '@univerjs/docs';
 import { DocCanvasPopManagerService } from '@univerjs/docs-ui';
+import { IDialogService } from '@univerjs/ui';
+import { of } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AddDocHyperLinkCommand } from '../commands/commands/add-link.command';
 import { DeleteDocHyperLinkCommand } from '../commands/commands/delete-link.command';
@@ -31,10 +35,6 @@ import { ClickDocHyperLinkOperation } from '../commands/operations/popup.operati
 import { DocHyperLinkSelectionController } from '../controllers/doc-hyper-link-selection.controller';
 import { DocHyperLinkPopupService } from '../services/hyper-link-popup.service';
 import { createDocUiTestBed } from './create-doc-ui-test-bed';
-
-function waitNextTick() {
-    return new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
 
 function createDocData(): IDocumentData {
     return {
@@ -49,6 +49,11 @@ function createDocData(): IDocumentData {
                 properties: {
                     url: 'https://before.invalid',
                 },
+            }, {
+                startIndex: 0,
+                endIndex: 1,
+                rangeId: 'custom-1',
+                rangeType: CustomRangeType.CUSTOM,
             }],
         },
         documentStyle: {
@@ -122,7 +127,7 @@ describe('docs-hyper-link-ui integration', () => {
         const selectionManager = get(DocSelectionManagerService);
 
         selectionManager.__TEST_ONLY_add([{
-            startOffset: 0,
+            startOffset: 2,
             endOffset: 5,
             collapsed: false,
             isActive: true,
@@ -134,7 +139,7 @@ describe('docs-hyper-link-ui integration', () => {
             unitId: 'test-doc',
             payload: 'https://added.invalid',
         })).toBeTruthy();
-        await waitNextTick();
+        await awaitTime(0);
 
         const addedLink = getBody(get)?.customRanges?.find((range) => range.properties?.url === 'https://added.invalid');
         expect(addedLink).toBeDefined();
@@ -160,7 +165,7 @@ describe('docs-hyper-link-ui integration', () => {
             label: 'planet',
             segmentId: '',
         })).toBeTruthy();
-        await waitNextTick();
+        await awaitTime(0);
 
         expect(getBody(get)?.dataStream).toBe('Hello planet\r\n');
         expect(getBody(get)?.customRanges?.find((range) => range.rangeId === 'link-1')?.properties).toEqual({
@@ -175,7 +180,7 @@ describe('docs-hyper-link-ui integration', () => {
             unitId: 'test-doc',
             linkId: 'link-1',
         })).toBeTruthy();
-        await waitNextTick();
+        await awaitTime(0);
 
         expect(getBody(get)?.dataStream).toBe('Hello world\r\n');
         expect(getBody(get)?.customRanges?.some((range) => range.rangeId === 'link-1')).toBe(false);
@@ -184,6 +189,14 @@ describe('docs-hyper-link-ui integration', () => {
     it('shows and hides the info popup when the executed selection enters and leaves a hyperlink', async () => {
         const popupManagerStub = createPopupManagerStub();
         injector.add([DocCanvasPopManagerService, { useValue: popupManagerStub as unknown as DocCanvasPopManagerService }]);
+        injector.add([IDialogService, {
+            useValue: {
+                close: () => {},
+                closeAll: () => {},
+                getDialogs$: () => of([]),
+                open: () => toDisposable(() => {}),
+            },
+        }]);
         injector.add([DocHyperLinkPopupService]);
         injector.add([DocHyperLinkSelectionController]);
 
@@ -219,6 +232,7 @@ describe('docs-hyper-link-ui integration', () => {
             segmentPage: undefined,
         }, expect.objectContaining({
             componentKey: 'univer.doc.link-info-popup',
+            offset: [0, 10],
         }), 'test-doc');
 
         expect(await commandService.executeCommand(SetTextSelectionsOperation.id, {
@@ -228,8 +242,8 @@ describe('docs-hyper-link-ui integration', () => {
             isEditing: false,
             style: null,
             ranges: [{
-                startOffset: 0,
-                endOffset: 0,
+                startOffset: 1,
+                endOffset: 1,
                 collapsed: true,
                 segmentId: '',
             }],

@@ -15,16 +15,23 @@
  */
 
 import type { Editor } from '@univerjs/docs-ui';
-import type { ISearchItemWithType } from '@univerjs/sheets-formula';
+import type { FunctionType, ISearchItemWithType } from '@univerjs/engine-formula';
 import type { INode } from './use-formula-token';
-import { FunctionType, matchToken, sequenceNodeType } from '@univerjs/engine-formula';
-import { IDescriptionService } from '@univerjs/sheets-formula';
+import {
+    getFormulaReplaceResult as getSharedFormulaReplaceResult,
+    IDescriptionService,
+    searchFormulaFunctions,
+    sequenceNodeType,
+} from '@univerjs/engine-formula';
 import { useDependency } from '@univerjs/ui';
 import { useEffect, useRef, useState } from 'react';
 import { debounceTime } from 'rxjs';
 import { findIndexFromSequenceNodes } from '../../range-selector/utils/find-index-from-sequence-nodes';
-import { sequenceNodeToText } from '../../range-selector/utils/sequence-node-to-text';
 import { useStateRef } from './use-state-ref';
+
+function getFormulaReplaceResult(nodes: INode[], index: number, formulaName: string, functionType: FunctionType) {
+    return getSharedFormulaReplaceResult(nodes, index, formulaName, functionType);
+}
 
 export const useFormulaSearch = (isNeed: boolean, nodes: INode[] = [], editor?: Editor) => {
     const descriptionService = useDependency(IDescriptionService);
@@ -48,16 +55,16 @@ export const useFormulaSearch = (isNeed: boolean, nodes: INode[] = [], editor?: 
                     const nodes = stateRef.current.nodes;
                     const range = selections[0];
                     if (range.collapsed) {
-                        // 为什么减1,因为nodes是不包含初始 ‘=’ 字符的,但是 selection 会包含 '='
+                        // Why minus 1: because nodes do not include the initial ‘=’ character, but selection does
                         const currentNodeIndex = findIndexFromSequenceNodes(nodes, range.startOffset - 1, false);
                         indexRef.current = currentNodeIndex;
                         const currentNode = nodes[currentNodeIndex];
                         if (currentNode && typeof currentNode !== 'string' && currentNode.nodeType === sequenceNodeType.FUNCTION) {
                             indexRef.current = currentNodeIndex;
                             const token = currentNode.token;
-                            const list = descriptionService.getSearchListByNameFirstLetter(token);
+                            const list = searchFormulaFunctions(descriptionService, token);
                             // Here we limit the maximum number of search results to 10 to prevent performance issues caused by rendering too many items in the dropdown.
-                            setSearchList(list.slice(0, 10));
+                            setSearchList(list);
                             setSearchText(token);
                             return;
                         }
@@ -85,19 +92,7 @@ export const useFormulaSearch = (isNeed: boolean, nodes: INode[] = [], editor?: 
     }, [isNeed]);
 
     const handlerFormulaReplace = (formulaName: string, functionType: FunctionType) => {
-        const cloneNodes = [...stateRef.current.nodes];
-        if (indexRef.current !== -1) {
-            const lastNodes = cloneNodes.splice(indexRef.current + 1);
-            const oldNode = cloneNodes.pop() || '';
-            let offset = (typeof oldNode === 'string' ? oldNode.length : oldNode.token.length) - formulaName.length;
-            cloneNodes.push(formulaName);
-            if (lastNodes[0] !== matchToken.OPEN_BRACKET && functionType !== FunctionType.DefinedName) {
-                cloneNodes.push(matchToken.OPEN_BRACKET);
-                offset--;
-            }
-            const text = sequenceNodeToText([...cloneNodes, ...lastNodes]);
-            return { text, offset };
-        }
+        return getFormulaReplaceResult(stateRef.current.nodes, indexRef.current, formulaName, functionType);
     };
     return {
         searchList,

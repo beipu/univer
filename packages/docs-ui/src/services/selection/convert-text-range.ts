@@ -17,6 +17,7 @@
 import type { IPosition, ITextRange, Nullable } from '@univerjs/core';
 import type {
     DocumentSkeleton,
+    IDocsTableRenderViewport,
     IDocumentOffsetConfig,
     IDocumentSkeletonColumn,
     IDocumentSkeletonDivide,
@@ -28,7 +29,18 @@ import type {
     INodePosition,
     IPoint,
 } from '@univerjs/engine-render';
-import { DocumentSkeletonPageType, getPageFromPath, GlyphType, Liquid } from '@univerjs/engine-render';
+import { DataStreamTreeTokenType, PositionedObjectLayoutType } from '@univerjs/core';
+import { shouldUseInlineTextSelectionForDocsCustomBlockDrawing } from '@univerjs/docs';
+import {
+    compareDocumentSkeletonNestedPagePathOrder,
+    DocumentSkeletonPageType,
+    getDocsTableRenderViewport,
+    getDocumentSkeletonNestedPageOffset,
+    getPageFromPath,
+    getTableIdAndSliceIndex,
+    GlyphType,
+    Liquid,
+} from '@univerjs/engine-render';
 
 export enum NodePositionStateType {
     NORMAL,
@@ -64,6 +76,11 @@ export const NodePositionMap = {
 };
 
 export function compareNodePositionLogic(pos1: INodePosition, pos2: INodePosition) {
+    const nestedPagePathOrder = compareDocumentSkeletonNestedPagePathOrder(pos1, pos2);
+    if (nestedPagePathOrder != null) {
+        return nestedPagePathOrder;
+    }
+
     if (pos1.page > pos2.page) {
         return false;
     }
@@ -212,6 +229,7 @@ export function pushToPoints(position: IPosition) {
 
 export class NodePositionConvertToCursor {
     private _liquid = new Liquid();
+    private _horizontalClip: Nullable<{ left: number; right: number }> = null;
 
     private _currentStartState: ICurrentNodePositionState = {
         page: NodePositionStateType.NORMAL,
@@ -265,7 +283,7 @@ export class NodePositionConvertToCursor {
 
         // eslint-disable-next-line complexity
         this._selectionIterator(start, end, (start_sp, end_sp, isFirst, isLast, divide, line) => {
-            const { lineHeight, asc, paddingTop, marginTop, marginBottom } = line;
+            const { lineHeight, asc, paddingTop, paddingBottom, contentHeight, marginTop, marginBottom } = line;
             const { glyphGroup, st } = divide;
             if (glyphGroup.length === 0) {
                 // The divide is empty, and no need to set selection.
@@ -296,14 +314,23 @@ export class NodePositionConvertToCursor {
             const isEndBack = end.glyph === end_sp && isLast ? end.isBack : false;
 
             const collapsed = start === end;
-            const anchorGlyph = isStartBack ? (preGlyph ?? firstGlyph) : firstGlyph;
+            const rawAnchorGlyph = isStartBack ? (preGlyph ?? firstGlyph) : firstGlyph;
+            const anchorGlyph = this._getCaretGlyph(rawAnchorGlyph, glyphGroup, start_sp);
+            const selectedGlyphs = glyphGroup.slice(start_sp, end_sp + 1);
+            const isSelectionOnlyNonInlineDrawing = !collapsed &&
+                selectedGlyphs.length > 0 &&
+                selectedGlyphs.every((glyph) => this._isNonInlineDrawingGlyph(glyph));
+            const borderBoxStartY = startY;
+            const borderBoxEndY = contentHeight == null
+                ? startY + lineHeight - marginTop - marginBottom
+                : startY + paddingTop + contentHeight + paddingBottom;
 
             if (start_sp === 0 && end_sp === glyphGroup.length - 1) {
                 borderBoxPosition = {
                     startX: startX + firstGlyphLeft + (isCurrentList ? firstGlyphWidth : 0),
-                    startY,
+                    startY: borderBoxStartY,
                     endX: startX + lastGlyphLeft + (isEndBack ? 0 : lastGlyphWidth),
-                    endY: startY + lineHeight - marginTop - marginBottom,
+                    endY: borderBoxEndY,
                 };
 
                 contentBoxPosition = {
@@ -317,9 +344,9 @@ export class NodePositionConvertToCursor {
 
                 borderBoxPosition = {
                     startX: startX + firstGlyphLeft + (isStartBackFin ? 0 : firstGlyphWidth),
-                    startY,
+                    startY: borderBoxStartY,
                     endX: startX + lastGlyphLeft + (isEndBack ? 0 : lastGlyphWidth),
-                    endY: startY + lineHeight - marginTop - marginBottom,
+                    endY: borderBoxEndY,
                 };
 
                 contentBoxPosition = {
@@ -330,8 +357,15 @@ export class NodePositionConvertToCursor {
                 };
             }
 
-            borderBoxPointGroup.push(pushToPoints(borderBoxPosition));
-            contentBoxPointGroup.push(pushToPoints(contentBoxPosition));
+            const clippedBorderBoxPosition = clipPositionToHorizontalRange(borderBoxPosition, this._horizontalClip);
+            const clippedContentBoxPosition = clipPositionToHorizontalRange(contentBoxPosition, this._horizontalClip);
+
+            if (clippedBorderBoxPosition && !isSelectionOnlyNonInlineDrawing) {
+                borderBoxPointGroup.push(pushToPoints(clippedBorderBoxPosition));
+            }
+            if (clippedContentBoxPosition && !isSelectionOnlyNonInlineDrawing) {
+                contentBoxPointGroup.push(pushToPoints(clippedContentBoxPosition));
+            }
 
             cursorList.push({
                 startOffset: isStartBack ? startOffset : startOffset + firstGlyph.count,
@@ -347,6 +381,46 @@ export class NodePositionConvertToCursor {
         };
     }
 
+    private _getCaretGlyph(
+        glyph: IDocumentSkeletonGlyph | undefined,
+        glyphGroup: IDocumentSkeletonGlyph[],
+        glyphIndex: number
+    ): IDocumentSkeletonGlyph {
+        if (!glyph || !this._isNonInlineDrawingGlyph(glyph)) {
+            return glyph!;
+        }
+
+        const neighbor = this._findTextLikeGlyph(glyphGroup, glyphIndex - 1, -1) ??
+            this._findTextLikeGlyph(glyphGroup, glyphIndex + 1, 1);
+
+        return neighbor ?? {
+            ...glyph,
+            bBox: getDefaultCaretBoundingBox(glyph),
+        };
+    }
+
+    private _findTextLikeGlyph(glyphGroup: IDocumentSkeletonGlyph[], startIndex: number, step: 1 | -1): IDocumentSkeletonGlyph | undefined {
+        for (let index = startIndex; index >= 0 && index < glyphGroup.length; index += step) {
+            const glyph = glyphGroup[index];
+            if (!this._isNonInlineDrawingGlyph(glyph)) {
+                return glyph;
+            }
+        }
+
+        return undefined;
+    }
+
+    private _isNonInlineDrawingGlyph(glyph: IDocumentSkeletonGlyph | undefined): boolean {
+        if (!glyph?.drawingId || glyph.streamType !== DataStreamTreeTokenType.CUSTOM_BLOCK) {
+            return false;
+        }
+
+        const drawing = this._docSkeleton.getViewModel?.().getDataModel?.().getSnapshot?.().drawings?.[glyph.drawingId];
+        return drawing?.layoutType == null
+            ? !shouldUseInlineTextSelectionForDocsCustomBlockDrawing(drawing)
+            : drawing.layoutType !== PositionedObjectLayoutType.INLINE;
+    }
+
     private _isValidPosition(startOrigin: INodePosition, endOrigin: INodePosition) {
         const { segmentPage: startPage, pageType: startPageType } = startOrigin;
         const { segmentPage: endPage, pageType: endPageType } = endOrigin;
@@ -357,6 +431,11 @@ export class NodePositionConvertToCursor {
 
         if (startPageType === DocumentSkeletonPageType.HEADER || startPageType === DocumentSkeletonPageType.FOOTER) {
             return startPage === endPage;
+        }
+        if (startPageType === DocumentSkeletonPageType.NOTE) {
+            const skeleton = this._docSkeleton.getSkeletonData();
+            return skeleton != null && getPageFromPath(skeleton, startOrigin.path)?.segmentId ===
+                getPageFromPath(skeleton, endOrigin.path)?.segmentId;
         }
 
         return true;
@@ -513,16 +592,21 @@ export class NodePositionConvertToCursor {
 
         const { pageLayoutType, pageMarginLeft, pageMarginTop } = this._documentOffsetConfig;
 
-        const skipPageIndex = (pageType === DocumentSkeletonPageType.BODY || pageType === DocumentSkeletonPageType.CELL) ? pageIndex : segmentPage;
+        const startRootPageIndex = pageType === DocumentSkeletonPageType.CELL && pages[pageIndex] == null ? segmentPage : pageIndex;
+        const endRootPageIndex = pageType === DocumentSkeletonPageType.CELL && pages[endPageIndex] == null ? endSegmentPage : endPageIndex;
+        const skipPageIndex = (pageType === DocumentSkeletonPageType.BODY || pageType === DocumentSkeletonPageType.CELL) ? startRootPageIndex : segmentPage;
         for (let p = 0; p < skipPageIndex; p++) {
             const page = pages[p];
             this._liquid.translatePage(page, pageLayoutType, pageMarginLeft, pageMarginTop);
         }
 
-        const endIndex = (pageType === DocumentSkeletonPageType.BODY || pageType === DocumentSkeletonPageType.CELL) ? endPageIndex : endSegmentPage;
+        const endIndex = (pageType === DocumentSkeletonPageType.BODY || pageType === DocumentSkeletonPageType.CELL) ? endRootPageIndex : endSegmentPage;
 
         for (let p = skipPageIndex; p <= endIndex; p++) {
             const page = pages[p];
+            if (page == null) {
+                continue;
+            }
             const { headerId, footerId, pageWidth } = page;
             let segmentPage: Nullable<IDocumentSkeletonPage> = page;
 
@@ -530,8 +614,13 @@ export class NodePositionConvertToCursor {
                 segmentPage = skeHeaders.get(headerId)?.get(pageWidth);
             } else if (pageType === DocumentSkeletonPageType.FOOTER) {
                 segmentPage = skeFooters.get(footerId)?.get(pageWidth);
+            } else if (pageType === DocumentSkeletonPageType.NOTE) {
+                const noteId = getPageFromPath(skeletonData, path)?.segmentId;
+                segmentPage = page.notes?.find((note) => note.noteId === noteId)?.page;
             } else if (pageType === DocumentSkeletonPageType.CELL) {
-                segmentPage = getPageFromPath(skeletonData, path);
+                segmentPage = path[0] === 'pages'
+                    ? getPageFromPath(skeletonData, path)
+                    : getCellPageFromSegmentPath(skeletonData, page, path);
             }
 
             if (segmentPage == null) {
@@ -546,11 +635,18 @@ export class NodePositionConvertToCursor {
                 startPosition,
                 endPosition,
                 sections.length - 1,
-                pageType === DocumentSkeletonPageType.BODY || pageType === DocumentSkeletonPageType.CELL ? p : 0
+                pageType === DocumentSkeletonPageType.BODY || pageType === DocumentSkeletonPageType.CELL || pageType === DocumentSkeletonPageType.NOTE ? p : 0
             );
             this._liquid.translateSave();
+            const previousHorizontalClip = this._horizontalClip;
+            this._horizontalClip = null;
 
             switch (pageType) {
+                case DocumentSkeletonPageType.NOTE: {
+                    const note = page.notes?.find((fragment) => fragment.page === segmentPage);
+                    this._liquid.translate(note?.left ?? page.marginLeft, note?.top ?? page.marginTop);
+                    break;
+                }
                 case DocumentSkeletonPageType.HEADER:
                     this._liquid.translatePagePadding({
                         ...segmentPage,
@@ -563,14 +659,55 @@ export class NodePositionConvertToCursor {
                     break;
                 }
                 case DocumentSkeletonPageType.CELL: {
-                    this._liquid.translatePagePadding(page);
+                    const nestedPageOffset = getDocumentSkeletonNestedPageOffset(segmentPage);
+                    if (nestedPageOffset) {
+                        this._liquid.translatePagePadding(page);
+                        this._liquid.translate(nestedPageOffset.left, nestedPageOffset.top);
+                        this._liquid.translatePagePadding(segmentPage);
+                        break;
+                    }
+
                     const rowSke = segmentPage.parent as IDocumentSkeletonRow;
                     const tableSke = rowSke.parent!;
+                    const tablePage = tableSke.parent as IDocumentSkeletonPage | undefined;
+                    const tablePageNestedOffset = tablePage ? getDocumentSkeletonNestedPageOffset(tablePage) : undefined;
                     const { left: cellLeft } = segmentPage;
                     const { top: tableTop, left: tableLeft } = tableSke;
                     const { top: rowTop } = rowSke;
+                    const sourceTableId = getTableIdAndSliceIndex(tableSke.tableId).tableId;
+                    const viewport = getDocsTableRenderViewport(getDocumentUnitId(skeleton), sourceTableId);
+                    const hasHorizontalViewport = hasHorizontalTableViewport(viewport);
+                    const scrollLeft = hasHorizontalViewport ? viewport.scrollLeft : 0;
 
-                    this._liquid.translate(tableLeft + cellLeft, tableTop + rowTop);
+                    if (tablePage?.type === DocumentSkeletonPageType.HEADER) {
+                        this._liquid.translatePagePadding({
+                            ...tablePage,
+                            marginLeft: page.marginLeft,
+                        });
+                    } else if (tablePage?.type === DocumentSkeletonPageType.FOOTER) {
+                        const footerTop = page.pageHeight - tablePage.height - tablePage.marginBottom;
+                        this._liquid.translate(page.marginLeft, footerTop);
+                    } else if (tablePage?.type === DocumentSkeletonPageType.NOTE) {
+                        const note = page.notes?.find((fragment) => fragment.page === tablePage);
+                        this._liquid.translate(note?.left ?? page.marginLeft, note?.top ?? page.marginTop);
+                    } else {
+                        this._liquid.translatePagePadding(page);
+                    }
+
+                    if (tablePageNestedOffset) {
+                        this._liquid.translate(tablePageNestedOffset.left, tablePageNestedOffset.top);
+                        this._liquid.translatePagePadding(tablePage!);
+                    }
+
+                    if (hasHorizontalViewport) {
+                        const visibleLeft = this._liquid.x + tableLeft - (viewport.leadingInsetLeft ?? 0);
+                        this._horizontalClip = {
+                            left: visibleLeft,
+                            right: visibleLeft + viewport.viewportWidth,
+                        };
+                    }
+
+                    this._liquid.translate(tableLeft + cellLeft - scrollLeft, tableTop + rowTop);
                     this._liquid.translatePagePadding(segmentPage);
                     break;
                 }
@@ -590,6 +727,7 @@ export class NodePositionConvertToCursor {
                     s
                 );
 
+                this._liquid.translateSave();
                 this._liquid.translateSection(section);
 
                 for (let c = start_c; c <= end_c; c++) {
@@ -603,6 +741,7 @@ export class NodePositionConvertToCursor {
                         c
                     );
 
+                    this._liquid.translateSave();
                     this._liquid.translateColumn(column);
 
                     for (let l = start_l; l <= end_l; l++) {
@@ -652,11 +791,105 @@ export class NodePositionConvertToCursor {
 
                         this._liquid.translateRestore();
                     }
+
+                    this._liquid.translateRestore();
                 }
+
+                this._liquid.translateRestore();
             }
             this._liquid.translateRestore();
+            this._horizontalClip = previousHorizontalClip;
 
             this._liquid.translatePage(page, pageLayoutType, pageMarginLeft, pageMarginTop);
         }
     }
+}
+
+function hasHorizontalTableViewport(viewport: Nullable<IDocsTableRenderViewport>): viewport is IDocsTableRenderViewport {
+    return viewport != null &&
+        (viewport.leadingInsetLeft ?? 0) + viewport.contentWidth + (viewport.trailingInsetRight ?? 0) > viewport.viewportWidth;
+}
+
+function clipPositionToHorizontalRange(position: IPosition, clip: Nullable<{ left: number; right: number }>): Nullable<IPosition> {
+    if (!clip) {
+        return position;
+    }
+
+    const startX = Math.max(position.startX, clip.left);
+    const endX = Math.min(position.endX, clip.right);
+    const collapsed = position.startX === position.endX;
+
+    if (collapsed) {
+        return position.startX >= clip.left && position.startX <= clip.right ? position : null;
+    }
+
+    if (endX <= startX) {
+        return null;
+    }
+
+    return {
+        ...position,
+        startX,
+        endX,
+    };
+}
+
+function getCellPageFromSegmentPath(
+    skeletonData: Parameters<typeof getPageFromPath>[0],
+    rootPage: IDocumentSkeletonPage,
+    path: (string | number)[]
+): Nullable<IDocumentSkeletonPage> {
+    if (path[0] === 'pages') {
+        return null;
+    }
+
+    const segmentPages: IDocumentSkeletonPage[] = [];
+    const { headerId, footerId, pageWidth } = rootPage;
+    const headerPage = headerId == null ? null : skeletonData.skeHeaders.get(headerId)?.get(pageWidth);
+    const footerPage = footerId == null ? null : skeletonData.skeFooters.get(footerId)?.get(pageWidth);
+
+    if (headerPage != null) {
+        segmentPages.push(headerPage);
+    }
+
+    if (footerPage != null) {
+        segmentPages.push(footerPage);
+    }
+
+    for (const segmentPage of segmentPages) {
+        const page = getPageFromPath({
+            ...skeletonData,
+            pages: [segmentPage],
+        }, ['pages', 0, ...path]);
+
+        if (page != null) {
+            return page;
+        }
+    }
+
+    return null;
+}
+
+function getDefaultCaretBoundingBox(glyph: IDocumentSkeletonGlyph): IDocumentSkeletonGlyph['bBox'] {
+    const fontSize = getGlyphFontSize(glyph);
+    return {
+        ...glyph.bBox,
+        ba: fontSize,
+        bd: Math.max(2, Math.ceil(fontSize * 0.25)),
+    };
+}
+
+function getGlyphFontSize(glyph: IDocumentSkeletonGlyph): number {
+    const fontSize = glyph.fontStyle?.originFontSize ?? glyph.fontStyle?.fontSize ?? glyph.ts?.fs;
+    return typeof fontSize === 'number' && Number.isFinite(fontSize) && fontSize > 0 ? fontSize : 14;
+}
+
+function getDocumentUnitId(docSkeleton: DocumentSkeleton): string {
+    const viewModel = docSkeleton.getViewModel() as {
+        getDataModel?: () => {
+            getUnitId?: () => string;
+        };
+    };
+
+    return viewModel.getDataModel?.().getUnitId?.() ?? '';
 }

@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Taula',
         selectRange: 'Selecciona el rang de la taula',
         rename: 'Reanomena la taula',
+        renamePlaceholder: 'Introdueix el nom de la taula',
         updateRange: 'Actualitza el rang de la taula',
         tableRangeWithMergeError: 'El rang de la taula no es pot superposar amb cel·les combinades',
         tableRangeWithOtherTableError: 'El rang de la taula no es pot superposar amb altres taules',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'Peu de pàgina',
         firstLine: 'Primera línia',
         secondLine: 'Segona línia',
-        columnPrefix: 'Columna',
-        tablePrefix: 'Taula',
         tableNameError: 'El nom de la taula no pot contenir espais, no pot començar amb un número i no pot ser idèntic a un nom de taula existent',
+        columnMenu: {
+            'insert-left': 'Insereix una columna de taula a l’esquerra',
+            'insert-right': 'Insereix una columna de taula a la dreta',
+            delete: 'Suprimeix la columna de la taula',
+        },
+
+        sort: {
+            'sort-asc': 'Ascendent',
+            'sort-desc': 'Descendent',
+        },
 
         insert: {
             main: 'Insereix una taula',
@@ -131,12 +140,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'Filtre',
             'by-values': 'Per valors',
+            'by-colors': 'Per colors',
             'by-conditions': 'Per condicions',
+            back: 'Enrere',
+            resize: 'Canvia la mida',
+            'filter-by-cell-fill-color': 'Color de farciment de la cel·la',
+            'filter-by-cell-text-color': 'Color del text de la cel·la',
+            'filter-by-color-none': 'Aquesta columna només conté un color',
             'clear-filter': 'Neteja el filtre',
             cancel: 'Cancel·la',
             confirm: 'Confirma',
             'search-placeholder': 'Utilitza espai per separar paraules clau',
+            'input-values-placeholder': 'Introdueix valors',
             'select-all': 'Selecciona-ho tot',
         },
     },

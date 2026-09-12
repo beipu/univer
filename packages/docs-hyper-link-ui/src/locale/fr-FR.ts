@@ -17,25 +17,23 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    docLink: {
+    'docs-hyper-link-ui': {
         edit: {
             confirm: 'Confirmer',
             cancel: 'Annuler',
-            title: 'Lien',
-            address: 'Link',
-            placeholder: 'Veuillez entrer un lien',
+            address: 'Lien',
             addressError: 'L\'url est illégal!',
-            label: 'Label',
+            label: 'Libellé',
             labelError: 'Veuillez entrer le label du lien',
         },
         info: {
-            copy: 'Copy',
-            edit: 'Edit',
-            cancel: 'Cancel link',
-            coped: 'Link copied to clipboard',
+            copy: 'Copier',
+            edit: 'Modifier',
+            cancel: 'Supprimer le lien',
+            coped: 'Lien copié dans le presse-papiers',
         },
         menu: {
-            tooltip: 'Add link',
+            tooltip: 'Ajouter un lien',
         },
     },
 };

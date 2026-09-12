@@ -17,9 +17,9 @@
 import type { ICellData, IInterceptor, Injector, Nullable, Univer, Workbook } from '@univerjs/core';
 import type { ISheetLocation } from '../utils/interceptor';
 import { createInterceptorKey, InterceptorEffectEnum, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { INTERCEPTOR_POINT } from '../interceptor-const';
-import { SheetInterceptorService } from '../sheet-interceptor.service';
+import { AFTER_CELL_EDIT, SheetInterceptorService, VALIDATE_CELL } from '../sheet-interceptor.service';
 import { createSheetTestBed } from './create-core-test-bed';
 
 describe('Test SheetInterceptorService', () => {
@@ -27,6 +27,7 @@ describe('Test SheetInterceptorService', () => {
     let get: Injector['get'];
     const stringIntercept = createInterceptorKey<string, null>('stringIntercept');
     const numberIntercept = createInterceptorKey<number, { step: number }>('numberIntercept');
+    type ICellContentTestLocation = ISheetLocation & { rawData: Nullable<ICellData> };
 
     beforeEach(() => {
         const testBed = createSheetTestBed(undefined, [[SheetInterceptorService]]);
@@ -40,19 +41,19 @@ describe('Test SheetInterceptorService', () => {
     function getCell(row: number, col: number, key: string, filter: (interceptor: IInterceptor<any, any>) => boolean): Nullable<ICellData>;
     function getCell(row: number, col: number, key?: string, filter?: (interceptor: IInterceptor<any, any>) => boolean): Nullable<ICellData> {
         const cus = get(IUniverInstanceService);
-        const sheet = cus.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getActiveSheet()!;
+        const sheet = cus.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getActiveSheet()!;
         return (key && filter) ? sheet.getCellWithFilteredInterceptors(row, col, key, filter) : sheet.getCell(row, col);
     }
 
     function getRowFiltered(row: number): boolean {
         const cus = get(IUniverInstanceService);
-        const sheet = cus.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getActiveSheet()!;
+        const sheet = cus.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getActiveSheet()!;
         return sheet.getRowFiltered(row);
     }
 
     function getRowVisible(row: number): boolean {
         const cus = get(IUniverInstanceService);
-        const sheet = cus.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getActiveSheet()!;
+        const sheet = cus.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getActiveSheet()!;
         return sheet.getRowVisible(row);
     }
 
@@ -154,9 +155,136 @@ describe('Test SheetInterceptorService', () => {
             expect(getRowFiltered(2)).toBeFalsy();
             expect(getRowVisible(2)).toBeTruthy();
         });
+
+        it('should reuse row filtered composed interceptors while registrations are stable', () => {
+            const interceptorService = get(SheetInterceptorService);
+            const fetchThroughInterceptorsSpy = vi.spyOn(interceptorService, 'fetchThroughInterceptors');
+
+            getRowFiltered(1);
+            getRowFiltered(2);
+            getRowFiltered(3);
+
+            expect(fetchThroughInterceptorsSpy).toHaveBeenCalledTimes(1);
+
+            const disposable = interceptorService.intercept(INTERCEPTOR_POINT.ROW_FILTERED, {
+                handler(filtered, _, next) {
+                    return next(filtered);
+                },
+            });
+
+            getRowFiltered(4);
+            getRowFiltered(5);
+
+            expect(fetchThroughInterceptorsSpy).toHaveBeenCalledTimes(2);
+
+            disposable.dispose();
+
+            getRowFiltered(6);
+            getRowFiltered(7);
+
+            expect(fetchThroughInterceptorsSpy).toHaveBeenCalledTimes(3);
+        });
     });
 
     describe('Test intercept in general case', () => {
+        it('collects command, after-command, range, auto-height, and before-command interceptor results in priority order', async () => {
+            const interceptorService = get(SheetInterceptorService);
+            const high = {
+                priority: 100,
+                getMutations: () => ({
+                    preRedos: [{ id: 'high-pre-redo', params: {} }],
+                    redos: [{ id: 'high-redo', params: {} }],
+                    preUndos: [{ id: 'high-pre-undo', params: {} }],
+                    undos: [{ id: 'high-undo', params: {} }],
+                }),
+            };
+            const low = {
+                priority: 0,
+                getMutations: () => ({
+                    redos: [{ id: 'low-redo', params: {} }],
+                    undos: [{ id: 'low-undo', params: {} }],
+                }),
+            };
+
+            const commandDisposable = interceptorService.interceptCommand(low);
+            interceptorService.interceptCommand(high);
+            expect(interceptorService.onCommandExecute({ id: 'cmd', params: {} })).toEqual({
+                preRedos: [{ id: 'high-pre-redo', params: {} }],
+                redos: [{ id: 'high-redo', params: {} }, { id: 'low-redo', params: {} }],
+                preUndos: [{ id: 'high-pre-undo', params: {} }],
+                undos: [{ id: 'high-undo', params: {} }, { id: 'low-undo', params: {} }],
+            });
+            expect(() => interceptorService.interceptCommand(high)).toThrow('Interceptor already exists');
+            commandDisposable.dispose();
+
+            const afterDisposable = interceptorService.interceptAfterCommand(high);
+            interceptorService.interceptAfterCommand(low);
+            expect(interceptorService.afterCommandExecute({ id: 'cmd', params: {} })).toEqual({
+                redos: [{ id: 'high-redo', params: {} }, { id: 'low-redo', params: {} }],
+                undos: [{ id: 'high-undo', params: {} }, { id: 'low-undo', params: {} }],
+            });
+            expect(() => interceptorService.interceptAfterCommand(high)).toThrow('Interceptor already exists');
+            afterDisposable.dispose();
+
+            const rangeDisposable = interceptorService.interceptRanges(high);
+            interceptorService.interceptRanges(low);
+            expect(interceptorService.generateMutationsByRanges({ unitId: 'unit', subUnitId: 'sheet', ranges: [] })).toEqual({
+                preRedos: [{ id: 'high-pre-redo', params: {} }],
+                redos: [{ id: 'high-redo', params: {} }, { id: 'low-redo', params: {} }],
+                preUndos: [{ id: 'high-pre-undo', params: {} }],
+                undos: [{ id: 'high-undo', params: {} }, { id: 'low-undo', params: {} }],
+            });
+            expect(() => interceptorService.interceptRanges(high)).toThrow('Interceptor already exists');
+            rangeDisposable.dispose();
+
+            const autoHeightDisposable = interceptorService.interceptAutoHeight(high);
+            interceptorService.interceptAutoHeight(low);
+            expect(interceptorService.generateMutationsOfAutoHeight({ unitId: 'unit', subUnitId: 'sheet', ranges: [] })).toEqual({
+                preRedos: [{ id: 'high-pre-redo', params: {} }],
+                redos: [{ id: 'high-redo', params: {} }, { id: 'low-redo', params: {} }],
+                preUndos: [{ id: 'high-pre-undo', params: {} }],
+                undos: [{ id: 'high-undo', params: {} }, { id: 'low-undo', params: {} }],
+            });
+            expect(() => interceptorService.interceptAutoHeight(high)).toThrow('Interceptor already exists');
+            autoHeightDisposable.dispose();
+
+            const before = { priority: 10, performCheck: vi.fn(async () => true) };
+            interceptorService.interceptBeforeCommand(before);
+            interceptorService.interceptBeforeCommand({ priority: 0, performCheck: async () => false });
+            await expect(interceptorService.beforeCommandExecute({ id: 'cmd', params: {} })).resolves.toBe(false);
+            expect(before.performCheck).toHaveBeenCalledWith({ id: 'cmd', params: {} });
+            expect(() => interceptorService.interceptBeforeCommand(before)).toThrow('Interceptor already exists');
+        });
+
+        it('runs write-cell and validation interceptors with workbook context', async () => {
+            const interceptorService = get(SheetInterceptorService);
+            const workbook = get(IUniverInstanceService).getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+            const worksheet = workbook.getActiveSheet()!;
+
+            interceptorService.writeCellInterceptor.intercept(AFTER_CELL_EDIT, {
+                priority: 100,
+                handler(value, location, next) {
+                    expect(location.unitId).toBe(workbook.getUnitId());
+                    expect(location.subUnitId).toBe(worksheet.getSheetId());
+                    expect(location.origin).toEqual({ v: 'origin' });
+                    return next({ ...value, v: `${value?.v} edited` });
+                },
+            });
+
+            interceptorService.writeCellInterceptor.intercept(VALIDATE_CELL, {
+                priority: 100,
+                handler(value, location, next) {
+                    if (location.row === 3 && location.col === 4) {
+                        return Promise.resolve(false);
+                    }
+                    return next(value);
+                },
+            });
+
+            expect(interceptorService.onWriteCell(workbook, worksheet, 1, 2, { v: 'origin' })).toEqual({ v: 'origin edited' });
+            await expect(interceptorService.onValidateCell(workbook, worksheet, 3, 4)).resolves.toBe(false);
+        });
+
         it('should intercept BEFORE_CELL_EDIT and sum the values', () => {
             get(SheetInterceptorService).intercept(numberIntercept, {
                 priority: 0,
@@ -229,6 +357,87 @@ describe('Test SheetInterceptorService', () => {
             const result = get(SheetInterceptorService).fetchThroughInterceptors(stringIntercept)('zero', null);
 
             expect(result).toBe('zero');
+        });
+
+        it('should rebuild cached cell content effect interceptors after dispose and same-length replacement', () => {
+            const interceptorService = get(SheetInterceptorService);
+            const calls: string[] = [];
+
+            interceptorService.intercept(INTERCEPTOR_POINT.CELL_CONTENT, {
+                effect: InterceptorEffectEnum.Style,
+                priority: 100,
+                handler(value, _, next) {
+                    calls.push('first');
+                    return next({ ...value, v: `${value?.v} first` });
+                },
+            });
+
+            const staleDisposable = interceptorService.intercept(INTERCEPTOR_POINT.CELL_CONTENT, {
+                effect: InterceptorEffectEnum.Style,
+                priority: 0,
+                handler(value, _, next) {
+                    calls.push('stale');
+                    return next({ ...value, v: `${value?.v} stale` });
+                },
+            });
+
+            expect(
+                interceptorService.fetchThroughInterceptors<ICellData, ICellContentTestLocation>(
+                    INTERCEPTOR_POINT.CELL_CONTENT,
+                    InterceptorEffectEnum.Style
+                )({ v: 'zero' }, null as unknown as ICellContentTestLocation)
+            ).toEqual({ v: 'zero first stale' });
+
+            staleDisposable.dispose();
+
+            interceptorService.intercept(INTERCEPTOR_POINT.CELL_CONTENT, {
+                effect: InterceptorEffectEnum.Style,
+                priority: 0,
+                handler(value, _, next) {
+                    calls.push('fresh');
+                    return next({ ...value, v: `${value?.v} fresh` });
+                },
+            });
+
+            calls.length = 0;
+
+            expect(
+                interceptorService.fetchThroughInterceptors<ICellData, ICellContentTestLocation>(
+                    INTERCEPTOR_POINT.CELL_CONTENT,
+                    InterceptorEffectEnum.Style
+                )({ v: 'zero' }, null as unknown as ICellContentTestLocation)
+            ).toEqual({ v: 'zero first fresh' });
+            expect(calls).toEqual(['first', 'fresh']);
+        });
+
+        it('should reuse common cell content composed interceptors while registrations are stable', () => {
+            const interceptorService = get(SheetInterceptorService);
+            const fetchThroughInterceptorsSpy = vi.spyOn(interceptorService, 'fetchThroughInterceptors');
+
+            getCell(0, 0);
+            getCell(0, 1);
+            getCell(1, 0);
+
+            expect(fetchThroughInterceptorsSpy).toHaveBeenCalledTimes(1);
+
+            const disposable = interceptorService.intercept(INTERCEPTOR_POINT.CELL_CONTENT, {
+                effect: InterceptorEffectEnum.Style | InterceptorEffectEnum.Value,
+                handler(value, _, next) {
+                    return next(value);
+                },
+            });
+
+            getCell(1, 1);
+            getCell(2, 0);
+
+            expect(fetchThroughInterceptorsSpy).toHaveBeenCalledTimes(2);
+
+            disposable.dispose();
+
+            getCell(2, 1);
+            getCell(3, 0);
+
+            expect(fetchThroughInterceptorsSpy).toHaveBeenCalledTimes(3);
         });
     });
 });

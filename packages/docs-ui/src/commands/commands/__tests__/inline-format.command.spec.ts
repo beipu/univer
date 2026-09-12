@@ -14,28 +14,71 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, ICommand, Injector, IStyleBase, Univer } from '@univerjs/core';
-import { BooleanNumber, ICommandService, IUniverInstanceService, RedoCommand, UndoCommand, UniverInstanceType } from '@univerjs/core';
-import { DocSelectionManagerService, RichTextEditingMutation, SetTextSelectionsOperation } from '@univerjs/docs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { DocumentDataModel, ICommand, IDocumentBody, IDocumentData, Injector, ITextStyle, Univer } from '@univerjs/core';
+import type { ITextRangeWithStyle } from '@univerjs/engine-render';
 import {
+    BaselineOffset,
+    BooleanNumber,
+    createInternalEditorID,
+    DOC_RANGE_TYPE,
+    ICommandService,
+    IUniverInstanceService,
+    RedoCommand,
+    Tools,
+    UndoCommand,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { DocSelectionManagerService, RichTextEditingMutation, SetTextSelectionsOperation } from '@univerjs/docs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    getStyleInTextRange,
+    ResetInlineFormatTextBackgroundColorCommand,
+    ResetInlineFormatTextColorCommand,
     SetInlineFormatBoldCommand,
     SetInlineFormatCommand,
     SetInlineFormatFontFamilyCommand,
     SetInlineFormatFontSizeCommand,
     SetInlineFormatItalicCommand,
     SetInlineFormatStrikethroughCommand,
+    SetInlineFormatSubscriptCommand,
+    SetInlineFormatSuperscriptCommand,
+    SetInlineFormatTextBackgroundColorCommand,
     SetInlineFormatTextColorCommand,
+    SetInlineFormatTextFillCommand,
     SetInlineFormatUnderlineCommand,
 } from '../inline-format.command';
 import { createCommandTestBed } from './create-command-test-bed';
+
+describe('getStyleInTextRange', () => {
+    it('reads an expanded selection without cloning unrelated text runs', () => {
+        const body = {
+            dataStream: 'x'.repeat(10_000),
+            textRuns: Array.from({ length: 1_000 }, (_value, index) => ({
+                st: index * 10,
+                ed: index * 10 + 5,
+                ts: { fs: 10 + index % 3 },
+            })),
+        } satisfies IDocumentBody;
+        const range = {
+            startOffset: 5_001,
+            endOffset: 5_004,
+            collapsed: false,
+        } satisfies ITextRangeWithStyle;
+        const cloneSpy = vi.spyOn(Tools, 'deepClone');
+
+        expect(getStyleInTextRange(body, range, {})).toMatchObject({ fs: 12 });
+        expect(cloneSpy.mock.calls.length).toBeLessThan(10);
+
+        cloneSpy.mockRestore();
+    });
+});
 
 describe('Test inline format commands', () => {
     let univer: Univer;
     let get: Injector['get'];
     let commandService: ICommandService;
 
-    function getFormatValueAt(key: keyof IStyleBase, pos: number) {
+    function getFormatValueAt(key: keyof ITextStyle, pos: number) {
         const univerInstanceService = get(IUniverInstanceService);
         const docsModel = univerInstanceService.getUnit<DocumentDataModel>('test-doc', UniverInstanceType.UNIVER_DOC);
 
@@ -59,6 +102,19 @@ describe('Test inline format commands', () => {
 
         commandService = get(ICommandService);
         commandService.registerCommand(SetInlineFormatCommand);
+        commandService.registerCommand(SetInlineFormatBoldCommand);
+        commandService.registerCommand(SetInlineFormatItalicCommand);
+        commandService.registerCommand(SetInlineFormatUnderlineCommand);
+        commandService.registerCommand(SetInlineFormatStrikethroughCommand);
+        commandService.registerCommand(SetInlineFormatSubscriptCommand);
+        commandService.registerCommand(SetInlineFormatSuperscriptCommand);
+        commandService.registerCommand(SetInlineFormatFontFamilyCommand);
+        commandService.registerCommand(SetInlineFormatFontSizeCommand);
+        commandService.registerCommand(SetInlineFormatTextColorCommand);
+        commandService.registerCommand(SetInlineFormatTextFillCommand);
+        commandService.registerCommand(SetInlineFormatTextBackgroundColorCommand);
+        commandService.registerCommand(ResetInlineFormatTextColorCommand);
+        commandService.registerCommand(ResetInlineFormatTextBackgroundColorCommand);
         commandService.registerCommand(SetTextSelectionsOperation);
         commandService.registerCommand(RichTextEditingMutation as unknown as ICommand);
 
@@ -89,6 +145,81 @@ describe('Test inline format commands', () => {
 
     afterEach(() => univer.dispose());
 
+    describe('Public inline format wrapper commands', () => {
+        it('applies document text styles through the menu command wrappers', async () => {
+            let appliedCommandCount = 0;
+
+            try {
+                await commandService.executeCommand(SetInlineFormatBoldCommand.id);
+                appliedCommandCount++;
+                await commandService.executeCommand(SetInlineFormatItalicCommand.id);
+                appliedCommandCount++;
+                await commandService.executeCommand(SetInlineFormatUnderlineCommand.id);
+                appliedCommandCount++;
+                await commandService.executeCommand(SetInlineFormatStrikethroughCommand.id);
+                appliedCommandCount++;
+
+                expect(getFormatValueAt('bl', 1)).toBe(BooleanNumber.TRUE);
+                expect(getFormatValueAt('it', 1)).toBe(BooleanNumber.TRUE);
+                expect(getFormatValueAt('ul', 1)).toStrictEqual({ s: BooleanNumber.TRUE });
+                expect(getFormatValueAt('st', 1)).toStrictEqual({ s: BooleanNumber.TRUE });
+
+                await commandService.executeCommand(SetInlineFormatSubscriptCommand.id);
+                appliedCommandCount++;
+                expect(getFormatValueAt('va', 1)).toBe(BaselineOffset.SUBSCRIPT);
+
+                await commandService.executeCommand(SetInlineFormatSuperscriptCommand.id);
+                appliedCommandCount++;
+                expect(getFormatValueAt('va', 1)).toBe(BaselineOffset.SUPERSCRIPT);
+
+                await commandService.executeCommand(SetInlineFormatSuperscriptCommand.id);
+                appliedCommandCount++;
+                expect(getFormatValueAt('va', 1)).toBe(BaselineOffset.NORMAL);
+
+                await commandService.executeCommand(SetInlineFormatFontFamilyCommand.id, { value: 'Inter' });
+                appliedCommandCount++;
+                await commandService.executeCommand(SetInlineFormatFontSizeCommand.id, { value: 32 });
+                appliedCommandCount++;
+                expect(getFormatValueAt('ff', 1)).toBe('Inter');
+                expect(getFormatValueAt('fs', 1)).toBe(32);
+
+                await commandService.executeCommand(SetInlineFormatTextColorCommand.id, { value: '#224466' });
+                appliedCommandCount++;
+                await commandService.executeCommand(SetInlineFormatTextBackgroundColorCommand.id, { value: '#ffeeaa' });
+                appliedCommandCount++;
+                expect(getFormatValueAt('cl', 1)).toStrictEqual({ rgb: '#224466' });
+                expect(getFormatValueAt('bg', 1)).toStrictEqual({ rgb: '#ffeeaa' });
+
+                await commandService.executeCommand(ResetInlineFormatTextColorCommand.id);
+                appliedCommandCount++;
+                await commandService.executeCommand(ResetInlineFormatTextBackgroundColorCommand.id);
+                appliedCommandCount++;
+                expect(getFormatValueAt('cl', 1)).toStrictEqual({ rgb: null });
+                expect(getFormatValueAt('bg', 1)).toStrictEqual({ rgb: null });
+
+                await commandService.executeCommand(SetInlineFormatTextFillCommand.id, {
+                    value: {
+                        textFill: {
+                            type: 'solid',
+                            color: '#445566',
+                            opacity: 0.8,
+                        },
+                    },
+                });
+                appliedCommandCount++;
+                expect(getFormatValueAt('textFill', 1)).toStrictEqual({
+                    type: 'solid',
+                    color: '#445566',
+                    opacity: 0.8,
+                });
+            } finally {
+                for (let i = 0; i < appliedCommandCount; i++) {
+                    await commandService.executeCommand(UndoCommand.id);
+                }
+            }
+        });
+    });
+
     describe('Set Bold by SetInlineFormatCommand', () => {
         it('Should change text in range(0, 5) to bold', async () => {
             expect(getFormatValueAt('bl', 1)).toBe(BooleanNumber.FALSE);
@@ -115,6 +246,51 @@ describe('Test inline format commands', () => {
             expect(getFormatValueAt('bl', 1)).toBe(BooleanNumber.TRUE);
             expect(getFormatValueAt('bl', 21)).toBe(BooleanNumber.TRUE);
             expect(getFormatValueAt('bl', 25)).toBe(BooleanNumber.TRUE);
+        });
+
+        it('formats text ranges without applying stale table rect ranges', async () => {
+            const selectionManager = get(DocSelectionManagerService);
+            selectionManager.__replaceTextRangesWithNoRefresh({
+                textRanges: [{
+                    startOffset: 0,
+                    endOffset: 5,
+                    collapsed: false,
+                    isActive: true,
+                    rangeType: DOC_RANGE_TYPE.TEXT,
+                }],
+                rectRanges: [{
+                    startOffset: 20,
+                    endOffset: 30,
+                    collapsed: false,
+                    rangeType: DOC_RANGE_TYPE.RECT,
+                    tableId: 'table-1',
+                    startRow: 0,
+                    endRow: 0,
+                    startColumn: 0,
+                    endColumn: 0,
+                }],
+                segmentId: '',
+                segmentPage: -1,
+                isEditing: true,
+                style: {},
+            } as never, {
+                unitId: 'test-doc',
+                subUnitId: 'test-doc',
+            });
+
+            expect(getFormatValueAt('ff', 1)).toBe(undefined);
+            expect(getFormatValueAt('ff', 21)).toBe(undefined);
+
+            await commandService.executeCommand(SetInlineFormatCommand.id, {
+                segmentId: '',
+                preCommandId: SetInlineFormatFontFamilyCommand.id,
+                value: 'Arial',
+            });
+
+            expect(getFormatValueAt('ff', 1)).toBe('Arial');
+            expect(getFormatValueAt('ff', 21)).toBe(undefined);
+
+            await commandService.executeCommand(UndoCommand.id);
         });
     });
 
@@ -251,6 +427,143 @@ describe('Test inline format commands', () => {
             await commandService.executeCommand(RedoCommand.id);
             expect(getFormatValueAt('cl', 1)).toStrictEqual({
                 rgb: '#000000',
+            });
+        });
+
+        it('Should reset text color in selected ranges', async () => {
+            await commandService.executeCommand(SetInlineFormatCommand.id, {
+                segmentId: '',
+                preCommandId: SetInlineFormatTextColorCommand.id,
+                value: '#123456',
+            });
+
+            await commandService.executeCommand(ResetInlineFormatTextColorCommand.id);
+
+            expect(getFormatValueAt('cl', 1)).toStrictEqual({
+                rgb: null,
+            });
+
+            await commandService.executeCommand(UndoCommand.id);
+            expect(getFormatValueAt('cl', 1)).toStrictEqual({
+                rgb: '#123456',
+            });
+
+            await commandService.executeCommand(RedoCommand.id);
+            expect(getFormatValueAt('cl', 1)).toStrictEqual({
+                rgb: null,
+            });
+        });
+
+        it('clears only solid text fills in a standalone document', async () => {
+            const docsModel = get(IUniverInstanceService)
+                .getUnit<DocumentDataModel>('test-doc', UniverInstanceType.UNIVER_DOC)!;
+            const body = docsModel.getBody()!;
+            const gradientFill = {
+                type: 'gradient' as const,
+                gradient: {
+                    type: 'linear' as const,
+                    stops: [
+                        { offset: 0, color: '#111111' },
+                        { offset: 1, color: '#eeeeee' },
+                    ],
+                },
+            };
+            const pictureFill = {
+                type: 'picture' as const,
+                picture: {
+                    source: 'https://example.com/fill.png',
+                },
+            };
+
+            body.textRuns = [
+                {
+                    st: 0,
+                    ed: 2,
+                    ts: {
+                        bl: BooleanNumber.TRUE,
+                        cl: { rgb: '#111111' },
+                        textFill: { type: 'solid', color: '#222222' },
+                    },
+                },
+                {
+                    st: 2,
+                    ed: 4,
+                    ts: {
+                        it: BooleanNumber.TRUE,
+                        cl: { rgb: '#111111' },
+                        textFill: gradientFill,
+                    },
+                },
+                {
+                    st: 4,
+                    ed: 22,
+                    ts: {
+                        fs: 24,
+                        cl: { rgb: '#111111' },
+                        textFill: pictureFill,
+                    },
+                },
+                {
+                    st: 23,
+                    ed: 68,
+                    ts: {
+                        fs: 24,
+                        cl: { rgb: '#111111' },
+                    },
+                },
+            ];
+
+            await commandService.executeCommand(SetInlineFormatTextColorCommand.id, { value: '#ff0000' });
+
+            expect(getFormatValueAt('cl', 1)).toStrictEqual({ rgb: '#ff0000' });
+            expect(getFormatValueAt('bl', 1)).toBe(BooleanNumber.TRUE);
+            expect(getFormatValueAt('textFill', 1)).toBeUndefined();
+            expect(getFormatValueAt('textFill', 3)).toStrictEqual(gradientFill);
+            expect(getFormatValueAt('textFill', 4.5)).toStrictEqual(pictureFill);
+
+            await commandService.executeCommand(UndoCommand.id);
+            expect(getFormatValueAt('cl', 1)).toStrictEqual({ rgb: '#111111' });
+            expect(getFormatValueAt('textFill', 1)).toStrictEqual({ type: 'solid', color: '#222222' });
+
+            await commandService.executeCommand(RedoCommand.id);
+            expect(getFormatValueAt('cl', 1)).toStrictEqual({ rgb: '#ff0000' });
+            expect(getFormatValueAt('textFill', 1)).toBeUndefined();
+        });
+
+        it('preserves solid text fills in an internal editor', async () => {
+            const unitId = createInternalEditorID('shape-text');
+            const internalDoc = univer.createUnit<IDocumentData, DocumentDataModel>(UniverInstanceType.UNIVER_DOC, {
+                id: unitId,
+                body: {
+                    dataStream: 'abc\r\n',
+                    textRuns: [{
+                        st: 0,
+                        ed: 3,
+                        ts: {
+                            cl: { rgb: '#111111' },
+                            textFill: { type: 'solid', color: '#222222' },
+                        },
+                    }],
+                    paragraphs: [{ startIndex: 3, paragraphId: 'shape-text-paragraph' }],
+                },
+            });
+            const univerInstanceService = get(IUniverInstanceService);
+            univerInstanceService.focusUnit(unitId);
+            const selectionManager = get(DocSelectionManagerService);
+            selectionManager.__TEST_ONLY_setCurrentSelection({ unitId, subUnitId: unitId });
+            selectionManager.__TEST_ONLY_add([{
+                startOffset: 0,
+                endOffset: 3,
+                collapsed: false,
+                isActive: true,
+            }]);
+
+            await commandService.executeCommand(SetInlineFormatTextColorCommand.id, { value: '#ff0000' });
+
+            expect(internalDoc.getBody()?.textRuns?.[0].ts?.cl).toStrictEqual({ rgb: '#ff0000' });
+            expect(internalDoc.getBody()?.textRuns?.[0].ts?.textFill).toStrictEqual({
+                type: 'solid',
+                color: '#222222',
             });
         });
     });

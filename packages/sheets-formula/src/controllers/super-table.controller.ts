@@ -15,7 +15,11 @@
  */
 
 import type { ICommandInfo, IExecutionOptions, Nullable, Workbook } from '@univerjs/core';
-import type { IFunctionInfo, ISetSuperTableMutationParam, ISetSuperTableMutationSearchParam } from '@univerjs/engine-formula';
+import type {
+    IFunctionInfo,
+    ISetSuperTableMutationParam,
+    ISetSuperTableMutationSearchParam,
+} from '@univerjs/engine-formula';
 import {
     Disposable,
     ICommandService,
@@ -23,10 +27,16 @@ import {
     toDisposable,
     UniverInstanceType,
 } from '@univerjs/core';
-import { FunctionType, ISuperTableService, RemoveSuperTableMutation, serializeRangeWithSheet, SetSuperTableMutation } from '@univerjs/engine-formula';
-import { SetWorksheetActiveOperation } from '@univerjs/sheets';
+import {
+    FunctionType,
+    IDescriptionService,
+    ISuperTableService,
+    RemoveSuperTableMutation,
+    serializeRangeWithSheet,
+    SetSuperTableMutation,
+} from '@univerjs/engine-formula';
 
-import { IDescriptionService } from '../services/description.service';
+import { SetWorksheetActiveOperation } from '@univerjs/sheets';
 
 /**
  * header highlight

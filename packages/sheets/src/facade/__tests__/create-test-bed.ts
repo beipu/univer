@@ -32,7 +32,7 @@ import {
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
 import { DefinedNamesService, FormulaDataModel, FunctionService, IDefinedNamesService, IFunctionService, ISuperTableService, LexerTreeBuilder, SuperTableService } from '@univerjs/engine-formula';
-import { Engine, IRenderingEngine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
+import { Engine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
 import { ISocketService, WebSocketService } from '@univerjs/network';
 import {
     RangeProtectionRuleModel,
@@ -114,7 +114,6 @@ class RenderManagerServiceTestBed extends RenderManagerService {
     }
 }
 
-// eslint-disable-next-line max-lines-per-function
 export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?: Dependency[]): ITestBed {
     const univer = new Univer();
     const injector = univer.__getInjector();
@@ -137,7 +136,6 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
 
             injector.add([IFunctionService, { useClass: FunctionService }]);
             injector.add([ISocketService, { useClass: WebSocketService }]);
-            injector.add([IRenderingEngine, { useFactory: () => new Engine() }]);
             injector.add([IRenderManagerService, { useClass: RenderManagerServiceTestBed }]);
             injector.add([SheetSkeletonService]);
             injector.add([FormulaDataModel]);
@@ -171,7 +169,7 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
     // load theme service
     const themeService = injector.get(ThemeService);
     const theme = themeService.getCurrentTheme();
-    const newTheme = set(theme, 'black', '#35322b');
+    const newTheme = set(theme, 'gray.1000', '#35322b');
     themeService.setTheme(newTheme);
 
     // register builtin plugins

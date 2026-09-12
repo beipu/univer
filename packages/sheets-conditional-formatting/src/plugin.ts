@@ -18,6 +18,7 @@ import type { Dependency } from '@univerjs/core';
 import type { IUniverSheetsConditionalFormattingConfig } from './config/config';
 import { DependentOn, ICommandService, IConfigService, Inject, Injector, merge, Plugin, touchDependencies, UniverInstanceType } from '@univerjs/core';
 import { UniverFormulaEnginePlugin } from '@univerjs/engine-formula';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import pkg from '../package.json';
 import { SHEET_CONDITIONAL_FORMATTING_PLUGIN } from './base/const';
 import { AddCfCommand } from './commands/commands/add-cf.command';
@@ -34,12 +35,15 @@ import {
     defaultPluginConfig,
     SHEETS_CONDITIONAL_FORMATTING_PLUGIN_CONFIG_KEY,
 } from './config/config';
+import { ConditionalFormattingRangeIndexModel } from './models/conditional-formatting-range-index-model';
 import { ConditionalFormattingRuleModel } from './models/conditional-formatting-rule-model';
 import { ConditionalFormattingViewModel } from './models/conditional-formatting-view-model';
 import { ConditionalFormattingFormulaService } from './services/conditional-formatting-formula.service';
+import { ConditionalFormattingRangeTransformService } from './services/conditional-formatting-range-transform.service';
+import { ConditionalFormattingStyleComposer } from './services/conditional-formatting-style-composer.service';
 import { ConditionalFormattingService } from './services/conditional-formatting.service';
 
-@DependentOn(UniverFormulaEnginePlugin)
+@DependentOn(UniverFormulaEnginePlugin, UniverSheetsPlugin)
 export class UniverSheetsConditionalFormattingPlugin extends Plugin {
     static override pluginName = SHEET_CONDITIONAL_FORMATTING_PLUGIN;
     static override packageName = pkg.name;
@@ -65,7 +69,10 @@ export class UniverSheetsConditionalFormattingPlugin extends Plugin {
         ([
             [ConditionalFormattingService],
             [ConditionalFormattingFormulaService],
+            [ConditionalFormattingRangeTransformService],
+            [ConditionalFormattingStyleComposer],
             [ConditionalFormattingRuleModel],
+            [ConditionalFormattingRangeIndexModel],
             [ConditionalFormattingViewModel],
         ] as Dependency[]).forEach((dependency) => {
             this._injector.add(dependency);
@@ -91,6 +98,7 @@ export class UniverSheetsConditionalFormattingPlugin extends Plugin {
         this._injector.get(ConditionalFormattingService);
         touchDependencies(this._injector, [
             [ConditionalFormattingService],
+            [ConditionalFormattingRangeIndexModel],
             [ConditionalFormattingViewModel],
         ]);
     }

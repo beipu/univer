@@ -18,6 +18,8 @@ import type { ComponentProps } from 'react';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import enUS from '../../../locale/en-US';
+import { ConfigProvider } from '../../config-provider/ConfigProvider';
 import { InputNumber } from '../InputNumber';
 import '@testing-library/jest-dom/vitest';
 
@@ -157,6 +159,18 @@ describe('InputNumber', () => {
         expect(input).toBeDisabled();
     });
 
+    it('should clear an optional value while keeping increment and decrement controls', () => {
+        const onLocalChange = vi.fn();
+        const { container } = render(<InputNumber allowClear allowEmpty defaultValue={3} onChange={onLocalChange} />);
+
+        const clearButton = container.querySelector('button') as HTMLButtonElement;
+        expect(clearButton).not.toBeNull();
+        expect(container.querySelectorAll('[role="button"]')).toHaveLength(2);
+
+        fireEvent.click(clearButton);
+        expect(onLocalChange).toHaveBeenCalledWith(null);
+    });
+
     it('should support ref callback and object ref', () => {
         const callbackRef = vi.fn();
         const objectRef = { current: null as HTMLInputElement | null };
@@ -219,9 +233,11 @@ describe('InputNumber', () => {
 
         fireEvent.change(input, { target: { value: '9999' } });
         expect(onLocalChange).toHaveBeenCalledWith(10);
+        expect(input.value).toBe('10');
 
         fireEvent.change(input, { target: { value: '-9999' } });
         expect(onLocalChange).toHaveBeenCalledWith(0);
+        expect(input.value).toBe('0');
     });
 
     it('should restore last valid value on blur when current value is invalid', () => {
@@ -303,13 +319,15 @@ describe('InputNumber', () => {
     it('should support rtl layout classes and keep increment/decrement behavior', () => {
         const onLocalChange = vi.fn();
         const { container } = render(
-            <div dir="rtl">
-                <InputNumber defaultValue={1} onChange={onLocalChange} />
-            </div>
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <div dir="rtl">
+                    <InputNumber defaultValue={1} onChange={onLocalChange} />
+                </div>
+            </ConfigProvider>
         );
 
-        const incrementButton = container.querySelector('[aria-label="increment"]') as HTMLElement;
-        const decrementButton = container.querySelector('[aria-label="decrement"]') as HTMLElement;
+        const incrementButton = container.querySelector(`[aria-label="${enUS.design.Accessibility.increment}"]`) as HTMLElement;
+        const decrementButton = container.querySelector(`[aria-label="${enUS.design.Accessibility.decrement}"]`) as HTMLElement;
         const controlsWrapper = incrementButton.parentElement as HTMLElement;
 
         expect(controlsWrapper.className).toContain('rtl:univer-left-px');

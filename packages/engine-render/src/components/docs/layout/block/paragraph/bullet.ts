@@ -15,8 +15,8 @@
  */
 
 import type { IBullet, ILists, INestingLevel, ITextStyle, LocaleService, Nullable } from '@univerjs/core';
-
 import type { IDocumentSkeletonBullet } from '../../../../../basics/i-document-skeleton-cached';
+import { ListGlyphType } from '@univerjs/core';
 import { getFontStyleString } from '../../../../../basics/tools';
 import { getBulletOrderedSymbol } from './bullet-ruler';
 
@@ -24,13 +24,16 @@ export function dealWithBullet(
     bullet?: IBullet,
     lists?: ILists,
     listLevelAncestors?: Array<Nullable<IDocumentSkeletonBullet>>,
-    localeService?: LocaleService
+    localeService?: LocaleService,
+    compactSpacing = false,
+    paragraphTextStyle?: ITextStyle
 ): IDocumentSkeletonBullet | undefined {
     if (!bullet || !lists) {
         return;
     }
 
-    const { listId, listType, nestingLevel = 0, textStyle } = bullet;
+    const { listId, listType, nestingLevel = 0, startNumber, image, textStyle } = bullet;
+    const preserveTextLineHeight = compactSpacing;
 
     const list = lists[listType];
 
@@ -49,8 +52,12 @@ export function dealWithBullet(
         nestingLevel,
         list.nestingLevel,
         listLevelAncestors,
-        textStyle,
-        localeService
+        startNumber,
+        { ...paragraphTextStyle, ...textStyle },
+        localeService,
+        compactSpacing,
+        preserveTextLineHeight,
+        image?.source
     );
     return bulletSke;
 }
@@ -58,12 +65,8 @@ export function dealWithBullet(
 export function getDefaultBulletSke(listId: string, startIndex: number = 1): IDocumentSkeletonBullet {
     return {
         listId,
-        symbol: '\u25CF', // symbol 列表的内容
-        ts: {
-            // TODO: @jikkai @DR-Univer should read default font from configuration, not from locale service
-            ff: 'Arial',
-            fs: 9,
-        }, // 文字样式
+        symbol: '\u25CF', // symbol list content
+        ts: {},
         startIndexItem: startIndex,
         // bBox: {
         //     width: 8.4560546875,
@@ -80,7 +83,7 @@ export function getDefaultBulletSke(listId: string, startIndex: number = 1): IDo
         paragraphProperties: {
             indentFirstLine: { v: 0 },
             hanging: { v: 21 },
-            indentStart: { v: 0 },
+            indentStart: { v: 21 },
         },
     };
 }
@@ -90,8 +93,12 @@ function _getBulletSke(
     nestingLevel: number,
     nestings: INestingLevel[],
     listLevelAncestors?: Array<Nullable<IDocumentSkeletonBullet>>,
+    paragraphStartNumber?: number,
     textStyleConfig?: ITextStyle,
-    _localeService?: LocaleService
+    _localeService?: LocaleService,
+    compactSpacing = false,
+    preserveTextLineHeight = false,
+    imageSource?: string
 ): IDocumentSkeletonBullet {
     const nesting = nestings[nestingLevel];
     const {
@@ -104,40 +111,83 @@ function _getBulletSke(
     } = nesting;
 
     const textStyle = { ...textStyleConfig, ...textStyleFirst };
+    const fontStyle = getFontStyleString(textStyle); // Get font style in canvas.font format
 
-    const fontStyle = getFontStyleString(textStyle); // 获得canvas.font格式的字体样式
+    const previousAtLevel = listLevelAncestors?.[nestingLevel];
+    const startIndex = paragraphStartNumber === undefined
+        ? previousAtLevel?.startIndexItem ?? 1
+        : 1;
+    const effectiveStartNumber = paragraphStartNumber ?? previousAtLevel?.startNumber ?? nesting.startNumber;
 
     let symbolContent: string;
     if (glyphSymbol) {
-        // 无序列表直接使用
-        symbolContent = glyphSymbol;
+        // Unordered list uses directly
+        symbolContent = normalizeLegacySymbolFontGlyph(glyphSymbol, textStyle.ff);
     } else {
-        // 有序列表
-        symbolContent = __generateOrderedListSymbol(glyphFormat, nestingLevel, nestings, listLevelAncestors); // 有序列表的处理
+        // Ordered list
+        symbolContent = __generateOrderedListSymbol(
+            glyphFormat,
+            nestingLevel,
+            nestings,
+            listLevelAncestors,
+            startIndex,
+            effectiveStartNumber
+        ); // Ordered list processing
     }
 
     // const bBox = FontCache.getTextSize(symbolContent, fontStyle);
-    const startIndex = listLevelAncestors?.[nestingLevel]?.startIndexItem ?? 1;
 
     return {
         listId,
-        symbol: symbolContent, // symbol 列表的内容
-        ts: textStyle, // 文字样式
+        symbol: symbolContent, // symbol list content
+        ts: textStyle, // text style
         fontStyle, //
         startIndexItem: startIndex + 1,
+        startNumber: effectiveStartNumber,
         // bBox,
         nestingLevel: nesting,
         bulletAlign: bulletAlignment,
-        bulletType: glyphSymbol ? false : !!glyphType, // 默认是无序列表，假如glyphSymbol为空且glyphType不为空才是有序列表
+        bulletType: glyphSymbol ? false : !!glyphType, // Default is unordered list, only ordered if glyphSymbol is empty and glyphType is not empty
+        compactSpacing,
+        preserveTextLineHeight,
+        imageSource,
         paragraphProperties: nesting.paragraphProperties,
     };
+}
+
+const LEGACY_SYMBOL_GLYPH_EQUIVALENTS: Record<string, Record<number, string>> = {
+    wingdings: {
+        0xA7: '\u25AA',
+        0xD8: '\u27A2',
+    },
+};
+
+function normalizeLegacySymbolFontGlyph(symbol: string, fontFamily?: Nullable<string>): string {
+    const primaryFontFamily = fontFamily
+        ?.split(',')[0]
+        ?.trim()
+        .replace(/^['"]|['"]$/g, '')
+        .toLowerCase();
+    const equivalents = primaryFontFamily
+        ? LEGACY_SYMBOL_GLYPH_EQUIVALENTS[primaryFontFamily]
+        : undefined;
+    if (!equivalents) {
+        return symbol;
+    }
+
+    return Array.from(symbol, (character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint === undefined ? character : equivalents[codePoint] ?? character;
+    }).join('');
 }
 
 function __generateOrderedListSymbol(
     glyphFormat: string,
     nestingLevel: number,
     nestings: INestingLevel[],
-    listLevelAncestors?: Array<Nullable<IDocumentSkeletonBullet>>
+    listLevelAncestors: Array<Nullable<IDocumentSkeletonBullet>> | undefined,
+    currentStartIndex: number,
+    currentStartNumber: number
 ) {
     // const indexNumber = startNumber + startIndex;
     // parse  <prefix>%[nestingLevelMinusOne]<suffix>, return symbolContent
@@ -156,13 +206,22 @@ function __generateOrderedListSymbol(
         const levelAndSuffixPre = glyphFormatSplit[i];
         const { level, suffix } = ___getLevelAndSuffix(levelAndSuffixPre);
 
-        let startIndexItem = listLevelAncestors?.[level]?.startIndexItem || 1;
+        const ancestor = listLevelAncestors?.[level];
+        let startIndexItem = level === nestingLevel ? currentStartIndex : ancestor?.startIndexItem || 1;
 
-        if (level !== nestingLevel && listLevelAncestors?.[level] !== null) {
+        if (level !== nestingLevel && ancestor !== null) {
             startIndexItem -= 1;
         }
 
-        const singleSymbol = ___getSymbolByBesting(startIndexItem, nestings[level]);
+        const startNumber = level === nestingLevel
+            ? currentStartNumber
+            : ancestor?.startNumber ?? nestings[level].startNumber;
+        const placeholderNesting = nestings[level];
+        const glyphType = nestings[nestingLevel]?.isLegal
+            && placeholderNesting.glyphType !== ListGlyphType.DECIMAL_ZERO
+            ? ListGlyphType.DECIMAL
+            : placeholderNesting.glyphType;
+        const singleSymbol = ___getSymbolByBesting(startIndexItem, placeholderNesting, startNumber, glyphType);
         // console.log(
         //     '___getSymbolByBesting',
         //     singleSymbol,
@@ -179,11 +238,16 @@ function __generateOrderedListSymbol(
     return resultSymbol.join('');
 }
 
-function ___getSymbolByBesting(startIndex: number = 1, nesting: INestingLevel) {
-    const { startNumber, glyphType, glyphSymbol } = nesting;
+function ___getSymbolByBesting(
+    startIndex: number = 1,
+    nesting: INestingLevel,
+    startNumber = nesting.startNumber,
+    glyphType = nesting.glyphType
+) {
+    const { glyphSymbol } = nesting;
 
     if (glyphSymbol) {
-        // 无序列表直接使用
+        // Unordered list uses directly
         return glyphSymbol;
     }
 

@@ -111,14 +111,14 @@ describe('Test commands used for change selections', () => {
 
     function getRowCount(): number {
         const currentService = get(IUniverInstanceService);
-        const workbook = currentService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+        const workbook = currentService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
         const worksheet = workbook.getActiveSheet()!;
         return worksheet.getRowCount();
     }
 
     function getColCount(): number {
         const currentService = get(IUniverInstanceService);
-        const workbook = currentService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+        const workbook = currentService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
         const worksheet = workbook.getActiveSheet()!;
         return worksheet.getColumnCount();
     }
@@ -525,7 +525,7 @@ describe('Test commands used for change selections', () => {
 
         it('should return false when there is no active workbook target', async () => {
             const univerInstanceService = get(IUniverInstanceService);
-            vi.spyOn(univerInstanceService, 'getCurrentUnitForType').mockReturnValue(null as never);
+            vi.spyOn(univerInstanceService, 'getCurrentUnitOfType').mockReturnValue(null as never);
 
             await expect(commandService.executeCommand<IMoveSelectionCommandParams>(MoveSelectionCommand.id, {
                 direction: Direction.RIGHT,
@@ -709,10 +709,48 @@ describe('Test commands used for change selections', () => {
             commandService.registerCommand(MoveSelectionEnterAndTabCommand);
         });
 
+        it('should move a single-cell selection left for Shift+Tab', async () => {
+            select(1, 1, 1, 1, 1, 1, false, false);
+
+            await commandService.executeCommand<IMoveSelectionEnterAndTabCommandParams>(MoveSelectionEnterAndTabCommand.id, {
+                direction: Direction.LEFT,
+                keycode: KeyCode.TAB,
+            });
+
+            expectSelectionToBe(1, 0, 1, 0);
+        });
+
+        it('should move down from the current cell after Shift+Tab', async () => {
+            select(2, 2, 2, 2, 2, 2, false, false);
+
+            await commandService.executeCommand<IMoveSelectionEnterAndTabCommandParams>(MoveSelectionEnterAndTabCommand.id, {
+                direction: Direction.LEFT,
+                keycode: KeyCode.TAB,
+            });
+            expectSelectionToBe(2, 1, 2, 1);
+
+            await commandService.executeCommand<IMoveSelectionEnterAndTabCommandParams>(MoveSelectionEnterAndTabCommand.id, {
+                direction: Direction.DOWN,
+                keycode: KeyCode.ENTER,
+            });
+            expectSelectionToBe(3, 1, 3, 1);
+        });
+
+        it('should move a single-cell selection up for Shift+Enter', async () => {
+            select(1, 1, 1, 1, 1, 1, false, false);
+
+            await commandService.executeCommand<IMoveSelectionEnterAndTabCommandParams>(MoveSelectionEnterAndTabCommand.id, {
+                direction: Direction.UP,
+                keycode: KeyCode.ENTER,
+            });
+
+            expectSelectionToBe(0, 1, 0, 1);
+        });
+
         it('should move active cell inside multi-selections and wrap to the next selection', async () => {
             const refreshSelectionMoveEnd = vi.fn();
             const renderManagerService = get(IRenderManagerService);
-            vi.spyOn(renderManagerService, 'getRenderById').mockReturnValue({
+            vi.spyOn(renderManagerService, 'getRenderUnitById').mockReturnValue({
                 with: (identifier: unknown) => {
                     if (identifier === ISheetSelectionRenderService) {
                         return { refreshSelectionMoveEnd };
@@ -845,6 +883,22 @@ describe('Test commands used for change selections', () => {
                 keycode: KeyCode.ENTER,
             })).resolves.toBe(false);
             expectSelectionToBe(19, 19, 19, 19);
+        });
+
+        it('should preserve the primary selection when shift-tab moves a single-cell selection left', async () => {
+            selectTopLeft();
+
+            await commandService.executeCommand<IMoveSelectionEnterAndTabCommandParams>(MoveSelectionEnterAndTabCommand.id, {
+                direction: Direction.RIGHT,
+                keycode: KeyCode.TAB,
+            });
+            expectSelectionToBe(0, 1, 0, 1);
+
+            await commandService.executeCommand<IMoveSelectionEnterAndTabCommandParams>(MoveSelectionEnterAndTabCommand.id, {
+                direction: Direction.LEFT,
+                keycode: KeyCode.TAB,
+            });
+            expectSelectionToBe(0, 0, 0, 0);
         });
 
         it('should keep the original tab anchor across repeated tab moves before enter', async () => {

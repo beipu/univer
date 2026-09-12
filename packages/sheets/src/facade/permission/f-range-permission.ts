@@ -52,7 +52,8 @@ export class FRangePermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * // Check if the A1:B2 range is protected
      * const isProtected = fRange.getRangePermission().isProtected();
@@ -72,12 +73,13 @@ export class FRangePermission extends FBase {
 
     /**
      * Protect the current range.
-     * @param {IRangeProtectionOptions} options Protection options.
+     * @param {IRangeProtectionOptions} [options] Protection options.
      * @returns {Promise<FRangeProtectionRule>} The created protection rule.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * const rule = await fRange.getRangePermission().protect({
      *   name: 'My protected range',
@@ -87,7 +89,6 @@ export class FRangePermission extends FBase {
      * console.log(rule);
      * ```
      */
-
     async protect(options?: IRangeProtectionOptions): Promise<FRangeProtectionRule> {
         if (this.isProtected()) {
             throw new Error('Range is already protected');
@@ -172,7 +173,8 @@ export class FRangePermission extends FBase {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * const result = await fRange.getRangePermission().unprotect();
      * console.log(result);
@@ -196,11 +198,14 @@ export class FRangePermission extends FBase {
 
     /**
      * List all protection rules that intersect with the current range.
+     * @param {object} [options] Options for listing protection rules.
+     * @param {boolean} [options.ignoreCollaborators] Whether to skip fetching collaborators for performance.
      * @returns {Promise<FRangeProtectionRule[]>} Array of protection rules.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * const rules = await fRange.getRangePermission().listRules();
      * console.log(rules);

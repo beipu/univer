@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Таблица',
         selectRange: 'Выбрать диапазон таблицы',
         rename: 'Переименовать таблицу',
+        renamePlaceholder: 'Введите имя таблицы',
         updateRange: 'Обновить диапазон таблицы',
         tableRangeWithMergeError: 'Диапазон таблицы не может перекрываться с объединенными ячейками',
         tableRangeWithOtherTableError: 'Диапазон таблицы не может перекрываться с другими таблицами',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'Нижний колонтитул',
         firstLine: 'Первая строка',
         secondLine: 'Вторая строка',
-        columnPrefix: 'Столбец',
-        tablePrefix: 'Таблица',
         tableNameError: 'Имя таблицы не может содержать пробелы, не может начинаться с цифры и не может совпадать с именем существующей таблицы',
+        columnMenu: {
+            'insert-left': 'Вставить 1 столбец слева',
+            'insert-right': 'Вставить 1 столбец справа',
+            delete: 'Удалить столбец таблицы',
+        },
+
+        sort: {
+            'sort-asc': 'По возрастанию',
+            'sort-desc': 'По убыванию',
+        },
 
         insert: {
             main: 'Вставить таблицу',
@@ -133,12 +142,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'Фильтр',
             'by-values': 'По значениям',
+            'by-colors': 'По цветам',
             'by-conditions': 'По условиям',
+            back: 'Назад',
+            resize: 'Изменить размер',
+            'filter-by-cell-fill-color': 'Цвет заливки ячейки',
+            'filter-by-cell-text-color': 'Цвет текста ячейки',
+            'filter-by-color-none': 'Этот столбец содержит только один цвет',
             'clear-filter': 'Очистить фильтр',
             cancel: 'Отмена',
             confirm: 'Подтвердить',
             'search-placeholder': 'Используйте пробел для разделения ключевых слов',
+            'input-values-placeholder': 'Введите значения',
             'select-all': 'Выбрать все',
         },
     },

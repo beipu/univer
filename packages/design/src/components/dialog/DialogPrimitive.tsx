@@ -48,16 +48,18 @@ const DialogOverlay = forwardRef<
 ));
 DialogOverlay.displayName = Overlay.displayName;
 
-interface IDialogContentProps {
+export interface IDialogContentProps {
     closable?: boolean;
     onClickClose?: () => void;
+    mountContainer?: HTMLElement | null;
+    overlayClassName?: string;
 }
 const DialogContent = forwardRef<
     ElementRef<typeof Content>,
     ComponentPropsWithoutRef<typeof Content> & IDialogContentProps
->(({ className, children, closable = true, onClickClose, ...props }, ref) => (
-    <DialogPortal>
-        <DialogOverlay />
+>(({ className, children, closable = true, onClickClose, mountContainer, overlayClassName, ...props }, ref) => (
+    <DialogPortal container={mountContainer ?? undefined}>
+        <DialogOverlay className={overlayClassName} />
         <Content
             ref={ref}
             className={clsx(
@@ -70,7 +72,7 @@ const DialogContent = forwardRef<
                   data-[state=closed]:univer-slide-out-to-top-[48%]
                   univer-fixed univer-left-1/2 univer-top-1/2 univer-z-[1080] univer-box-border univer-grid
                   univer-w-full univer-max-w-lg -univer-translate-x-1/2 -univer-translate-y-1/2 univer-gap-4
-                  univer-bg-white univer-p-4 univer-text-gray-500 univer-shadow-md univer-duration-200
+                  univer-bg-gray-0 univer-p-4 univer-text-gray-500 univer-shadow-md univer-duration-200
                   sm:!univer-rounded-lg
                   dark:!univer-bg-gray-700 dark:!univer-text-gray-400
                 `,
@@ -82,11 +84,13 @@ const DialogContent = forwardRef<
             {children}
             {closable && (
                 <Close
+                    data-slot="close"
                     className={`
                       univer-absolute univer-right-4 univer-top-4 univer-size-6 univer-cursor-pointer univer-rounded-sm
                       univer-border-none univer-bg-transparent univer-p-0 univer-transition-opacity
                       hover:univer-opacity-100
                       disabled:univer-pointer-events-none
+                      rtl:univer-left-4 rtl:univer-right-auto
                     `}
                     onClick={onClickClose}
                 >
@@ -104,10 +108,12 @@ const DialogHeader = ({
     ...props
 }: HTMLAttributes<HTMLDivElement>) => (
     <div
+        data-slot="dialog-header"
         className={clsx(
             `
               univer-flex univer-flex-col univer-space-y-1.5 univer-text-center
               sm:!univer-text-left
+              sm:rtl:!univer-text-right
             `,
             className
         )}
@@ -121,6 +127,7 @@ const DialogFooter = ({
     ...props
 }: HTMLAttributes<HTMLDivElement>) => (
     <div
+        data-slot="dialog-footer"
         className={clsx(
             `
               univer-flex univer-flex-col-reverse
@@ -143,7 +150,7 @@ const DialogTitle = forwardRef<
             `
               univer-my-0 univer-text-lg univer-font-semibold univer-leading-none univer-tracking-tight
               univer-text-gray-900
-              dark:!univer-text-white
+              dark:!univer-text-gray-0
             `,
             className
         )}

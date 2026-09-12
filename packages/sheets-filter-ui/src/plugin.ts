@@ -27,19 +27,31 @@ import {
     touchDependencies,
     UniverInstanceType,
 } from '@univerjs/core';
+import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
 import { IRPCChannelService, toModule } from '@univerjs/rpc';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { UniverSheetsFilterPlugin } from '@univerjs/sheets-filter';
+import { UniverSheetsUIPlugin } from '@univerjs/sheets-ui';
 import pkg from '../package.json';
 import { defaultPluginConfig, SHEETS_FILTER_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { SheetsFilterPermissionController } from './controllers/sheets-filter-permission.controller';
-import { SheetsFilterUIDesktopController } from './controllers/sheets-filter-ui-desktop.controller';
-import { SheetsFilterPanelService } from './services/sheets-filter-panel.service';
-import { ISheetsGenerateFilterValuesService, SHEETS_GENERATE_FILTER_VALUES_SERVICE_NAME } from './worker/generate-filter-values.service';
+import { SheetsFilterUIDesktopController } from './controllers/ui.controller';
+import { ISheetsFilterPanelService, SheetsFilterPanelService } from './services/sheets-filter-panel.service';
+import {
+    ISheetsGenerateFilterValuesService,
+    SHEETS_GENERATE_FILTER_VALUES_SERVICE_NAME,
+} from './worker/generate-filter-values.service';
 
 /**
  * The plugin for the desktop version of the sheets filter UI. Its type is {@link UniverInstanceType.UNIVER_SHEET}.
  */
-@DependentOn(UniverSheetsFilterPlugin)
+@DependentOn(
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverSheetsFilterPlugin,
+    UniverSheetsUIPlugin
+)
 export class UniverSheetsFilterUIPlugin extends Plugin {
     static override type = UniverInstanceType.UNIVER_SHEET;
     static override pluginName = 'SHEET_FILTER_UI_PLUGIN';
@@ -67,8 +79,10 @@ export class UniverSheetsFilterUIPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([ComponentsController]);
+        this._injector.get(ComponentsController);
         registerDependencies(this._injector, [
-            [SheetsFilterPanelService],
+            [ISheetsFilterPanelService, { useClass: SheetsFilterPanelService }],
             [SheetsFilterPermissionController],
             [SheetsFilterUIDesktopController],
         ]);

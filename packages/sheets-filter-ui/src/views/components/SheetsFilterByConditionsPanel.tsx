@@ -14,14 +14,37 @@
  * limitations under the License.
  */
 
-import type { ISelectProps } from '@univerjs/design';
+import type { LocaleKey } from '../../locale/types';
 import type { FilterOperator, IFilterConditionFormParams } from '../../models/conditions';
 import type { ByConditionsModel } from '../../services/sheets-filter-panel.service';
 import { LocaleService } from '@univerjs/core';
 import { borderClassName, clsx, Input, Radio, RadioGroup, Select } from '@univerjs/design';
 import { useDependency, useObservable } from '@univerjs/ui';
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { FilterConditionItems } from '../../models/conditions';
+
+const PRIMARY_CONDITION_GROUPS = [
+    [FilterConditionItems.NONE],
+    [FilterConditionItems.EMPTY, FilterConditionItems.NOT_EMPTY],
+    [
+        FilterConditionItems.TEXT_CONTAINS,
+        FilterConditionItems.DOES_NOT_CONTAIN,
+        FilterConditionItems.STARTS_WITH,
+        FilterConditionItems.ENDS_WITH,
+        FilterConditionItems.EQUALS,
+    ],
+    [
+        FilterConditionItems.GREATER_THAN,
+        FilterConditionItems.GREATER_THAN_OR_EQUAL,
+        FilterConditionItems.LESS_THAN,
+        FilterConditionItems.LESS_THAN_OR_EQUAL,
+        FilterConditionItems.EQUAL,
+        FilterConditionItems.NOT_EQUAL,
+        FilterConditionItems.BETWEEN,
+        FilterConditionItems.NOT_BETWEEN,
+    ],
+    [FilterConditionItems.CUSTOM],
+];
 
 /**
  * Filter by conditions.
@@ -40,25 +63,35 @@ export function FilterByCondition(props: { model: ByConditionsModel }) {
         model.onConditionFormChange({ and: key === 'AND' });
     }, [model]);
 
-    const primaryOptions = usePrimaryOptions(localeService);
+    const primaryOptions = PRIMARY_CONDITION_GROUPS.map((group) => ({
+        options: group.map((conditionItem) => ({
+            label: localeService.t(conditionItem.label),
+            value: conditionItem.operator,
+        })),
+    }));
     const onPrimaryConditionChange = useCallback((value: string) => {
         model.onPrimaryConditionChange(value as FilterOperator);
     }, [model]);
 
-    const secondaryOptions = useSecondaryOptions(localeService);
+    const secondaryOptions = FilterConditionItems.ALL_CONDITIONS
+        .filter((conditionItem) => conditionItem.numOfParameters !== 2)
+        .map((conditionItem) => ({
+            label: localeService.t(conditionItem.label),
+            value: conditionItem.operator,
+        }));
     const onFormParamsChange = useCallback((diffParams: Partial<IFilterConditionFormParams>) => {
         model.onConditionFormChange(diffParams);
     }, [model]);
 
-    const placeholder = localeService.t('sheets-filter.panel.input-values-placeholder');
+    const placeholder = localeService.t<LocaleKey>('sheets-filter-ui.panel.input-values-placeholder');
     function renderSecondaryCondition(operator: FilterOperator, val: string, name: 'operator1' | 'operator2') {
         const shouldRenderInput = FilterConditionItems.getItemByOperator(operator).numOfParameters === 1;
         return (
             <>
                 {name === 'operator2' && (
                     <RadioGroup value={radioValue} onChange={onRadioChange}>
-                        <Radio value="AND">{localeService.t('sheets-filter.panel.and')}</Radio>
-                        <Radio value="OR">{localeService.t('sheets-filter.panel.or')}</Radio>
+                        <Radio value="AND">{localeService.t<LocaleKey>('sheets-filter-ui.panel.and')}</Radio>
+                        <Radio value="OR">{localeService.t<LocaleKey>('sheets-filter-ui.panel.or')}</Radio>
                     </RadioGroup>
                 )}
                 <Select
@@ -103,9 +136,9 @@ export function FilterByCondition(props: { model: ByConditionsModel }) {
                                     data-u-comp="sheets-filter-panel-conditions-desc"
                                     className="univer-mt-2 univer-text-xs univer-text-gray-500"
                                 >
-                                    {localeService.t('sheets-filter.panel.?')}
+                                    {localeService.t<LocaleKey>('sheets-filter-ui.panel.?')}
                                     <br />
-                                    {localeService.t('sheets-filter.panel.*')}
+                                    {localeService.t<LocaleKey>('sheets-filter-ui.panel.*')}
                                 </div>
                             </div>
                         )
@@ -114,56 +147,4 @@ export function FilterByCondition(props: { model: ByConditionsModel }) {
             )}
         </div>
     );
-}
-
-function usePrimaryOptions(localeService: LocaleService): ISelectProps['options'] {
-    const locale = localeService.getCurrentLocale();
-
-    return useMemo(() => [
-        {
-            options: [
-                { label: localeService.t(FilterConditionItems.NONE.label), value: FilterConditionItems.NONE.operator },
-            ],
-        },
-        {
-            options: [
-                { label: localeService.t(FilterConditionItems.EMPTY.label), value: FilterConditionItems.EMPTY.operator },
-                { label: localeService.t(FilterConditionItems.NOT_EMPTY.label), value: FilterConditionItems.NOT_EMPTY.operator },
-            ],
-        },
-        {
-            options: [
-                { label: localeService.t(FilterConditionItems.TEXT_CONTAINS.label), value: FilterConditionItems.TEXT_CONTAINS.operator },
-                { label: localeService.t(FilterConditionItems.DOES_NOT_CONTAIN.label), value: FilterConditionItems.DOES_NOT_CONTAIN.operator },
-                { label: localeService.t(FilterConditionItems.STARTS_WITH.label), value: FilterConditionItems.STARTS_WITH.operator },
-                { label: localeService.t(FilterConditionItems.ENDS_WITH.label), value: FilterConditionItems.ENDS_WITH.operator },
-                { label: localeService.t(FilterConditionItems.EQUALS.label), value: FilterConditionItems.EQUALS.operator },
-            ],
-        },
-        {
-            options: [
-                { label: localeService.t(FilterConditionItems.GREATER_THAN.label), value: FilterConditionItems.GREATER_THAN.operator },
-                { label: localeService.t(FilterConditionItems.GREATER_THAN_OR_EQUAL.label), value: FilterConditionItems.GREATER_THAN_OR_EQUAL.operator },
-                { label: localeService.t(FilterConditionItems.LESS_THAN.label), value: FilterConditionItems.LESS_THAN.operator },
-                { label: localeService.t(FilterConditionItems.LESS_THAN_OR_EQUAL.label), value: FilterConditionItems.LESS_THAN_OR_EQUAL.operator },
-                { label: localeService.t(FilterConditionItems.EQUAL.label), value: FilterConditionItems.EQUAL.operator },
-                { label: localeService.t(FilterConditionItems.NOT_EQUAL.label), value: FilterConditionItems.NOT_EQUAL.operator },
-                { label: localeService.t(FilterConditionItems.BETWEEN.label), value: FilterConditionItems.BETWEEN.operator },
-                { label: localeService.t(FilterConditionItems.NOT_BETWEEN.label), value: FilterConditionItems.NOT_BETWEEN.operator },
-            ],
-        },
-        {
-            options: [
-                { label: localeService.t(FilterConditionItems.CUSTOM.label), value: FilterConditionItems.CUSTOM.operator },
-            ],
-        },
-    ] as ISelectProps['options'], [locale, localeService]);
-}
-
-function useSecondaryOptions(localeService: LocaleService): ISelectProps['options'] {
-    const locale = localeService.getCurrentLocale();
-
-    return useMemo(() => FilterConditionItems.ALL_CONDITIONS
-        .filter((c) => c.numOfParameters !== 2)
-        .map((c) => ({ label: localeService.t(c.label), value: c.operator })) as ISelectProps['options'], [locale, localeService]);
 }

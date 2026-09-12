@@ -15,10 +15,10 @@
  */
 
 import type { IPastePlugin } from './type';
-import { BooleanNumber } from '@univerjs/core';
-import { extractNodeStyle as getInlineStyle } from '../parse-node-style';
+import { BooleanNumber, createParagraphId } from '@univerjs/core';
+import { extractNodeStyle } from '../parse-node-style';
 
-const wordPastePlugin: IPastePlugin = {
+const LarkPastePlugin: IPastePlugin = {
     name: 'univer-doc-paste-plugin-lark',
     checkPasteType(html: string) {
         return /lark-record-clipboard/i.test(html);
@@ -28,7 +28,7 @@ const wordPastePlugin: IPastePlugin = {
         {
             filter: ['s'],
             getStyle(node) {
-                const inlineStyle = getInlineStyle(node);
+                const inlineStyle = extractNodeStyle(node);
 
                 return {
                     st: {
@@ -53,6 +53,7 @@ const wordPastePlugin: IPastePlugin = {
 
                 body.paragraphs.push({
                     startIndex: body.dataStream.length,
+                    paragraphId: createParagraphId(new Set(body.paragraphs.map((paragraph) => paragraph.paragraphId))),
                 });
                 body.dataStream += '\r';
             },
@@ -60,4 +61,4 @@ const wordPastePlugin: IPastePlugin = {
     ],
 };
 
-export default wordPastePlugin;
+export default LarkPastePlugin;

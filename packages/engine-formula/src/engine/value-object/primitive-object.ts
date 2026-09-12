@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { getNumfmtParseValueFilter, isRealNum, numfmt, Tools } from '@univerjs/core';
+import { DateSystem, getNumfmtParseValueFilter, isRealNum, numfmt, Tools } from '@univerjs/core';
 import { FormulaAstLRU } from '../../basics/cache-lru';
 import { reverseCompareOperator } from '../../basics/calculate';
 import { BooleanValue, ConcatenateType } from '../../basics/common';
@@ -33,7 +33,7 @@ export class NullValueObject extends BaseValueObject {
     private static _instance: NullValueObject;
 
     static create() {
-        this._instance = this._instance || new NullValueObject(0);
+        this._instance = this._instance || new NullValueObject();
         return this._instance;
     }
 
@@ -229,7 +229,7 @@ export class BooleanValueObject extends BaseValueObject {
     }
 
     constructor(rawValue: boolean) {
-        super(rawValue);
+        super();
 
         this._value = rawValue;
     }
@@ -311,8 +311,9 @@ export class BooleanValueObject extends BaseValueObject {
             case compareToken.EQUALS:
             case compareToken.LESS_THAN:
             case compareToken.LESS_THAN_OR_EQUAL:
-            case compareToken.NOT_EQUAL:
                 return false;
+            case compareToken.NOT_EQUAL:
+                return true;
         }
     }
 
@@ -446,8 +447,8 @@ export class NumberValueObject extends BaseValueObject {
         return instance;
     }
 
-    constructor(rawValue: number) {
-        super(rawValue);
+    constructor(rawValue: number, dateSystem: DateSystem = DateSystem.Date1900) {
+        super(dateSystem);
 
         this._value = Number(rawValue);
     }
@@ -1431,8 +1432,8 @@ export class StringValueObject extends BaseValueObject {
         return true;
     };
 
-    constructor(rawValue: string) {
-        super(rawValue);
+    constructor(rawValue: string, dateSystem: DateSystem = DateSystem.Date1900) {
+        super(dateSystem);
         this._value = rawValue;
     }
 
@@ -1530,17 +1531,19 @@ export class StringValueObject extends BaseValueObject {
     }
 
     private _compareString(currentValue: string, value: string, operator: compareToken): boolean {
+        const compareResult = currentValue.localeCompare(value);
+
         switch (operator) {
             case compareToken.EQUALS:
                 return currentValue === value;
             case compareToken.GREATER_THAN:
-                return currentValue > value;
+                return compareResult > 0;
             case compareToken.GREATER_THAN_OR_EQUAL:
-                return currentValue >= value;
+                return currentValue === value || compareResult > 0;
             case compareToken.LESS_THAN:
-                return currentValue < value;
+                return compareResult < 0;
             case compareToken.LESS_THAN_OR_EQUAL:
-                return currentValue <= value;
+                return currentValue === value || compareResult < 0;
             case compareToken.NOT_EQUAL:
                 return currentValue !== value;
         }
@@ -1574,13 +1577,17 @@ export class StringValueObject extends BaseValueObject {
 
     override convertToNumberObjectValue() {
         const rawValue = this.getValue();
-        const parseData = getNumfmtParseValueFilter(rawValue);
-
-        if (parseData && parseData.z) {
-            return createNumberValueObjectByRawValue(parseData.v, parseData.z);
+        if (rawValue.trim() === '') {
+            return ErrorValueObject.create(ErrorType.VALUE);
         }
 
-        return createNumberValueObjectByRawValue(rawValue);
+        const parseData = getNumfmtParseValueFilter(rawValue, { dateSystem: this.getDateSystem() });
+
+        if (parseData && parseData.z) {
+            return createNumberValueObjectByRawValue(parseData.v, parseData.z).withDateSystem(this.getDateSystem());
+        }
+
+        return createNumberValueObjectByRawValue(rawValue).withDateSystem(this.getDateSystem());
     }
 
     override convertToBooleanObjectValue() {

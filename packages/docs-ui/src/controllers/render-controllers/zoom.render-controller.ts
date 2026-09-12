@@ -16,55 +16,79 @@
 
 import type { DocumentDataModel, ICommandInfo, Workbook } from '@univerjs/core';
 import type { IRenderContext, IRenderModule, IWheelEvent } from '@univerjs/engine-render';
-
+import type { IDocPageSetupCommandParams } from '../../commands/commands/doc-page-setup.command';
 import type { ISetDocZoomRatioOperationParams } from '../../commands/operations/set-doc-zoom-ratio.operation';
 import {
     Disposable,
     DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
     DocumentFlavor,
     FOCUSING_DOC,
+    fromEventSubject,
     ICommandService,
     IContextService,
     Inject,
     isInternalEditorID,
     IUniverInstanceService,
+    Optional,
     UniverInstanceType,
 } from '@univerjs/core';
 import { DocSelectionManagerService, DocSkeletonManagerService } from '@univerjs/docs';
-import { IRenderManagerService } from '@univerjs/engine-render';
+import { getNextWheelZoomRatio, IRenderManagerService } from '@univerjs/engine-render';
+import { animationFrameScheduler, throttleTime } from 'rxjs';
 import { neoGetDocObject } from '../../basics/component-tools';
+import { DocPageSetupCommand } from '../../commands/commands/doc-page-setup.command';
 import { SetDocZoomRatioCommand } from '../../commands/commands/set-doc-zoom-ratio.command';
 import { SwitchDocModeCommand } from '../../commands/commands/switch-doc-mode.command';
 import { SetDocZoomRatioOperation } from '../../commands/operations/set-doc-zoom-ratio.operation';
+import { IDocEmbedInteractionBoundaryService } from '../../services/doc-embed-integration.service';
 import { DocPageLayoutService } from '../../services/doc-page-layout.service';
+import { DocViewScaleService } from '../../services/doc-view-scale';
+import { DEFAULT_MODERN_DOC_ZOOM_RATIO, getDocEffectiveZoomRatio } from '../../services/doc-zoom';
 import { IEditorService } from '../../services/editor/editor-manager.service';
+
+export function shouldHandleDocWheelZoom(
+    event: Pick<IWheelEvent, 'ctrlKey' | 'metaKey'>,
+    focusingDoc: boolean,
+    _documentFlavor?: DocumentFlavor
+): boolean {
+    return focusingDoc && (event.ctrlKey || event.metaKey);
+}
 
 export class DocZoomRenderController extends Disposable implements IRenderModule {
     private _isSheetEditor = false;
     private _initTimer: number;
     private _updateTimer: number;
+    private _fitToWidthAvailableWidth = 0;
 
     constructor(
-        private readonly _context: IRenderContext<DocumentDataModel>,
-        @IContextService private readonly _contextService: IContextService,
+        protected readonly _context: IRenderContext<DocumentDataModel>,
+        @IContextService protected readonly _contextService: IContextService,
         @Inject(DocSkeletonManagerService) private readonly _docSkeletonManagerService: DocSkeletonManagerService,
         @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
-        @ICommandService private readonly _commandService: ICommandService,
-        @Inject(DocSelectionManagerService) private readonly _textSelectionManagerService: DocSelectionManagerService,
+        @ICommandService protected readonly _commandService: ICommandService,
+        @Inject(DocSelectionManagerService) protected readonly _textSelectionManagerService: DocSelectionManagerService,
         @IEditorService private readonly _editorService: IEditorService,
         @Inject(DocPageLayoutService) private readonly _docPageLayoutService: DocPageLayoutService,
-        @IRenderManagerService private readonly _renderManagerService: IRenderManagerService
+        @IRenderManagerService private readonly _renderManagerService: IRenderManagerService,
+        @Inject(DocViewScaleService) protected readonly _docViewScaleService: DocViewScaleService,
+        @Optional(IDocEmbedInteractionBoundaryService) private readonly _embedInteractionBoundaryService?: IDocEmbedInteractionBoundaryService
     ) {
         super();
 
         this._initSkeletonListener();
         this._initCommandExecutedListener();
-        this._initRenderRefresher();
+        this._initFitToWidthResizeListener();
         this._isSheetEditor = this._context.unitId === DOCS_NORMAL_EDITOR_UNIT_ID_KEY;
         const currentSheet = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
-        const sheetRenderer = currentSheet && this._renderManagerService.getRenderById(currentSheet.getUnitId());
+        const sheetRenderer = currentSheet && this._renderManagerService.getRenderUnitById(currentSheet.getUnitId());
         // TODO: do not use setTimeout.
-        this._initTimer = window.setTimeout(() => this.updateViewZoom(sheetRenderer && this._isSheetEditor ? sheetRenderer.scene.scaleX : 1, true), 20);
+        this._initTimer = window.setTimeout(() => {
+            const zoomRatio = sheetRenderer && this._isSheetEditor
+                ? sheetRenderer.scene.scaleX
+                : getDocEffectiveZoomRatio(this._context.unit);
+
+            this.updateViewZoom(zoomRatio, true);
+        }, 20);
 
         if (!isInternalEditorID(this._context.unitId)) {
             this._initZoomEventListener();
@@ -74,56 +98,7 @@ export class DocZoomRenderController extends Disposable implements IRenderModule
     override dispose() {
         window.clearTimeout(this._initTimer);
         window.clearTimeout(this._updateTimer);
-    }
-
-    private _initRenderRefresher() {
-        this._docSkeletonManagerService.currentSkeleton$.subscribe((param) => {
-            if (param == null) {
-                return;
-            }
-
-            const { unitId, scene } = this._context;
-            if (this._editorService.isEditor(unitId)) {
-                return;
-            }
-
-            this.disposeWithMe(scene.onMouseWheel$.subscribeEvent((e: IWheelEvent) => {
-                if (!e.ctrlKey || !this._contextService.getContextValue(FOCUSING_DOC)) {
-                    return;
-                }
-
-                const documentModel = this._univerInstanceService.getCurrentUniverDocInstance();
-                if (!documentModel) {
-                    return;
-                }
-
-                const { documentFlavor } = documentModel.getSnapshot().documentStyle;
-
-                // Modern document does not support zooming.
-                if (documentFlavor === DocumentFlavor.MODERN) {
-                    return;
-                }
-
-                const deltaFactor = Math.abs(e.deltaX);
-                let ratioDelta = deltaFactor < 40 ? 0.2 : deltaFactor < 80 ? 0.4 : 0.2;
-                ratioDelta *= e.deltaY > 0 ? -1 : 1;
-                if (scene.scaleX < 1) {
-                    ratioDelta /= 2;
-                }
-
-                const currentRatio = documentModel.zoomRatio;
-
-                let nextRatio = +Number.parseFloat(`${currentRatio + ratioDelta}`).toFixed(1);
-                nextRatio = nextRatio >= 4 ? 4 : nextRatio <= 0.1 ? 0.1 : nextRatio;
-
-                this._commandService.executeCommand(SetDocZoomRatioCommand.id, {
-                    zoomRatio: nextRatio,
-                    unitId: documentModel.getUnitId(),
-                });
-
-                e.preventDefault();
-            }));
-        });
+        super.dispose();
     }
 
     private _initSkeletonListener() {
@@ -132,58 +107,90 @@ export class DocZoomRenderController extends Disposable implements IRenderModule
                 return;
             }
 
-            const documentModel = this._univerInstanceService.getCurrentUniverDocInstance();
+            const documentModel = this._univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
             if (!documentModel) return;
 
             this._updateTimer = window.setTimeout(() => {
                 const currentSheet = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
-                const sheetRenderer = currentSheet && this._renderManagerService.getRenderById(currentSheet.getUnitId());
-                const zoomRatio = !this._isSheetEditor ? documentModel.zoomRatio : sheetRenderer?.scene.scaleX || 1;
+                const sheetRenderer = currentSheet && this._renderManagerService.getRenderUnitById(currentSheet.getUnitId());
+                const zoomRatio = !this._isSheetEditor ? getDocEffectiveZoomRatio(documentModel) : sheetRenderer?.scene.scaleX || 1;
 
                 this.updateViewZoom(zoomRatio, false);
             });
         }));
     }
 
-    private _initCommandExecutedListener() {
+    protected _initCommandExecutedListener() {
         const updateCommandList = [SetDocZoomRatioOperation.id];
 
         this.disposeWithMe(this._commandService.onCommandExecuted((command: ICommandInfo) => {
             if (updateCommandList.includes(command.id) && (command.params as ISetDocZoomRatioOperationParams).unitId === this._context.unitId) {
                 const documentModel = this._context.unit;
-                const zoomRatio = documentModel.zoomRatio || 1;
+                const zoomRatio = getDocEffectiveZoomRatio(documentModel);
                 this.updateViewZoom(zoomRatio);
             }
         }));
 
         this.disposeWithMe(
             this._commandService.beforeCommandExecuted((command: ICommandInfo) => {
-                if (command.id === SwitchDocModeCommand.id) {
+                const shouldResetZoom = command.id === SwitchDocModeCommand.id ||
+                    (command.id === DocPageSetupCommand.id && (command.params as IDocPageSetupCommandParams | undefined)?.documentFlavor === DocumentFlavor.MODERN);
+
+                if (shouldResetZoom) {
                     this._commandService.executeCommand(SetDocZoomRatioCommand.id, {
-                        zoomRatio: 1,
-                        unitId: this._context.unitId,
+                        zoomRatio: DEFAULT_MODERN_DOC_ZOOM_RATIO,
+                        documentId: this._context.unitId,
                     });
                 }
             })
         );
     }
 
+    private _initFitToWidthResizeListener(): void {
+        this.disposeWithMe(fromEventSubject(this._context.engine.onTransformChange$).pipe(
+            throttleTime(0, animationFrameScheduler)
+        ).subscribe(() => {
+            if (this._docViewScaleService.getOptions().mode !== 'fit-width') {
+                return;
+            }
+
+            const availableWidth = this._docViewScaleService.getAvailableWidth();
+            if (availableWidth <= 1 || Math.abs(availableWidth - this._fitToWidthAvailableWidth) < 1) {
+                return;
+            }
+
+            this._fitToWidthAvailableWidth = availableWidth;
+            this.updateViewZoom(getDocEffectiveZoomRatio(this._context.unit), false);
+        }));
+    }
+
     updateViewZoom(zoomRatio: number, needRefreshSelection = true) {
         const docObject = neoGetDocObject(this._context);
-        docObject.scene.scale(zoomRatio, zoomRatio);
+        const viewScale = this._docViewScaleService.getViewScale(zoomRatio);
+        const viewScaleChanged = docObject.scene.scaleX !== viewScale || docObject.scene.scaleY !== viewScale;
+        docObject.scene.scale(viewScale, viewScale);
 
         if (!this._editorService.isEditor(this._context.unitId)) {
             this._docPageLayoutService.calculatePagePosition();
         }
 
-        if (needRefreshSelection && !this._editorService.isEditor(this._context.unitId)) {
+        if (
+            needRefreshSelection &&
+            !this._editorService.isEditor(this._context.unitId) &&
+            !this._embedInteractionBoundaryService?.hasRecentInteraction()
+        ) {
             this._textSelectionManagerService.refreshSelection();
         }
 
-        if (isInternalEditorID(this._context.unitId)) {
-            return;
+        if (needRefreshSelection && viewScaleChanged && !isInternalEditorID(this._context.unitId)) {
+            docObject.scene.getTransformer()?.clearSelectedObjects();
         }
-        docObject.scene.getTransformer()?.clearSelectedObjects();
+
+        const createOptions = this._univerInstanceService.getUnitCreateOptions(this._context.unitId);
+        if (createOptions?.embeddedRender === true || createOptions?.skipAutoRender === true) {
+            this._context.scene.makeDirty();
+            this._context.scene.render();
+        }
     }
 
     private _initZoomEventListener() {
@@ -192,24 +199,22 @@ export class DocZoomRenderController extends Disposable implements IRenderModule
         this.disposeWithMe(
             // hold ctrl & mousewheel ---> zoom
             scene.onMouseWheel$.subscribeEvent((e: IWheelEvent) => {
-                if (!e.ctrlKey) {
+                const documentModel = this._univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+                if (!documentModel) {
                     return;
                 }
 
-                const deltaFactor = Math.abs(e.deltaX);
-                let ratioDelta = deltaFactor < 40 ? 0.2 : deltaFactor < 80 ? 0.4 : 0.2;
-                ratioDelta *= e.deltaY > 0 ? -1 : 1;
-                if (scene.scaleX < 1) {
-                    ratioDelta /= 2;
+                const { documentFlavor } = documentModel.getSnapshot().documentStyle;
+                if (!shouldHandleDocWheelZoom(e, Boolean(this._contextService.getContextValue(FOCUSING_DOC)), documentFlavor)) {
+                    return;
                 }
 
-                const currentRatio = this._context.unit.zoomRatio;
-                let nextRatio = +Number.parseFloat(`${currentRatio + ratioDelta}`).toFixed(1);
-                nextRatio = nextRatio >= 4 ? 4 : nextRatio <= 0.1 ? 0.1 : nextRatio;
+                const currentRatio = getDocEffectiveZoomRatio(documentModel);
+                const nextRatio = getNextWheelZoomRatio(currentRatio, e);
 
                 this._commandService.executeCommand(SetDocZoomRatioCommand.id, {
-                    zoomRatio: Math.round(nextRatio * 10) / 10,
-                    documentId: this._context.unitId,
+                    zoomRatio: nextRatio,
+                    documentId: documentModel.getUnitId(),
                 });
 
                 e.preventDefault();

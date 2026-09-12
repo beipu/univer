@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-import type { Workbook } from '@univerjs/core';
 import type { IUniverDocsUIConfig } from '../../config/config';
-import { IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-import { useConfigValue, useDependency, useObservable } from '@univerjs/ui';
+import { UniverInstanceType } from '@univerjs/core';
+import { IWorkbenchService, useConfigValue, useDependency, useObservable } from '@univerjs/ui';
 import { DOCS_UI_PLUGIN_CONFIG_KEY } from '../../config/config';
 import { CountBar } from '../count-bar';
+import { DocStatistics } from '../doc-statistics/DocStatistics';
+import { DocLayoutProgress } from '../DocLayoutProgress';
 
 function DocFooterContent() {
     const config = useConfigValue<IUniverDocsUIConfig>(DOCS_UI_PLUGIN_CONFIG_KEY);
@@ -28,22 +29,24 @@ function DocFooterContent() {
     return isShow && (
         <div
             className={`
-              univer-box-border univer-flex univer-items-center univer-justify-between univer-px-5 univer-py-1.5
+              univer-relative univer-box-border univer-flex univer-items-center univer-justify-between univer-px-5
+              univer-py-1.5
             `}
         >
-            <div />
+            {config?.wordCount !== false && <DocStatistics />}
+            <DocLayoutProgress />
             <CountBar />
         </div>
     );
 }
 
 export function DocFooter() {
-    const univerInstanceService = useDependency(IUniverInstanceService);
-    const workbook = useObservable(() => univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET), undefined, undefined, []);
+    const workbenchService = useDependency(IWorkbenchService);
+    const rootUnitType = useObservable(workbenchService.rootUnitType$, null, true);
 
-    if (workbook) {
+    if (rootUnitType !== UniverInstanceType.UNIVER_DOC) {
         return null;
     }
 
     return <DocFooterContent />;
-};
+}

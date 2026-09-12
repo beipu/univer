@@ -17,7 +17,15 @@
 import type { IMenuSchema } from '../../../../services/menu/menu-manager.service';
 import { LocaleService } from '@univerjs/core';
 import { borderClassName, clsx, HoverCard } from '@univerjs/design';
-import { DatabaseIcon, EyeIcon, FunctionIcon, HomeIcon, InsertIcon, MoreDownIcon, MoreFunctionIcon } from '@univerjs/icons';
+import {
+    DatabaseIcon,
+    EyeIcon,
+    FunctionIcon,
+    HomeIcon,
+    InsertIcon,
+    MoreDownIcon,
+    MoreVerticalIcon,
+} from '@univerjs/icons';
 import { useState } from 'react';
 import { RibbonPosition } from '../../../../services/menu/types';
 import { useDependency } from '../../../../utils/di';
@@ -28,7 +36,7 @@ const iconMap = {
     [RibbonPosition.FORMULAS]: FunctionIcon,
     [RibbonPosition.DATA]: DatabaseIcon,
     [RibbonPosition.VIEW]: EyeIcon,
-    [RibbonPosition.OTHERS]: MoreFunctionIcon,
+    [RibbonPosition.OTHERS]: MoreVerticalIcon,
 };
 
 export function DefaultMenu({
@@ -41,6 +49,7 @@ export function DefaultMenu({
     onSelectTab: (tab: IMenuSchema) => void;
 }) {
     const localeService = useDependency(LocaleService);
+    const activatedTabTitle = ribbon.find((group) => group.key === activatedTab)?.title || activatedTab;
 
     const [groupSelectorVisible, setGroupSelectorVisible] = useState(false);
 
@@ -57,7 +66,7 @@ export function DefaultMenu({
             overlay={(
                 <div className="univer-grid univer-gap-1 univer-px-2 univer-py-1">
                     {ribbon.map((group) => {
-                        const Icon = iconMap[group.key as RibbonPosition];
+                        const Icon = iconMap[group.key as RibbonPosition] ?? MoreVerticalIcon;
 
                         return (
                             <a
@@ -83,6 +92,7 @@ export function DefaultMenu({
                                           univer-text-gray-500
                                           dark:!univer-text-gray-300
                                         `}
+                                        preserveStrokeWidth
                                     />
                                 </span>
                                 <span className="univer-flex univer-flex-col">
@@ -92,10 +102,10 @@ export function DefaultMenu({
                                           dark:!univer-text-gray-200
                                         `}
                                     >
-                                        {localeService.t(group.key)}
+                                        {localeService.t(group.title || group.key)}
                                     </strong>
                                     <span className="univer-text-xs univer-text-gray-400">
-                                        {localeService.t(`${group.key}Desc`)}
+                                        {localeService.t(`${group.title || group.key}Desc`)}
                                     </span>
                                 </span>
                             </a>
@@ -109,17 +119,18 @@ export function DefaultMenu({
                 className={`
                   univer-mr-2 univer-flex univer-h-7 univer-cursor-pointer univer-items-center univer-gap-1.5
                   univer-whitespace-nowrap !univer-rounded-full univer-bg-gray-700 univer-pl-3 univer-pr-2
-                  univer-text-sm univer-text-white
+                  univer-text-sm univer-text-gray-0
                   dark:!univer-bg-gray-200 dark:!univer-text-gray-800
                 `}
                 onClick={() => setGroupSelectorVisible(true)}
             >
-                {localeService.t(activatedTab)}
+                {localeService.t(activatedTabTitle)}
                 <MoreDownIcon
                     className={`
                       univer-text-gray-200
                       dark:!univer-text-gray-500
                     `}
+                    preserveStrokeWidth
                 />
             </a>
         </HoverCard>

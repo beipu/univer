@@ -17,11 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    threadCommentUI: {
+    'thread-comment-ui': {
+        mobile: { back: 'Enrere' },
         panel: {
             title: 'Gestió de comentaris',
             empty: 'Encara no hi ha comentaris',
-            filterEmpty: 'Cap resultat coincident',
             reset: 'Restableix el filtre',
             addComment: 'Afegeix un comentari',
             solved: 'Resolut',
@@ -35,6 +35,7 @@ const locale: typeof enUS = {
         item: {
             edit: 'Edita',
             delete: 'Elimina aquest comentari',
+            more: 'Més',
         },
         filter: {
             sheet: {

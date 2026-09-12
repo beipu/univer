@@ -16,6 +16,20 @@
 
 const locale = {
     design: {
+        Accessibility: {
+            closeBadge: 'Close badge',
+            close: 'Close',
+            menu: 'Menu',
+            previous: 'Previous',
+            next: 'Next',
+            imageGallery: 'Image gallery',
+            image: 'Image {0} of {1}',
+            zoomIn: 'Zoom in',
+            zoomOut: 'Zoom out',
+            resetZoom: 'Reset zoom',
+            increment: 'increment',
+            decrement: 'decrement',
+        },
         Confirm: {
             cancel: 'cancel',
             confirm: 'ok',
@@ -40,9 +54,12 @@ const locale = {
                 'Nov',
                 'Dec',
             ],
-        },
-        Select: {
-            empty: 'None',
+            ariaLabels: {
+                previousMonth: 'Previous month',
+                nextMonth: 'Next month',
+                selectYear: 'Select year',
+                selectMonth: 'Select month',
+            },
         },
         ColorPicker: {
             more: 'More Colors',
@@ -56,8 +73,8 @@ const locale = {
             diamond: 'Diamond',
             offset: 'Offset',
             angle: 'Angle',
-            flip: 'Flip',
             delete: 'Delete',
+            transparency: 'Transparency',
         },
     },
 };

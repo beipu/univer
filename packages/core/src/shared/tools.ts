@@ -16,37 +16,7 @@
 
 import type { IStyleData } from '../types/interfaces';
 import type { Nullable } from './types';
-import { customAlphabet, nanoid } from 'nanoid';
 import { isLegalUrl, normalizeUrl, topLevelDomainSet } from '../common/url';
-
-const alphabets = [
-    'A',
-    'B',
-    'C',
-    'D',
-    'E',
-    'F',
-    'G',
-    'H',
-    'I',
-    'J',
-    'K',
-    'L',
-    'M',
-    'N',
-    'O',
-    'P',
-    'Q',
-    'R',
-    'S',
-    'T',
-    'U',
-    'V',
-    'W',
-    'X',
-    'Y',
-    'Z',
-];
 
 /**
  * Deep diff between two object
@@ -91,12 +61,11 @@ function diffArrays(oneArray: any[], twoArray: any[]) {
 
 function diffObject(oneObject: Record<string, any>, twoObject: Record<string, any>) {
     const oneKeys = Object.keys(oneObject);
-    const twoKeys = Object.keys(twoObject);
-    if (oneKeys.length !== twoKeys.length) {
+    if (oneKeys.length !== Object.keys(twoObject).length) {
         return false;
     }
     for (const key of oneKeys) {
-        if (!twoKeys.includes(key)) {
+        if (!Object.prototype.propertyIsEnumerable.call(twoObject, key)) {
             return false;
         }
         const oneValue = oneObject[key];
@@ -202,69 +171,6 @@ export class Tools {
         return 'Unknown browser';
     }
 
-    /** @deprecated This method is deprecated, please use `import { merge } from '@univerjs/core` instead */
-    static deepMerge(target: any, ...sources: any[]): any {
-        sources.forEach((item) => item && deepItem(item));
-
-        function deepArray(array: any[], to: any[]) {
-            array.forEach((value, key) => {
-                if (Tools.isArray(value)) {
-                    const origin = to[key] ?? [];
-                    to[key] = origin;
-                    deepArray(value, origin);
-                    return;
-                }
-                if (Tools.isObject(value)) {
-                    const origin = to[key] ?? {};
-                    to[key] = origin;
-                    deepObject(value, origin);
-                    return;
-                }
-                to[key] = value;
-            });
-        }
-
-        function deepObject(object: any, to: any) {
-            Object.keys(object).forEach((key) => {
-                const value = object[key];
-                if (Tools.isObject(value)) {
-                    const origin = to[key] ?? {};
-                    to[key] = origin;
-                    deepObject(value, origin);
-                    return;
-                }
-                if (Tools.isArray(value)) {
-                    const origin = to[key] ?? [];
-                    to[key] = origin;
-                    deepArray(value, origin);
-                    return;
-                }
-                to[key] = value;
-            });
-        }
-
-        function deepItem(item: any) {
-            Object.keys(item).forEach((key) => {
-                const value = item[key];
-                if (Tools.isArray(value)) {
-                    const origin = target[key] ?? [];
-                    target[key] = origin;
-                    deepArray(value, origin);
-                    return;
-                }
-                if (Tools.isObject(value)) {
-                    const origin = target[key] ?? {};
-                    target[key] = origin;
-                    deepObject(value, origin);
-                    return;
-                }
-                target[key] = value;
-            });
-        }
-
-        return target;
-    }
-
     static diffValue(one: any, two: any) {
         return isValueEqual(one, two);
     }
@@ -288,11 +194,13 @@ export class Tools {
             return clone as T;
         }
         if (this.isObject(value)) {
+            const source = value as Record<string, any>;
             const clone: Record<string, any> = {};
-            Object.keys(value as Record<string, any>).forEach((key) => {
-                const item = (value as Record<string, any>)[key];
-                clone[key] = Tools.deepClone(item);
-            });
+            for (const key in source) {
+                if (Object.prototype.hasOwnProperty.call(source, key)) {
+                    clone[key] = Tools.deepClone(source[key]);
+                }
+            }
             Object.setPrototypeOf(clone, Object.getPrototypeOf(value));
             return clone as T;
         }
@@ -524,14 +432,6 @@ export class Tools {
     }
 }
 
-export function generateRandomId(n: number = 21, alphabet?: string): string {
-    if (alphabet) {
-        return customAlphabet(alphabet, n)();
-    }
-
-    return nanoid(n);
-}
-
 interface IStyleDataObject {
     [key: string]: unknown;
 }
@@ -562,14 +462,3 @@ export const isNodeEnv = () => {
     // eslint-disable-next-line node/prefer-global/process
     return typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 };
-
-/**
- * Converts a wildcard pattern with ? and * to a regular expression.
- * @param {string} wildChar - The wildcard string containing ? and *
- * @returns {RegExp} The generated regular expression
- */
-export function createREGEXFromWildChar(wildChar: string): RegExp {
-    const escaped = wildChar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regexpStr = escaped.replace(/\\\*/g, '.*').replace(/\\\?/g, '.');
-    return new RegExp(`^${regexpStr}$`, 'i');
-}

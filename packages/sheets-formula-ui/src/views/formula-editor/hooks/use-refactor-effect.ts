@@ -19,18 +19,17 @@ import { EDITOR_ACTIVATED, IContextService, IUniverInstanceService, UniverInstan
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { IRefSelectionsService, REF_SELECTIONS_ENABLED } from '@univerjs/sheets';
 import { IContextMenuService, useDependency, useObservable } from '@univerjs/ui';
-
 import { useEffect, useLayoutEffect, useMemo } from 'react';
-import { RefSelectionsRenderService } from '../../../services/render-services/ref-selections.render-service';
+import { RefSelectionsRenderService } from '../../../services/render-services/ref-selections.render.service';
 
-export const useRefactorEffect = (isNeed: boolean, selecting: boolean, unitId: string, editorId: string, disableContextMenu = true) => {
+export const useRefactorEffect = (isNeed: boolean, selecting: boolean | number, unitId: string, editorId: string, disableContextMenu = true, keepRefSelectionsEnabled = false) => {
     const renderManagerService = useDependency(IRenderManagerService);
     const contextService = useDependency(IContextService);
     const contextMenuService = useDependency(IContextMenuService);
     const refSelectionsService = useDependency(IRefSelectionsService);
     const univerInstanceService = useDependency(IUniverInstanceService);
     const currentUnit = useObservable(useMemo(() => univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET), [univerInstanceService]));
-    const render = renderManagerService.getRenderById(currentUnit?.getUnitId() ?? '');
+    const render = renderManagerService.getRenderUnitById(currentUnit?.getUnitId() ?? '');
     const refSelectionsRenderService = render?.with(RefSelectionsRenderService);
 
     useLayoutEffect(() => {
@@ -51,16 +50,28 @@ export const useRefactorEffect = (isNeed: boolean, selecting: boolean, unitId: s
     }, [contextService, isNeed, refSelectionsService, disableContextMenu, editorId]);
 
     useLayoutEffect(() => {
-        if (isNeed && selecting) {
+        if (isNeed && Boolean(selecting)) {
+            let active = true;
             const d1 = refSelectionsRenderService?.enableSelectionChanging();
             contextService.setContextValue(REF_SELECTIONS_ENABLED, true);
+            const subscription = keepRefSelectionsEnabled
+                ? contextService.subscribeContextValue$(REF_SELECTIONS_ENABLED).subscribe((enabled) => {
+                    if (!enabled) {
+                        queueMicrotask(() => {
+                            if (active) contextService.setContextValue(REF_SELECTIONS_ENABLED, true);
+                        });
+                    }
+                })
+                : null;
 
             return () => {
+                active = false;
+                subscription?.unsubscribe();
                 contextService.setContextValue(REF_SELECTIONS_ENABLED, false);
                 d1?.dispose();
             };
         }
-    }, [contextService, isNeed, refSelectionsRenderService, selecting]);
+    }, [contextService, isNeed, keepRefSelectionsEnabled, refSelectionsRenderService, selecting]);
 
     // reset setSkipLastEnabled
     useEffect(() => {

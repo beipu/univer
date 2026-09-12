@@ -17,7 +17,7 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-sort': {
+    'sheets-sort-ui': {
         general: {
             sort: 'مرتب‌سازی',
             'sort-asc': 'صعودی',
@@ -41,8 +41,12 @@ const locale: typeof enUS = {
             'sort-reminder-no': 'حفظ مرتب‌سازی محدوده',
             'first-row-check': 'ردیف اول در مرتب‌سازی شرکت نمی‌کند',
             'add-condition': 'افزودن شرط',
+            'delete-condition': 'حذف شرط',
             cancel: 'انصراف',
             confirm: 'تایید',
+        },
+        info: {
+            tooltip: 'راهنما',
         },
     },
 };

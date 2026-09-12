@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import type { ISetSuperTableMutationParam, ISetSuperTableMutationSearchParam } from '@univerjs/engine-formula';
-import type { Table } from '../model/table';
+import type { IRemoveSuperTableMutationParam, ISetSuperTableMutationParam, ISetSuperTableMutationSearchParam } from '@univerjs/engine-formula';
+import type { Table } from '../models/table';
 import { Disposable, ICommandService, Inject } from '@univerjs/core';
 import { RemoveSuperTableMutation, SetSuperTableMutation } from '@univerjs/engine-formula';
-import { TableManager } from '../model/table-manager';
+import { TableManager } from '../models/table-manager';
 
 export class SheetTableFormulaController extends Disposable {
     constructor(
@@ -52,11 +52,15 @@ export class SheetTableFormulaController extends Disposable {
         );
         this.disposeWithMe(
             this._tableManager.tableDelete$.subscribe((event) => {
-                const { unitId, tableName } = event;
-                this._commandService.executeCommand<ISetSuperTableMutationSearchParam>(RemoveSuperTableMutation.id, {
+                const { unitId, subUnitId, tableName, range } = event;
+                this._commandService.executeCommand<IRemoveSuperTableMutationParam>(RemoveSuperTableMutation.id, {
                     unitId,
                     tableName,
-                });
+                    reference: {
+                        sheetId: subUnitId,
+                        range,
+                    },
+                }, { onlyLocal: true });
             })
         );
         this.disposeWithMe(
@@ -66,18 +70,18 @@ export class SheetTableFormulaController extends Disposable {
                 this._commandService.executeCommand<ISetSuperTableMutationSearchParam>(RemoveSuperTableMutation.id, {
                     unitId,
                     tableName: oldTableName,
-                });
+                }, { onlyLocal: true });
 
                 const table = this._tableManager.getTableById(unitId, tableId);
                 if (!table) {
                     return;
                 }
-                this._updateSuperTable(unitId, table);
+                this._updateSuperTable(unitId, table, oldTableName);
             })
         );
     }
 
-    private _updateSuperTable(unitId: string, table: Table) {
+    private _updateSuperTable(unitId: string, table: Table, oldTableName?: string) {
         const tableInfo = table.getTableInfo();
         const name = tableInfo.name;
         const columns = tableInfo.columns;
@@ -88,11 +92,12 @@ export class SheetTableFormulaController extends Disposable {
         this._commandService.executeCommand<ISetSuperTableMutationParam>(SetSuperTableMutation.id, {
             unitId,
             tableName: name,
+            oldTableName,
             reference: {
                 range: tableInfo.range,
                 sheetId: tableInfo.subUnitId,
                 titleMap,
             },
-        });
+        }, { onlyLocal: true });
     }
 }

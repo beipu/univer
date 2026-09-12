@@ -17,7 +17,14 @@
 import type { IDisposable } from '@univerjs/core';
 import type { BaseObject, IBoundRectNoAngle, IRender, Scene } from '@univerjs/engine-render';
 import type { IPopup } from '@univerjs/ui';
-import { Disposable, DisposableCollection, ICommandService, Inject, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import {
+    Disposable,
+    DisposableCollection,
+    ICommandService,
+    Inject,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { IRenderManagerService, pxToNum } from '@univerjs/engine-render';
 import { SLIDE_KEY } from '@univerjs/slides';
 import { ICanvasPopupService } from '@univerjs/ui';
@@ -120,11 +127,11 @@ export class SlideCanvasPopMangerService extends Disposable {
     }
 
     attachPopupToObject(targetObject: BaseObject, popup: ISlideCanvasPopup): IDisposable {
-        const workbook = this._univerInstanceService.getCurrentUnitForType(UniverInstanceType.UNIVER_SLIDE)!;
+        const workbook = this._univerInstanceService.getCurrentUnitOfType(UniverInstanceType.UNIVER_SLIDE)!;
         const unitId = workbook.getUnitId();
         // const subUnitId =
 
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         if (!currentRender) {
             return {
                 dispose: () => {

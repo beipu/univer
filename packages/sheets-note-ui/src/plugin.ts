@@ -16,17 +16,35 @@
 
 import type { Dependency } from '@univerjs/core';
 import type { IUniverSheetsNoteUIConfig } from './config/config';
-import { DependentOn, IConfigService, Inject, Injector, merge, Plugin, touchDependencies, UniverInstanceType } from '@univerjs/core';
+import {
+    DependentOn,
+    IConfigService,
+    Inject,
+    Injector,
+    merge,
+    Plugin,
+    touchDependencies,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { UniverSheetsNotePlugin } from '@univerjs/sheets-note';
+import { UniverSheetsUIPlugin } from '@univerjs/sheets-ui';
 import pkg from '../package.json';
 import { defaultPluginConfig, SHEETS_NOTE_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { SheetsCellContentController } from './controllers/sheets-cell-content.controller';
 import { SheetsNoteAttachmentController } from './controllers/sheets-note-attachment.controller';
 import { SheetsNotePopupController } from './controllers/sheets-note-popup.controller';
-import { SheetsNoteUIController } from './controllers/sheets-note-ui.controller';
+import { SheetsNoteUIController } from './controllers/ui.controller';
 import { SheetsNotePopupService } from './services/sheets-note-popup.service';
 
-@DependentOn(UniverSheetsNotePlugin)
+@DependentOn(
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverSheetsNotePlugin,
+    UniverSheetsUIPlugin
+)
 export class UniverSheetsNoteUIPlugin extends Plugin {
     static override pluginName = 'SHEET_NOTE_UI_PLUGIN';
     static override packageName = pkg.name;
@@ -52,6 +70,8 @@ export class UniverSheetsNoteUIPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([ComponentsController]);
+        this._injector.get(ComponentsController);
         ([
             [SheetsNotePopupService],
             [SheetsCellContentController],

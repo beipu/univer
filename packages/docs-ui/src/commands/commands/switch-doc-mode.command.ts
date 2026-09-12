@@ -14,9 +14,17 @@
  * limitations under the License.
  */
 
-import type { ICommand, ICommandInfo, JSONXActions } from '@univerjs/core';
+import type { DocumentDataModel, ICommand, ICommandInfo, JSONXActions } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
-import { CommandType, DocumentFlavor, ICommandService, IUniverInstanceService, JSONX, ObjectRelativeFromV } from '@univerjs/core';
+import {
+    CommandType,
+    DocumentFlavor,
+    ICommandService,
+    IUniverInstanceService,
+    JSONX,
+    ObjectRelativeFromV,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSelectionManagerService, DocSkeletonManagerService, RichTextEditingMutation } from '@univerjs/docs';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { DocSelectionRenderService } from '../../services/selection/doc-selection-render.service';
@@ -35,7 +43,7 @@ export const SwitchDocModeCommand: ICommand<ISwitchDocModeCommandParams> = {
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
 
         const univerInstanceService = accessor.get(IUniverInstanceService);
-        const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
 
         if (docDataModel == null) {
             return false;
@@ -43,11 +51,11 @@ export const SwitchDocModeCommand: ICommand<ISwitchDocModeCommandParams> = {
 
         const unitId = docDataModel.getUnitId();
 
-        const skeleton = renderManagerService.getRenderById(unitId)
+        const skeleton = renderManagerService.getRenderUnitById(unitId)
             ?.with(DocSkeletonManagerService)
             .getSkeleton();
 
-        const docSelectionRenderService = renderManagerService.getRenderById(unitId)?.with(DocSelectionRenderService);
+        const docSelectionRenderService = renderManagerService.getRenderUnitById(unitId)?.with(DocSelectionRenderService);
 
         if (skeleton == null || docSelectionRenderService == null) {
             return false;

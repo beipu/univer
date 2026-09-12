@@ -17,13 +17,26 @@
 import type { Dependency } from '@univerjs/core';
 import type { IUniverSheetsFilterUIConfig } from './config/config';
 import { DependentOn, IConfigService, Inject, Injector, merge, Plugin, UniverInstanceType } from '@univerjs/core';
+import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { UniverSheetsFilterPlugin } from '@univerjs/sheets-filter';
+import { UniverSheetsMobileUIPlugin } from '@univerjs/sheets-ui';
+import { UniverMobileUIPlugin } from '@univerjs/ui';
 import pkg from '../package.json';
 import { defaultPluginConfig, SHEETS_FILTER_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { SheetsFilterMobileMenuController } from './controllers/mobile-menu.controller';
+import { MobileComponentsController } from './controllers/mobile/components.controller';
+import { SheetsFilterUIMobileController } from './controllers/mobile/ui.controller';
 import { SheetsFilterPermissionController } from './controllers/sheets-filter-permission.controller';
-import { SheetsFilterUIMobileController } from './controllers/sheets-filter-ui-mobile.controller';
+import { ISheetsFilterPanelService, SheetsFilterPanelService } from './services/sheets-filter-panel.service';
 
-@DependentOn(UniverSheetsFilterPlugin)
+@DependentOn(
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverMobileUIPlugin,
+    UniverSheetsFilterPlugin,
+    UniverSheetsMobileUIPlugin
+)
 export class UniverSheetsFilterMobileUIPlugin extends Plugin {
     static override type = UniverInstanceType.UNIVER_SHEET;
     static override pluginName = 'SHEET_FILTER_UI_PLUGIN';
@@ -50,14 +63,19 @@ export class UniverSheetsFilterMobileUIPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([MobileComponentsController]);
+        this._injector.get(MobileComponentsController);
         ([
+            [ISheetsFilterPanelService, { useClass: SheetsFilterPanelService }],
             [SheetsFilterPermissionController],
+            [SheetsFilterMobileMenuController],
             [SheetsFilterUIMobileController],
         ] as Dependency[]).forEach((d) => this._injector.add(d));
     }
 
     override onReady(): void {
         this._injector.get(SheetsFilterPermissionController);
+        this._injector.get(SheetsFilterMobileMenuController);
     }
 
     override onRendered(): void {

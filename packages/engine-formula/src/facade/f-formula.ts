@@ -27,6 +27,7 @@ import type {
     ISequenceNode,
     ISetCellFormulaDependencyCalculationResultMutation,
     ISetFormulaCalculationNotificationMutation,
+    ISetFormulaCalculationResultMutation,
     ISetFormulaCalculationStartMutation,
     ISetFormulaDependencyCalculationResultMutation,
     ISetFormulaStringBatchCalculationResultMutation,
@@ -37,7 +38,7 @@ import { FBase } from '@univerjs/core/facade';
 import {
     ENGINE_FORMULA_CYCLE_REFERENCE_COUNT,
     ENGINE_FORMULA_RETURN_DEPENDENCY_TREE,
-    GlobalComputingStatusService,
+    FormulaCalculationSessionService,
     IDefinedNamesService,
     IFunctionService,
     ISuperTableService,
@@ -57,7 +58,6 @@ import {
     SetQueryFormulaDependencyResultMutation,
     SetTriggerFormulaCalculationStartMutation,
 } from '@univerjs/engine-formula';
-import { filter, firstValueFrom, map, race, timer } from 'rxjs';
 
 /**
  * This interface class provides methods to modify the behavior of the operation formula.
@@ -129,7 +129,12 @@ export class FFormula extends FBase {
     }
 
     /**
-     * Start the calculation of the formula.
+     * Forces formula calculation explicitly.
+     *
+     * Normal facade mutations such as `range.setFormula()` already mark formula
+     * data dirty and schedule calculation automatically. Use this method only when
+     * an external data change did not produce a dirty command or an explicit full
+     * recalculation is required.
      *
      * @example
      * ```ts
@@ -204,35 +209,30 @@ export class FFormula extends FBase {
     }
 
     /**
-     * @deprecated Use `onCalculationEnd` instead.
+     * Listens for formula results after every affected model has applied them.
+     * @param {(result: ISetFormulaCalculationResultMutation) => void} callback Receives each applied formula result asynchronously.
+     * @returns {IDisposable} A disposable that unsubscribes from future result notifications.
      */
-    whenComputingCompleteAsync(timeout?: number): Promise<boolean> {
-        const gcss = this._injector.get(GlobalComputingStatusService);
-        if (gcss.computingStatus) return Promise.resolve(true);
+    calculationResultApplied(callback: (result: ISetFormulaCalculationResultMutation) => void): IDisposable {
+        const subscription = this._injector.get(FormulaCalculationSessionService).resultApplied$.subscribe((result) => {
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(() => callback(result));
+                return;
+            }
 
-        return firstValueFrom(race(
-            gcss.computingStatus$.pipe(filter((computing) => computing)),
-            timer(timeout ?? 30_000).pipe(map(() => false))
-        ));
+            queueMicrotask(() => callback(result));
+        });
+
+        return { dispose: () => subscription.unsubscribe() };
     }
 
     /**
-     * Waits for the formula calculation to complete.
-     * @returns {Promise<void>} This method returns a promise that resolves when the calculation is complete.
+     * Waits until the latest formula-calculation results have been applied.
+     * @param {number} [timeout] Maximum wait in milliseconds. Omit to wait without an overall timeout.
+     * @returns {Promise<void>} Resolves when the latest calculation results have been applied; rejects if the supplied timeout expires.
      */
-    onCalculationEnd(): Promise<void> {
-        return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-                reject(new Error('Calculation end timeout'));
-            }, 30_000);
-
-            const disposable = this.calculationEnd(() => {
-                clearTimeout(timer);
-                disposable.dispose();
-
-                resolve();
-            });
-        });
+    onCalculationResultApplied(timeout?: number): Promise<void> {
+        return this._injector.get(FormulaCalculationSessionService).waitForLatestApplied(timeout);
     }
 
     /**
@@ -440,11 +440,11 @@ export class FFormula extends FBase {
      * dependency-calculation command for the given unit, sheet, and cell location,
      * and returns the computed dependency tree when the calculation is completed.
      *
-     * @param param The target cell location:
-     *   - `unitId`  The workbook ID.
-     *   - `sheetId` The sheet ID.
-     *   - `row`     The zero-based row index.
-     *   - `column`  The zero-based column index.
+     * @param {object} param The target cell location.
+     * @param {string} param.unitId The workbook ID.
+     * @param {string} param.sheetId The sheet ID.
+     * @param {number} param.row The zero-based row index.
+     * @param {number} param.column The zero-based column index.
      *
      * @param {number} [timeout]
      *        Optional timeout in milliseconds. If no result is received within this
@@ -750,6 +750,7 @@ export class FFormula extends FBase {
      * ```
      *
      * @param formulaString The formula string to parse (with or without leading `=`)
+     * @param unitId The workbook unit id used to resolve defined names and tables.
      * @returns A formula expression tree describing the hierarchical structure of the formula
      */
     getFormulaExpressTree(formulaString: string, unitId: string): IExprTreeNode | null {

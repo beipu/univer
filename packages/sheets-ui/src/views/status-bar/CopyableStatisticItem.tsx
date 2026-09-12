@@ -15,11 +15,8 @@
  */
 
 import type { IFunctionNames } from '@univerjs/engine-formula';
-import type { FC } from 'react';
-import { LocaleService, numfmt } from '@univerjs/core';
-import { MessageType, Tooltip } from '@univerjs/design';
+import { numfmt } from '@univerjs/core';
 import { FUNCTION_NAMES_MATH, FUNCTION_NAMES_STATISTICAL, FUNCTION_NAMES_TEXT } from '@univerjs/engine-formula';
-import { IClipboardInterfaceService, IMessageService, useDependency } from '@univerjs/ui';
 
 export interface IStatisticItem {
     name: IFunctionNames;
@@ -37,12 +34,12 @@ const allowPatternFunctions: IFunctionNames[] = [
 ];
 
 export const functionDisplayNames: IFunctionNameMap = {
-    [FUNCTION_NAMES_MATH.SUM]: 'statusbar.sum',
-    [FUNCTION_NAMES_STATISTICAL.AVERAGE]: 'statusbar.average',
-    [FUNCTION_NAMES_STATISTICAL.MIN]: 'statusbar.min',
-    [FUNCTION_NAMES_STATISTICAL.MAX]: 'statusbar.max',
-    [FUNCTION_NAMES_STATISTICAL.COUNT]: 'statusbar.count',
-    [FUNCTION_NAMES_STATISTICAL.COUNTA]: 'statusbar.countA',
+    [FUNCTION_NAMES_MATH.SUM]: 'sheets-ui.statusbar.sum',
+    [FUNCTION_NAMES_STATISTICAL.AVERAGE]: 'sheets-ui.statusbar.average',
+    [FUNCTION_NAMES_STATISTICAL.MIN]: 'sheets-ui.statusbar.min',
+    [FUNCTION_NAMES_STATISTICAL.MAX]: 'sheets-ui.statusbar.max',
+    [FUNCTION_NAMES_STATISTICAL.COUNT]: 'sheets-ui.statusbar.count',
+    [FUNCTION_NAMES_STATISTICAL.COUNTA]: 'sheets-ui.statusbar.countA',
     [FUNCTION_NAMES_TEXT.CONCATENATE]: 'concatenate',
 };
 
@@ -50,48 +47,10 @@ interface IFunctionNameMap {
     [key: string]: string;
 }
 
-export const CopyableStatisticItem: FC<IStatisticItem> = (item: IStatisticItem) => {
-    const localeService = useDependency(LocaleService);
-    const messageService = useDependency(IMessageService);
-    const clipboardService = useDependency(IClipboardInterfaceService);
-
-    const formateValue = formatNumber(item);
-
-    const copyToClipboard = async () => {
-        await clipboardService.writeText(item.value.toString());
-        messageService.show({
-            type: MessageType.Success,
-            content: localeService.t('statusbar.copied'),
-        });
-    };
-    return (
-        <Tooltip title={localeService.t('statusbar.clickToCopy')} placement="top">
-            <div
-                key={item.name}
-                className={`
-                  univer-flex univer-cursor-pointer univer-truncate univer-text-center univer-text-xs
-                  univer-text-gray-400
-                `}
-                onClick={copyToClipboard}
-            >
-                <span>
-                    {`${localeService.t(
-                        functionDisplayNames?.[item.name as string] || (item.name as string)
-                    )}: ${formateValue}`}
-                </span>
-            </div>
-        </Tooltip>
-    );
-};
-
 export function formatNumber(item: IStatisticItem) {
     const { pattern, value: num } = item;
     if (typeof num !== 'number') {
         return 0;
-    }
-
-    if (num >= 1e8) {
-        return num.toExponential(2);
     }
 
     if (pattern && allowPatternFunctions.includes(item.name)) {

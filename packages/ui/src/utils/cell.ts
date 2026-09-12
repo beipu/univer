@@ -23,9 +23,15 @@ import type {
     ITextDecoration,
     ITextRun,
 } from '@univerjs/core';
-import { BaselineOffset, BorderStyleTypes, ColorKit, generateRandomId, getBorderStyleType, Tools } from '@univerjs/core';
+import {
+    BaselineOffset,
+    BorderStyleTypes,
+    ColorKit,
+    generateRandomId,
+    getBorderStyleType,
+    Tools,
+} from '@univerjs/core';
 import { ptToPx } from '@univerjs/engine-render';
-
 import { parseHtmlDocument, parseHtmlFragment } from './html';
 import { textTrim } from './util';
 
@@ -915,12 +921,6 @@ function getStyles(styleText: string): Record<string, any> {
     }
 
     return output;
-}
-
-function extractColorFromString(str: string) {
-    const regex = /#([0-9a-f]{3,6})\b|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)/gi;
-    const matches = str.match(regex);
-    return matches ? matches[0] : null;
 }
 
 function getPtFontSizeByPx(size: number) {

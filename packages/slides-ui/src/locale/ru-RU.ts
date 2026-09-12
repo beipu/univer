@@ -14,9 +14,67 @@
  * limitations under the License.
  */
 
-import type zhCN from './zh-CN';
-import enUS from './en-US';
+import type enUS from './en-US';
 
-const locale: typeof zhCN = enUS;
+const locale: typeof enUS = {
+    'slides-ui': {
+        append: 'Добавить слайд',
+
+        text: {
+            insert: {
+                title: 'Вставить текст',
+            },
+        },
+
+        shape: {
+            insert: {
+                title: 'Вставить фигуру',
+                rectangle: 'Вставить прямоугольник',
+                ellipse: 'Вставить эллипс',
+            },
+        },
+
+        image: {
+            insert: {
+                title: 'Вставить изображение',
+                float: 'Вставить плавающее изображение',
+            },
+        },
+
+        popup: {
+            edit: 'Изменить',
+            delete: 'Удалить',
+        },
+
+        sidebar: {
+            text: 'Изменить текст',
+            shape: 'Изменить фигуру',
+            image: 'Изменить изображение',
+        },
+
+        'image-panel': {
+            arrange: {
+                title: 'Упорядочить',
+                forward: 'Переложить вперёд',
+                backward: 'Переложить назад',
+                front: 'На передний план',
+                back: 'На задний план',
+            },
+            transform: {
+                title: 'Преобразование',
+                width: 'Ширина (пкс)',
+                height: 'Высота (пкс)',
+                x: 'X (пкс)',
+                y: 'Y (пкс)',
+                rotate: 'Повернуть (°)',
+            },
+        },
+        panel: {
+            fill: {
+                title: 'Цвет заливки',
+            },
+        },
+    },
+};
 
 export default locale;

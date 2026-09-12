@@ -16,22 +16,31 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { UniverInstanceType } from '@univerjs/core';
-import { RangeProtectionPermissionViewPoint, WorksheetFilterPermission, WorksheetViewPermission } from '@univerjs/sheets';
-import { ClearSheetsFilterCriteriaCommand, ReCalcSheetsFilterCommand, SheetsFilterService, SmartToggleSheetsFilterCommand } from '@univerjs/sheets-filter';
-
+import {
+    RangeProtectionPermissionViewPoint,
+    WorksheetFilterPermission,
+    WorksheetViewPermission,
+} from '@univerjs/sheets';
+import {
+    ClearSheetsFilterCriteriaCommand,
+    ReCalcSheetsFilterCommand,
+    SheetsFilterService,
+    SmartToggleSheetsFilterCommand,
+} from '@univerjs/sheets-filter';
 import { getCurrentRangeDisable$, getObservableWithExclusiveRange$ } from '@univerjs/sheets-ui';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { map, of, switchMap } from 'rxjs';
 
-export function SmartToggleFilterMenuItemFactory(accessor: IAccessor): IMenuSelectorItem {
+export function SmartToggleFilterMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     const sheetsFilterService = accessor.get(SheetsFilterService);
 
     return {
         id: SmartToggleSheetsFilterCommand.id,
         type: MenuItemType.BUTTON_SELECTOR,
         icon: 'FilterIcon',
-        tooltip: 'sheets-filter.toolbar.smart-toggle-filter-tooltip',
+        tooltip: 'sheets-filter-ui.toolbar.smart-toggle-filter-tooltip',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
         activated$: sheetsFilterService.activeFilterModel$.pipe(map((model) => !!model)),
         disabled$: getObservableWithExclusiveRange$(
@@ -47,26 +56,30 @@ export function SmartToggleFilterMenuItemFactory(accessor: IAccessor): IMenuSele
     };
 }
 
-export function ClearFilterCriteriaMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ClearFilterCriteriaMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const sheetsFilterService = accessor.get(SheetsFilterService);
 
     return {
         id: ClearSheetsFilterCriteriaCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'sheets-filter.toolbar.clear-filter-criteria',
+        title: 'sheets-filter-ui.toolbar.clear-filter-criteria',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
-        disabled$: sheetsFilterService.activeFilterModel$.pipe(switchMap((model) => model?.hasCriteria$.pipe(map((m) => !m)) ?? of(true))),
+        disabled$: sheetsFilterService
+            .activeFilterModel$
+            .pipe(switchMap((model) => model?.hasCriteria$.pipe(map((m) => !m)) ?? of(true))),
     };
 }
 
-export function ReCalcFilterMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ReCalcFilterMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const sheetsFilterService = accessor.get(SheetsFilterService);
 
     return {
         id: ReCalcSheetsFilterCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'sheets-filter.toolbar.re-calc-filter-conditions',
+        title: 'sheets-filter-ui.toolbar.re-calc-filter-conditions',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
-        disabled$: sheetsFilterService.activeFilterModel$.pipe(switchMap((model) => model?.hasCriteria$.pipe(map((m) => !m)) ?? of(true))),
+        disabled$: sheetsFilterService
+            .activeFilterModel$
+            .pipe(switchMap((model) => model?.hasCriteria$.pipe(map((m) => !m)) ?? of(true))),
     };
 }

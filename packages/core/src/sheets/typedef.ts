@@ -17,6 +17,7 @@
 import type { IResources } from '../services/resource-manager/type';
 import type { IObjectArrayPrimitiveType, IObjectMatrixPrimitiveType, Nullable } from '../shared';
 import type { BooleanNumber } from '../types/enum';
+import type { DateSystem } from '../types/enum/date-system';
 import type { LocaleType } from '../types/enum/locale-type';
 import type { IDocumentData } from '../types/interfaces';
 import type { ICellCustomRender } from '../types/interfaces/i-cell-custom-render';
@@ -53,6 +54,9 @@ export interface IWorkbookData {
      */
     locale: LocaleType;
 
+    /** Date serial system used by this workbook. Missing values mean Excel 1900. */
+    dateSystem?: DateSystem;
+
     /**
      * Style references.
      */
@@ -77,7 +81,10 @@ export interface IWorkbookData {
     resources?: IResources;
 
     /**
-     * User stored custom fields
+     * User stored custom fields.
+     *
+     * @remarks
+     * This field is not recommended for external use. Use it at your own risk.
      */
     custom?: CustomData;
 }
@@ -110,11 +117,8 @@ export interface IWorksheetData {
 
     rowCount: number;
     columnCount: number;
-    /** @deprecated */
     zoomRatio: number;
-    /** @deprecated */
     scrollTop: number;
-    /** @deprecated */
     scrollLeft: number;
     defaultColumnWidth: number;
     defaultRowHeight: number;
@@ -151,7 +155,10 @@ export interface IWorksheetData {
     rightToLeft: BooleanNumber;
 
     /**
-     * User stored custom fields
+     * User stored custom fields.
+     *
+     * @remarks
+     * This field is not recommended for external use. Use it at your own risk.
      */
     custom?: CustomData;
 }
@@ -188,7 +195,10 @@ export interface IRowData {
     s?: Nullable<IStyleData | string>;
 
     /**
-     * User stored custom fields
+     * User stored custom fields.
+     *
+     * @remarks
+     * This field is not recommended for external use. Use it at your own risk.
      */
     custom?: CustomData;
 }
@@ -218,7 +228,10 @@ export interface IColumnData {
     s?: Nullable<IStyleData | string>;
 
     /**
-     * User stored custom fields
+     * User stored custom fields.
+     *
+     * @remarks
+     * This field is not recommended for external use. Use it at your own risk.
      */
     custom?: CustomData;
 }
@@ -277,7 +290,10 @@ export interface ICellData {
     si?: Nullable<string>;
 
     /**
-     * User stored custom fields
+     * User stored custom fields.
+     *
+     * @remarks
+     * This field is not recommended for external use. Use it at your own risk.
      */
     custom?: CustomData;
 }
@@ -307,6 +323,8 @@ export interface IFontRenderExtension {
 export interface ICellDataForSheetInterceptor extends ICellData {
     interceptorStyle?: Nullable<IStyleData>;
     isInArrayFormulaRange?: Nullable<boolean>;
+    /** Marks intercepted cell data prepared for percentage editing. */
+    isPercentFormat?: boolean;
     markers?: ICellMarks;
     customRender?: Nullable<ICellCustomRender[]>;
     interceptorAutoHeight?: () => number | undefined;
@@ -356,7 +374,7 @@ export function isNullCell(cell: Nullable<ICellData>) {
         return true;
     }
 
-    const { v, f, si, p, custom } = cell;
+    const { v, f, si, p } = cell;
 
     if (!(v == null || (typeof v === 'string' && v.length === 0))) {
         return false;
@@ -367,10 +385,6 @@ export function isNullCell(cell: Nullable<ICellData>) {
     }
 
     if (p != null) {
-        return false;
-    }
-
-    if (custom != null) {
         return false;
     }
 
@@ -582,34 +596,6 @@ export interface IRangeCellData {
  */
 export type IRangeType = IRange | IRangeStringData | IRangeArrayData | IRangeCellData;
 
-/**
- * Whether to clear only the contents. Whether to clear only the format; note that clearing format also clears data validation rules.
- */
-export interface IOptionData {
-    /**
-     * 1. designates that only the format should be copied
-     *
-     * 2. Whether to clear only the format; note that clearing format also clears data validation rules.
-     *
-     * 3. worksheet Whether to clear the format.
-     */
-    formatOnly?: boolean;
-    /**
-     * 1. designates that only the content should be copied
-     *
-     * 2. Whether to clear only the contents.
-     *
-     * 3. worksheet Whether to clear the content.
-     *
-     */
-    contentsOnly?: boolean;
-}
-
-/**
- * Option of copyTo function
- */
-export interface ICopyToOptionsData extends IOptionData { }
-
 export interface IRectLTRB {
     left: number;
     top: number;
@@ -639,16 +625,8 @@ export interface ISingleCell {
 export interface IRangeWithCoord extends IPosition, IRange { }
 
 /**
- * @deprecated use ICellWithCoord instead.
- */
-export interface ISelectionCellWithMergeInfo extends IPosition, ISingleCell {
-    mergeInfo: IRangeWithCoord; // merge cell, start and end is upper left cell
-}
-
-/**
  * SingleCell & coordinate and mergeRange.
  */
-// Original name: ISelectionCellWithMergeInfo
 export interface ICellWithCoord extends IPosition, ISingleCell {
     mergeInfo: IRangeWithCoord; // merge cell, start and end is upper left cell
 
@@ -722,6 +700,7 @@ export interface ISelection {
     primary: Nullable<ISelectionCell>;
 }
 export interface ITextRangeStart {
+    /** Inclusive insertion offset at the start of the selection. */
     startOffset: number;
 }
 
@@ -732,6 +711,7 @@ export enum RANGE_DIRECTION {
 }
 
 export interface ITextRange extends ITextRangeStart {
+    /** Exclusive insertion offset at the end of a non-collapsed selection. */
     endOffset: number;
     collapsed: boolean;
     direction?: RANGE_DIRECTION;
@@ -747,70 +727,6 @@ export interface ITextRangeParam extends ITextRange {
     segmentPage?: number; //The page number of the header, footer or footnote the location is in. An empty segment ID signifies the document's body.
     isActive?: boolean; // Whether the text range is active or current range.
     rangeType?: DOC_RANGE_TYPE;
-}
-
-/**
- * Determines whether the cell(row, column) is within the range of the merged cells.
- * @deprecated please use worksheet.getCellInfoInMergeData instead
- */
-export function getCellInfoInMergeData(row: number, column: number, mergeData?: IRange[]): ISelectionCell {
-    let isMerged = false; // The upper left cell only renders the content
-    let isMergedMainCell = false;
-    let newEndRow = row;
-    let newEndColumn = column;
-    let mergeRow = row;
-    let mergeColumn = column;
-
-    if (mergeData == null) {
-        return {
-            actualRow: row,
-            actualColumn: column,
-            isMergedMainCell,
-            isMerged,
-            endRow: newEndRow,
-            endColumn: newEndColumn,
-            startRow: mergeRow,
-            startColumn: mergeColumn,
-        };
-    }
-
-    for (let i = 0; i < mergeData.length; i++) {
-        const {
-            startRow: startRowMarge,
-            endRow: endRowMarge,
-            startColumn: startColumnMarge,
-            endColumn: endColumnMarge,
-        } = mergeData[i];
-        if (row === startRowMarge && column === startColumnMarge) {
-            newEndRow = endRowMarge;
-            newEndColumn = endColumnMarge;
-            mergeRow = startRowMarge;
-            mergeColumn = startColumnMarge;
-
-            isMergedMainCell = true;
-            break;
-        }
-        if (row >= startRowMarge && row <= endRowMarge && column >= startColumnMarge && column <= endColumnMarge) {
-            newEndRow = endRowMarge;
-            newEndColumn = endColumnMarge;
-            mergeRow = startRowMarge;
-            mergeColumn = startColumnMarge;
-
-            isMerged = true;
-            break;
-        }
-    }
-
-    return {
-        actualRow: row,
-        actualColumn: column,
-        isMergedMainCell,
-        isMerged,
-        endRow: newEndRow,
-        endColumn: newEndColumn,
-        startRow: mergeRow,
-        startColumn: mergeColumn,
-    };
 }
 
 export type ICellDataWithSpanAndDisplay = ICellData & { rowSpan?: number; colSpan?: number; displayV?: string };

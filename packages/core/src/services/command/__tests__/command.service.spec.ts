@@ -17,6 +17,7 @@
 import type { IMultiCommand } from '../command.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Injector } from '../../../common/di';
+import { CustomCommandExecutionError } from '../../../common/error';
 import { ConfigService, IConfigService } from '../../config/config.service';
 import { ContextService, IContextService } from '../../context/context.service';
 import { DesktopLogService, ILogService } from '../../log/log.service';
@@ -34,6 +35,7 @@ const anotherCommandID = 'another-command';
 describe('Test CommandService', () => {
     let injector: Injector;
     let commandService: ICommandService;
+    let logService: ILogService;
 
     beforeEach(() => {
         injector = new Injector();
@@ -43,6 +45,7 @@ describe('Test CommandService', () => {
         injector.add([IConfigService, { useClass: ConfigService }]);
 
         commandService = injector.get(ICommandService);
+        logService = injector.get(ILogService);
         commandService.registerCommand({
             id: commandID,
             type: CommandType.COMMAND,
@@ -133,6 +136,14 @@ describe('Test CommandService', () => {
     });
 
     describe('Test registering command', () => {
+        it('Should report command registration state and execute the built-in nil command', () => {
+            expect(commandService.hasCommand('nil')).toBe(true);
+            expect(commandService.syncExecuteCommand('nil')).toBe(true);
+
+            commandService.unregisterCommand('nil');
+            expect(commandService.hasCommand('nil')).toBe(false);
+        });
+
         it('Should throw error when registering a command with the same id', () => {
             expect(() => {
                 commandService.registerCommand({
@@ -142,7 +153,7 @@ describe('Test CommandService', () => {
                         return true;
                     },
                 });
-            }).toThrowError(`[CommandRegistry]: command "${commandID}" has been registered before.`);
+            }).toThrow(`[CommandRegistry]: command "${commandID}" has been registered before.`);
         });
 
         it('Should return an disposable to unregister command', async () => {
@@ -159,9 +170,9 @@ describe('Test CommandService', () => {
 
             expect(() => {
                 commandService.syncExecuteCommand(anotherCommandID);
-            }).toThrowError(`[CommandService]: command "${anotherCommandID}" is not registered.`);
+            }).toThrow(`[CommandService]: command "${anotherCommandID}" is not registered.`);
 
-            await expect(commandService.executeCommand(anotherCommandID)).rejects.toThrowError(
+            await expect(commandService.executeCommand(anotherCommandID)).rejects.toThrow(
                 `[CommandService]: command "${anotherCommandID}" is not registered.`
             );
         });
@@ -182,12 +193,12 @@ describe('Test CommandService', () => {
 
             const beforeListener = () => numbers.push(-1);
             const beforeDisposable = commandService.beforeCommandExecuted(beforeListener);
-            expect(() => commandService.beforeCommandExecuted(beforeListener)).toThrowError(
+            expect(() => commandService.beforeCommandExecuted(beforeListener)).toThrow(
                 '[CommandService]: could not add a listener twice.'
             );
             const listener = () => numbers.push(1);
             const disposable = commandService.onCommandExecuted(listener);
-            expect(() => commandService.onCommandExecuted(listener)).toThrowError(
+            expect(() => commandService.onCommandExecuted(listener)).toThrow(
                 '[CommandService]: could not add a listener twice.'
             );
 
@@ -201,6 +212,191 @@ describe('Test CommandService', () => {
             disposable.dispose();
             commandService.syncExecuteCommand(pushValCommandID);
             expect(numbers).toEqual([-1, 0, 1, -1, 0, 1, 0]);
+        });
+
+        it('Should skip command execution after the command service is disposed', async () => {
+            const handler = vi.fn(() => true);
+            const beforeListener = vi.fn();
+            const listener = vi.fn();
+            const warn = vi.spyOn(logService, 'warn');
+            const pushValCommandID = 'push-val-after-dispose';
+            commandService.registerCommand({
+                id: pushValCommandID,
+                type: CommandType.COMMAND,
+                handler,
+            });
+            commandService.beforeCommandExecuted(beforeListener);
+            commandService.onCommandExecuted(listener);
+
+            injector.dispose();
+
+            expect(commandService.syncExecuteCommand(pushValCommandID)).toBe(false);
+            await expect(commandService.executeCommand(pushValCommandID)).resolves.toBe(false);
+            expect(handler).not.toHaveBeenCalled();
+            expect(beforeListener).not.toHaveBeenCalled();
+            expect(listener).not.toHaveBeenCalled();
+            expect(warn).toHaveBeenCalledTimes(2);
+            expect(warn).toHaveBeenCalledWith(
+                '[CommandService]',
+                `command "${pushValCommandID}" skipped because CommandService is disposed.`
+            );
+        });
+
+        it('Should stop before invoking command handler when disposed by a before hook', async () => {
+            const handler = vi.fn(() => true);
+            const listener = vi.fn();
+            const warn = vi.spyOn(logService, 'warn');
+            const beforeListener = vi.fn(() => (commandService as CommandService).dispose());
+            const pushValCommandID = 'push-val-dispose-before-hook';
+            commandService.registerCommand({
+                id: pushValCommandID,
+                type: CommandType.COMMAND,
+                handler,
+            });
+            commandService.beforeCommandExecuted(beforeListener);
+            commandService.onCommandExecuted(listener);
+
+            expect(await commandService.executeCommand(pushValCommandID)).toBe(false);
+            expect(beforeListener).toHaveBeenCalledTimes(1);
+            expect(handler).not.toHaveBeenCalled();
+            expect(listener).not.toHaveBeenCalled();
+            expect(warn).toHaveBeenCalledWith(
+                '[CommandService]',
+                `command "${pushValCommandID}" skipped because CommandService is disposed.`
+            );
+        });
+
+        it('Should notify collaboration listeners for mutations and skip regular listeners for sync-only mutations', async () => {
+            const mutationID = 'mutation-for-collab-listener';
+            const regular = vi.fn();
+            const collab = vi.fn();
+            const regularDisposable = commandService.onCommandExecuted(regular);
+            const collabDisposable = commandService.onMutationExecutedForCollab(collab);
+
+            expect(() => commandService.onMutationExecutedForCollab(collab)).toThrow(
+                '[CommandService]: could not add a collab mutation listener twice.'
+            );
+
+            commandService.registerCommand({
+                id: mutationID,
+                type: CommandType.MUTATION,
+                handler: () => true,
+            });
+
+            await expect(commandService.executeCommand(mutationID, {}, { onlyLocal: true })).resolves.toBe(true);
+            expect(regular).toHaveBeenCalledTimes(1);
+            expect(collab).toHaveBeenCalledTimes(1);
+            expect(collab).toHaveBeenLastCalledWith(
+                { id: mutationID, type: CommandType.MUTATION, params: {} },
+                { onlyLocal: true }
+            );
+
+            regular.mockClear();
+            collab.mockClear();
+            await expect(commandService.executeCommand(mutationID, {}, { syncOnly: true })).resolves.toBe(true);
+            expect(regular).not.toHaveBeenCalled();
+            expect(collab).toHaveBeenCalledTimes(1);
+
+            regular.mockClear();
+            collab.mockClear();
+            expect(commandService.syncExecuteCommand(mutationID, {}, { syncOnly: true })).toBe(true);
+            expect(regular).not.toHaveBeenCalled();
+            expect(collab).toHaveBeenCalledTimes(1);
+
+            regularDisposable.dispose();
+            collabDisposable.dispose();
+            regular.mockClear();
+            collab.mockClear();
+            commandService.syncExecuteCommand(mutationID);
+            expect(regular).not.toHaveBeenCalled();
+            expect(collab).not.toHaveBeenCalled();
+        });
+
+        it('Should attach the triggering command id to nested synchronous mutations', () => {
+            const mutationID = 'nested-trigger-mutation';
+            const commandID = 'nested-trigger-command';
+            const params: { trigger?: string } = {};
+
+            commandService.registerCommand({
+                id: mutationID,
+                type: CommandType.MUTATION,
+                handler: (_accessor, mutationParams: { trigger?: string }) => {
+                    expect(mutationParams.trigger).toBe(commandID);
+                    return true;
+                },
+            });
+            commandService.registerCommand({
+                id: commandID,
+                type: CommandType.COMMAND,
+                handler: (accessor) => accessor.get(ICommandService).syncExecuteCommand(mutationID, params),
+            });
+
+            expect(commandService.syncExecuteCommand(commandID)).toBe(true);
+            expect(params.trigger).toBe(commandID);
+        });
+
+        it('Should attach the triggering operation id when no command wraps a synchronous mutation', () => {
+            const mutationID = 'nested-operation-trigger-mutation';
+            const operationID = 'nested-trigger-operation';
+            const params: { trigger?: string } = {};
+
+            commandService.registerCommand({
+                id: mutationID,
+                type: CommandType.MUTATION,
+                handler: (_accessor, mutationParams: { trigger?: string }) => {
+                    expect(mutationParams.trigger).toBe(operationID);
+                    return true;
+                },
+            });
+            commandService.registerCommand({
+                id: operationID,
+                type: CommandType.OPERATION,
+                handler: (accessor) => accessor.get(ICommandService).syncExecuteCommand(mutationID, params),
+            });
+
+            expect(commandService.syncExecuteCommand(operationID)).toBe(true);
+            expect(params.trigger).toBe(operationID);
+        });
+
+        it('Should attach operation triggers to asynchronous mutations without replacing explicit triggers', async () => {
+            const mutationID = 'nested-async-operation-trigger-mutation';
+            const operationID = 'nested-async-trigger-operation';
+            const inferredParams: { trigger?: string } = {};
+            const explicitParams = { trigger: 'semantic-trigger' };
+
+            commandService.registerCommand({
+                id: mutationID,
+                type: CommandType.MUTATION,
+                handler: () => true,
+            });
+            commandService.registerCommand({
+                id: operationID,
+                type: CommandType.OPERATION,
+                handler: async (accessor) => {
+                    const service = accessor.get(ICommandService);
+                    const inferred = await service.executeCommand(mutationID, inferredParams);
+                    const explicit = await service.executeCommand(mutationID, explicitParams);
+                    return inferred && explicit;
+                },
+            });
+
+            await expect(commandService.executeCommand(operationID)).resolves.toBe(true);
+            expect(inferredParams.trigger).toBe(operationID);
+            expect(explicitParams.trigger).toBe('semantic-trigger');
+        });
+
+        it('Should convert custom command execution errors into a false result', async () => {
+            const customErrorCommandID = 'custom-error-command';
+            commandService.registerCommand({
+                id: customErrorCommandID,
+                type: CommandType.COMMAND,
+                handler: () => {
+                    throw new CustomCommandExecutionError('canceled by test');
+                },
+            });
+
+            await expect(commandService.executeCommand(customErrorCommandID)).resolves.toBe(false);
+            expect(commandService.syncExecuteCommand(customErrorCommandID)).toBe(false);
         });
     });
 
@@ -249,9 +445,57 @@ describe('Test CommandService', () => {
             expect(str).toEqual(['A', 'B', 'B']);
 
             secondDisposable.dispose();
-            await expect(commandService.executeCommand(commandID)).rejects.toThrowError(
+            await expect(commandService.executeCommand(commandID)).rejects.toThrow(
                 `[CommandService]: command "${commandID}" is not registered.`
             );
+        });
+
+        it('Should reject mixing single commands with multi command implementations', () => {
+            commandService.registerCommand({
+                id: anotherCommandID,
+                type: CommandType.COMMAND,
+                handler: () => true,
+            });
+
+            expect(() => commandService.registerMultipleCommand({
+                id: anotherCommandID,
+                type: CommandType.COMMAND,
+                name: 'multi',
+                multi: true,
+                priority: 1,
+                handler: () => true,
+            } as IMultiCommand)).toThrow('Command has registered as a single command.');
+        });
+
+        it('Should continue to lower priority implementations when a multi command returns false', async () => {
+            const commandID = 'fallback-multi-command';
+            const calls: string[] = [];
+
+            commandService.registerMultipleCommand({
+                id: commandID,
+                type: CommandType.COMMAND,
+                name: 'first',
+                multi: true,
+                priority: 10,
+                handler: () => {
+                    calls.push('first');
+                    return false;
+                },
+            } as IMultiCommand);
+            commandService.registerMultipleCommand({
+                id: commandID,
+                type: CommandType.COMMAND,
+                name: 'second',
+                multi: true,
+                priority: 1,
+                handler: () => {
+                    calls.push('second');
+                    return true;
+                },
+            } as IMultiCommand);
+
+            await expect(commandService.executeCommand(commandID)).resolves.toBe(true);
+            expect(calls).toEqual(['first', 'second']);
         });
     });
 });

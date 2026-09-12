@@ -14,32 +14,48 @@
  * limitations under the License.
  */
 
-import type { IWorkbookData, Workbook } from '@univerjs/core';
+import type { IDocumentData, IWorkbookData, Workbook } from '@univerjs/core';
 import type { IBoundRectNoAngle, IViewportInfo } from '../../../basics/vector2';
 import {
     BooleanNumber,
     BorderStyleTypes,
     createSheetGapTestConfig,
+    CustomRangeType,
+    HorizontalAlign,
+
     ILogService,
     IUniverInstanceService,
+
     LocaleType,
     LogLevel,
     ObjectMatrix,
     RANGE_TYPE,
+    ThemeService,
     Univer,
     UniverInstanceType,
+    VerticalAlign,
+
     WrapStrategy,
 } from '@univerjs/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setupRenderTestEnv } from '../../../__tests__/render-test-utils';
+import { FontCache } from '../../../basics';
 import { Vector2 } from '../../../basics/vector2';
 import { Canvas } from '../../../canvas';
 import { Engine } from '../../../engine';
 import { MAIN_VIEW_PORT_KEY, Scene } from '../../../scene';
 import { Viewport } from '../../../viewport';
+import { Font } from '../extensions/font';
 import { SHEET_VIEWPORT_KEY } from '../interfaces';
-import { convertTransformToOffsetX, convertTransformToOffsetY, SpreadsheetSkeleton } from '../sheet.render-skeleton';
+import {
+    convertTransformToOffsetX,
+    convertTransformToOffsetY,
+    getShrinkToFitScale,
+    scaleDocumentDataForShrinkToFit,
+    SpreadsheetSkeleton,
+} from '../sheet.render-skeleton';
 import { Spreadsheet } from '../spreadsheet';
+import { createDocumentModelWithStyle } from '../util';
 
 const workbookDataFactory = (): IWorkbookData => ({
     id: 'sheet-render-workbook',
@@ -66,6 +82,11 @@ const workbookDataFactory = (): IWorkbookData => ({
             ff: 'Arial',
             cl: { rgb: '#111111' },
         },
+        'style-shrink': {
+            stf: BooleanNumber.TRUE,
+            fs: 12,
+            ff: 'Arial',
+        },
     },
     sheets: {
         'sheet-1': {
@@ -91,6 +112,8 @@ const workbookDataFactory = (): IWorkbookData => ({
                     0: { v: 'A1' },
                     1: { v: 'very-long-text-for-overflow-path', s: 'style-bg-border' },
                     2: { v: 'wrapped line text', s: 'style-bg-border' },
+                    3: { v: 'very long text that must shrink to fit', s: 'style-shrink' },
+                    4: { s: 'style-bg-border', custom: { key: 'value' } },
                 },
                 1: {
                     1: { v: 'rotate-text', s: 'style-rotate' },
@@ -239,6 +262,105 @@ describe('spreadsheet integration', () => {
         document.body.innerHTML = '';
     });
 
+    it('calculates a shrink scale with a one-point minimum font size', () => {
+        expect(getShrinkToFitScale(80, 100, 12)).toBe(1);
+        expect(getShrinkToFitScale(200, 100, 12)).toBe(0.5);
+        expect(getShrinkToFitScale(2400, 100, 12)).toBeCloseTo(1 / 12);
+    });
+
+    it('updates the mixed screen gridline color after theme changes', () => {
+        const { scene, skeleton, viewport } = fixture;
+        const themeService = fixture.univer.__getInjector().get(ThemeService);
+        const nativeContext = viewport.canvas!.getCanvasEle().getContext('2d') as CanvasRenderingContext2D & {
+            __getEvents: () => Array<{ type: string; props: Record<string, unknown> }>;
+            __clearEvents: () => void;
+        };
+        const getStrokeStyles = () => nativeContext.__getEvents()
+            .filter((event) => event.type === 'strokeStyle')
+            .map((event) => event.props.value);
+
+        nativeContext.__clearEvents();
+        skeleton.updateVisibleRange(viewport.calcViewportInfo());
+        scene.makeDirty(true);
+        scene.render();
+        expect(getStrokeStyles()).toContain('#d5d7dc');
+
+        const theme = themeService.getCurrentTheme();
+        themeService.setTheme({
+            ...theme,
+            gray: {
+                ...theme.gray,
+                200: '#ccddee',
+                900: '#112233',
+            },
+        });
+
+        nativeContext.__clearEvents();
+        scene.render();
+        expect(getStrokeStyles()).toContain('#bfd0e1');
+    });
+
+    it('scales cloned rich-text font sizes without mutating the stored document', () => {
+        const document = {
+            id: 'rich-text',
+            body: {
+                dataStream: 'Univer\r\n',
+                textRuns: [{ st: 0, ed: 6, ts: { fs: 20 } }],
+            },
+            documentStyle: { textStyle: { fs: 12 } },
+        } as IDocumentData;
+
+        const scaled = scaleDocumentDataForShrinkToFit(document, 0.5, 10);
+
+        expect(scaled).not.toBe(document);
+        expect(scaled.documentStyle.textStyle?.fs).toBe(6);
+        expect(scaled.body?.textRuns?.[0].ts?.fs).toBe(10);
+        expect(document.documentStyle.textStyle?.fs).toBe(12);
+        expect(document.body?.textRuns?.[0].ts?.fs).toBe(20);
+    });
+
+    it('applies document hyperlink styling to rich-text cells', () => {
+        const { skeleton, workbook } = fixture;
+        const worksheet = workbook.getActiveSheet()!;
+        const document = createDocumentModelWithStyle('Univer', {}).getSnapshot();
+        document.body!.customRanges = [{
+            startIndex: 0,
+            endIndex: 5,
+            rangeId: 'sheet-link',
+            rangeType: CustomRangeType.HYPERLINK,
+        }];
+        const cell = { p: document };
+        const style = worksheet.getComposedCellStyleByCellData(0, 6, cell)!;
+
+        skeleton._setFontStylesCache(0, 6, cell, style);
+
+        const pages = skeleton.getFont(0, 6)!.documentSkeleton!.getSkeletonData()!.pages;
+        const sections = pages.flatMap((page) => page.sections);
+        const columns = sections.flatMap((section) => section.columns);
+        const lines = columns.flatMap((column) => column.lines);
+        const divides = lines.flatMap((line) => line.divides);
+        const glyphs = divides.flatMap((divide) => divide.glyphGroup);
+        const linkGlyph = glyphs.find((glyph) => glyph.content === 'U');
+
+        expect(linkGlyph?.ts?.cl?.rgb).toBe('blue.600');
+        expect(linkGlyph?.ts?.ul?.s).toBe(BooleanNumber.TRUE);
+    });
+
+    it('applies shrink to fit while building the font cache', () => {
+        const { skeleton, workbook } = fixture;
+        const worksheet = workbook.getActiveSheet()!;
+        const cell = worksheet.getCell(0, 3)!;
+        const style = worksheet.getComposedCellStyleByCellData(0, 3, cell)!;
+        vi.spyOn(FontCache, 'getMeasureText').mockReturnValue({ width: 240 } as TextMetrics);
+
+        skeleton._setFontStylesCache(0, 3, cell, style);
+
+        const fontCache = skeleton.getFont(0, 3)!;
+        expect(fontCache.shrinkScale).toBeCloseTo(68 / 240);
+        expect(fontCache.fontString).toContain(`${12 * 68 / 240}pt`);
+        expect(style.fs).toBe(12);
+    });
+
     it('builds sheet skeleton cache through visible viewport and style/layout calculations', () => {
         const { skeleton, scene, cacheCanvas } = fixture;
         const vpInfo = createViewportInfo(scene, cacheCanvas);
@@ -255,6 +377,9 @@ describe('spreadsheet integration', () => {
         }));
         expect(skeleton.rowColumnSegment.endRow).toBeGreaterThanOrEqual(0);
         expect(skeleton.stylesCache.fontMatrix.getSizeOf()).toBeGreaterThan(0);
+        expect(skeleton.stylesCache.border?.getValue(0, 4)).toBeTruthy();
+        expect(skeleton.stylesCache.fontMatrix.getValue(0, 4)).toBeUndefined();
+        expect(skeleton.overflowCache.getValue(0, 4)).toBeUndefined();
 
         const autoHeights = skeleton.calculateAutoHeightInRange([{ startRow: 0, endRow: 6, startColumn: 0, endColumn: 3, rangeType: RANGE_TYPE.NORMAL }]);
         expect(autoHeights.length).toBeGreaterThan(0);
@@ -299,6 +424,116 @@ describe('spreadsheet integration', () => {
         expect(skeleton.stylesCache.fontMatrix.getSizeOf()).toBe(0);
     });
 
+    it('skips font cache for sub-four-pixel rows without dropping visible styles or merged text', () => {
+        const workbookData = workbookDataFactory();
+        workbookData.id = 'sheet-render-short-row-workbook';
+        workbookData.name = 'sheet-render-short-row-workbook';
+        workbookData.sheets['sheet-1'].rowData = {
+            ...workbookData.sheets['sheet-1'].rowData,
+            2: { h: 2 },
+            3: { h: 2 },
+            4: { h: 2 },
+        };
+        workbookData.sheets['sheet-1'].cellData = {
+            ...workbookData.sheets['sheet-1'].cellData,
+            4: { 0: { v: 'compressed', s: 'style-bg-border' } },
+        };
+
+        const workbook = fixture.univer.createUnit<IWorkbookData, Workbook>(UniverInstanceType.UNIVER_SHEET, workbookData);
+        const worksheet = workbook.getActiveSheet()!;
+        const skeleton = fixture.univer.__getInjector().createInstance(SpreadsheetSkeleton, worksheet, workbook.getStyles()).calculate() as SpreadsheetSkeleton;
+        skeleton.setScene(fixture.scene);
+        const viewportInfo = createViewportInfo(fixture.scene, fixture.cacheCanvas);
+
+        skeleton.setStylesCache(viewportInfo, { scaleY: 1 });
+
+        expect(skeleton.stylesCache.fontMatrix.getValue(4, 0)).toBeUndefined();
+        expect(skeleton.stylesCache.backgroundPositions?.getValue(4, 0)).toBeDefined();
+        expect(skeleton.stylesCache.border?.getValue(4, 0)).toBeDefined();
+        expect(skeleton.stylesCache.fontMatrix.getValue(2, 2)).toBeDefined();
+
+        skeleton.resetCache();
+        skeleton.setStylesCache(viewportInfo, { scaleY: 2 });
+        expect(skeleton.stylesCache.fontMatrix.getValue(4, 0)).toBeDefined();
+
+        skeleton.resetCache();
+        skeleton.setStylesCache(viewportInfo);
+        expect(skeleton.stylesCache.fontMatrix.getValue(4, 0)).toBeDefined();
+    });
+
+    it('keeps the last printing row and column when the viewport ends on their exact boundaries', () => {
+        const { skeleton, scene, cacheCanvas } = fixture;
+        const endRow = 3;
+        const endColumn = 3;
+        const cacheBound = createBound(
+            skeleton.rowHeaderWidthAndMarginLeft,
+            skeleton.columnHeaderHeightAndMarginTop,
+            skeleton.rowHeaderWidthAndMarginLeft + skeleton.columnWidthAccumulation[endColumn],
+            skeleton.columnHeaderHeightAndMarginTop + skeleton.rowHeightAccumulation[endRow]
+        );
+        const vpInfo = createViewportInfo(scene, cacheCanvas, { cacheBound });
+
+        expect(skeleton.getCacheRangeByViewport(vpInfo, true)).toEqual({
+            startRow: 0,
+            endRow,
+            startColumn: 0,
+            endColumn,
+        });
+    });
+
+    it('does not include the next printing row or column for a one-pixel viewport overlap', () => {
+        const { skeleton, scene, cacheCanvas } = fixture;
+        const endRow = 3;
+        const endColumn = 3;
+        const cacheBound = createBound(
+            skeleton.rowHeaderWidthAndMarginLeft,
+            skeleton.columnHeaderHeightAndMarginTop,
+            skeleton.rowHeaderWidthAndMarginLeft + skeleton.columnWidthAccumulation[endColumn] + 1,
+            skeleton.columnHeaderHeightAndMarginTop + skeleton.rowHeightAccumulation[endRow] + 1
+        );
+        const vpInfo = createViewportInfo(scene, cacheCanvas, { cacheBound });
+
+        expect(skeleton.getCacheRangeByViewport(vpInfo, true)).toEqual({
+            startRow: 0,
+            endRow,
+            startColumn: 0,
+            endColumn,
+        });
+    });
+
+    it('builds border cache for row-wise merged cells on the selection left edge', () => {
+        const workbookData = workbookDataFactory();
+        workbookData.id = 'sheet-render-border-workbook';
+        workbookData.name = 'sheet-render-border-workbook';
+        workbookData.styles.leftBorder = {
+            bd: {
+                l: { s: BorderStyleTypes.THIN, cl: { rgb: '#000000' } },
+            },
+        };
+        workbookData.sheets['sheet-1'].mergeData = [
+            { startRow: 3, endRow: 3, startColumn: 2, endColumn: 4, rangeType: RANGE_TYPE.NORMAL },
+            { startRow: 4, endRow: 4, startColumn: 2, endColumn: 4, rangeType: RANGE_TYPE.NORMAL },
+            { startRow: 5, endRow: 5, startColumn: 2, endColumn: 4, rangeType: RANGE_TYPE.NORMAL },
+        ];
+        workbookData.sheets['sheet-1'].cellData = {
+            3: { 2: { s: 'leftBorder' }, 3: { s: 'leftBorder' }, 4: { s: 'leftBorder' } },
+            4: { 2: { s: 'leftBorder' }, 3: { s: 'leftBorder' }, 4: { s: 'leftBorder' } },
+            5: { 2: { s: 'leftBorder' }, 3: { s: 'leftBorder' }, 4: { s: 'leftBorder' } },
+        };
+
+        const workbook = fixture.univer.createUnit<IWorkbookData, Workbook>(UniverInstanceType.UNIVER_SHEET, workbookData);
+        const worksheet = workbook.getActiveSheet()!;
+        const skeleton = fixture.univer.__getInjector().createInstance(SpreadsheetSkeleton, worksheet, workbook.getStyles()).calculate() as SpreadsheetSkeleton;
+        skeleton.setScene(fixture.scene);
+        const borderStyleSpy = vi.spyOn(skeleton, '_setBorderStylesCache');
+        skeleton.setStylesCache(createViewportInfo(fixture.scene, fixture.cacheCanvas));
+
+        expect(skeleton.stylesCache.border?.getValue(3, 2)?.l).toEqual(expect.objectContaining({ color: '#000000' }));
+        expect(skeleton.stylesCache.border?.getValue(4, 2)?.l).toEqual(expect.objectContaining({ color: '#000000' }));
+        expect(skeleton.stylesCache.border?.getValue(5, 2)?.l).toEqual(expect.objectContaining({ color: '#000000' }));
+        expect(borderStyleSpy.mock.calls.filter(([, , , options]) => options?.mergeRange)).toHaveLength(3);
+    });
+
     it('renders spreadsheet with cache refresh and scrolling diff paths in scene viewport', () => {
         const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
         const mainCtx = mainCanvas.getContext();
@@ -307,8 +542,10 @@ describe('spreadsheet integration', () => {
             isDirty: 1,
             isForceDirty: false,
         });
+        const stylesCacheSpy = vi.spyOn(skeleton, 'setStylesCache');
 
         spreadsheet.render(mainCtx as any, baseVpInfo);
+        expect(stylesCacheSpy).toHaveBeenCalledWith(baseVpInfo, { scaleY: 1 });
         expect(spreadsheet.allowCache).toBe(true);
         expect(spreadsheet.getSelectionBounding(2, 2, 2, 2)).toEqual(expect.objectContaining({
             startRow: 2,
@@ -355,6 +592,26 @@ describe('spreadsheet integration', () => {
         skeleton.dispose();
     });
 
+    it('renders sheet content from the header plus outline margin origin', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const mainCtx = mainCanvas.getContext() as any;
+        const translateSpy = vi.spyOn(mainCtx, 'translateWithPrecision');
+        const transformerSpy = vi.spyOn(scene, 'updateTransformerZero');
+
+        skeleton.setMarginLeft(20);
+        skeleton.setMarginTop(16);
+
+        spreadsheet.render(mainCtx, createViewportInfo(scene, cacheCanvas, {
+            isDirty: 1,
+            isForceDirty: false,
+        }));
+
+        expect(translateSpy).toHaveBeenCalledWith(66, 44);
+        expect(transformerSpy).toHaveBeenCalledWith(66, 44);
+        expect(spreadsheet.isHit(Vector2.FromArray([65, 44]))).toBe(false);
+        expect(spreadsheet.isHit(Vector2.FromArray([67, 45]))).toBe(true);
+    });
+
     it('covers spreadsheet draw helpers and utility branches', () => {
         const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
         const context = mainCanvas.getContext() as any;
@@ -377,6 +634,39 @@ describe('spreadsheet integration', () => {
         spreadsheet.draw(context, viewportInfo);
         expect(extensionDraw).toHaveBeenCalled();
 
+        (spreadsheet as any)._refreshIncrementalState = true;
+        spreadsheet.draw(context, viewportInfo);
+        const incrementalDrawInfo = extensionDraw.mock.calls.at(-1)?.[4];
+        expect(incrementalDrawInfo.viewRanges).toEqual(
+            viewportInfo.diffBounds.map((bound) => skeleton.getRangeByViewBound(bound))
+        );
+
+        const fontExtension = { uKey: 'DefaultFontExtension', draw: vi.fn() };
+        const borderExtension = { uKey: 'DefaultBorderExtension', draw: vi.fn() };
+        (spreadsheet as any)._fontExtension = fontExtension;
+        (spreadsheet as any)._borderExtension = borderExtension;
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([
+            fontExtension,
+            borderExtension,
+            {
+                uKey: 'MockSheetExtension',
+                draw: extensionDraw,
+            },
+        ]);
+        spreadsheet.draw(context, viewportInfo);
+        const cacheRange = skeleton.getCacheRangeByViewport(viewportInfo);
+        const overflowSafeRanges = viewportInfo.diffBounds.map((bound) => ({
+            ...skeleton.getRangeByViewBound(bound),
+            startColumn: cacheRange.startColumn,
+            endColumn: cacheRange.endColumn,
+        }));
+        expect(fontExtension.draw.mock.calls.at(-1)?.[4].viewRanges).toEqual(overflowSafeRanges);
+        expect(borderExtension.draw.mock.calls.at(-1)?.[4].viewRanges).toEqual(overflowSafeRanges);
+        expect(extensionDraw.mock.calls.at(-1)?.[4].viewRanges).toEqual(
+            viewportInfo.diffBounds.map((bound) => skeleton.getRangeByViewBound(bound))
+        );
+        (spreadsheet as any)._refreshIncrementalState = false;
+
         spreadsheet.paintNewAreaForScrolling(viewportInfo, {
             cacheCanvas,
             cacheCtx: cacheCanvas.getContext() as any,
@@ -385,8 +675,8 @@ describe('spreadsheet integration', () => {
             leftOrigin: 0,
             bufferEdgeX: 8,
             bufferEdgeY: 6,
-            rowHeaderWidth: skeleton.rowHeaderWidth,
-            columnHeaderHeight: skeleton.columnHeaderHeight,
+            rowHeaderWidthAndMarginLeft: skeleton.rowHeaderWidthAndMarginLeft,
+            columnHeaderHeightAndMarginTop: skeleton.columnHeaderHeightAndMarginTop,
             scaleX: 1,
             scaleY: 1,
         } as any);
@@ -406,11 +696,7 @@ describe('spreadsheet integration', () => {
         const random = spreadsheet.testGetRandomLightColor();
         expect(random).toMatch(/^#[A-F]{6}$/);
 
-        expect(spreadsheet.backgroundExtension).toBe(spreadsheet.backgroundExtension);
-        expect(spreadsheet.borderExtension).toBe(spreadsheet.borderExtension);
-        expect(spreadsheet.fontExtension).toBe(spreadsheet.fontExtension);
         expect(spreadsheet.getDocuments()).toBeDefined();
-        expect(spreadsheet.forceDisableGridlines).toBe(spreadsheet.forceDisableGridlines);
 
         const noSkeletonSpreadsheet = new Spreadsheet('no-skeleton');
         expect(noSkeletonSpreadsheet.draw(context, viewportInfo)).toBeUndefined();
@@ -422,6 +708,592 @@ describe('spreadsheet integration', () => {
             endY: 0,
         });
         noSkeletonSpreadsheet.dispose();
+    });
+
+    it('repaints text across the cleared incremental scroll bound', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext();
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(46, 28, 118, 52)],
+            diffX: 0,
+            diffY: 24,
+            isDirty: 0,
+            isForceDirty: false,
+        });
+
+        skeleton.setStylesCache(createViewportInfo(scene, cacheCanvas));
+        const fontExtension = new Font();
+        spreadsheet.register(fontExtension);
+        Reflect.set(spreadsheet, '_fontExtension', fontExtension);
+        Reflect.set(skeleton, '_incrementalFontRenderRanges', [{
+            startRow: 10,
+            endRow: 10,
+            startColumn: 0,
+            endColumn: 0,
+        }]);
+        Reflect.set(spreadsheet, '_refreshIncrementalState', true);
+        const renderFontSpy = vi.spyOn(
+            fontExtension as unknown as { _renderFontEachCell: (...args: unknown[]) => void },
+            '_renderFontEachCell'
+        );
+
+        spreadsheet.draw(context, viewportInfo);
+
+        expect(renderFontSpy.mock.calls.some(([, row, column]) => row === 0 && column === 0)).toBe(true);
+    });
+
+    it('skips merge gridline cleanup during merge-free drawing', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const extensionDraw = vi.fn();
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        const getMergeRangesSpy = vi.spyOn(skeleton, 'getCurrentRowColumnSegmentMergeData');
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([{
+            uKey: 'MockSheetExtension',
+            draw: extensionDraw,
+        }]);
+
+        spreadsheet.draw(context, createViewportInfo(scene, cacheCanvas));
+
+        expect(getMergeRangesSpy).not.toHaveBeenCalled();
+        expect(extensionDraw.mock.calls.at(-1)?.[4].hasMergeData).toBe(false);
+    });
+
+    it('skips sparse extensions outside merge repair bounds on sheets with merged cells', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const sparseDraw = vi.fn();
+        const regularDraw = vi.fn();
+
+        vi.spyOn(skeleton.worksheet, 'getCell').mockReturnValue(undefined);
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                draw: sparseDraw,
+                uKey: 'DefaultCustomExtension',
+            },
+            {
+                draw: regularDraw,
+                uKey: 'RegularExtension',
+            },
+        ]);
+
+        (spreadsheet as any)._refreshIncrementalState = true;
+        spreadsheet.draw(context, createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(100, 60, 220, 140)],
+            diffCacheBounds: [createBound(100, 60, 220, 140)],
+        }));
+        (spreadsheet as any)._refreshIncrementalState = false;
+
+        expect(sparseDraw).not.toHaveBeenCalled();
+        expect(regularDraw).toHaveBeenCalledOnce();
+    });
+
+    it('does not skip conditional-formatting render extensions during sparse scans', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const dataBarDraw = vi.fn();
+        const iconDraw = vi.fn();
+        const markerDraw = vi.fn();
+
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        vi.spyOn(skeleton.worksheet, 'getCell').mockReturnValue(undefined);
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                draw: dataBarDraw,
+                uKey: 'sheet-conditional-rule-data-bar',
+            },
+            {
+                draw: iconDraw,
+                uKey: 'sheet-conditional-rule-icon',
+            },
+            {
+                draw: markerDraw,
+                uKey: 'DefaultMarkerExtension',
+            },
+        ]);
+
+        (spreadsheet as any)._refreshIncrementalState = true;
+        spreadsheet.draw(context, createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(100, 60, 220, 140)],
+            diffCacheBounds: [createBound(100, 60, 220, 140)],
+        }));
+        (spreadsheet as any)._refreshIncrementalState = false;
+
+        expect(dataBarDraw).toHaveBeenCalledOnce();
+        expect(iconDraw).toHaveBeenCalledOnce();
+        expect(markerDraw).not.toHaveBeenCalled();
+    });
+
+    it('does not scan sparse extension features when no sparse extension is registered', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const regularDraw = vi.fn();
+        const getCellSpy = vi.spyOn(skeleton.worksheet, 'getCell');
+
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                draw: regularDraw,
+                uKey: 'RegularExtension',
+            },
+        ]);
+
+        (spreadsheet as any)._refreshIncrementalState = true;
+        spreadsheet.draw(context, createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(100, 60, 220, 140)],
+            diffCacheBounds: [createBound(100, 60, 220, 140)],
+        }));
+        (spreadsheet as any)._refreshIncrementalState = false;
+
+        expect(regularDraw).toHaveBeenCalledOnce();
+        expect(getCellSpy).not.toHaveBeenCalled();
+    });
+
+    it('narrows sparse extension diff ranges to matching cells during merge-free incremental drawing', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const markerDraw = vi.fn();
+
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        vi.spyOn(skeleton.worksheet, 'getCell').mockImplementation((row: number, col: number) => (
+            row === 2 && col === 1 ? { markers: { tr: { color: '#ff0000', size: 4 } } } : undefined
+        ));
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                draw: markerDraw,
+                uKey: 'DefaultMarkerExtension',
+            },
+        ]);
+
+        (spreadsheet as any)._refreshIncrementalState = true;
+        spreadsheet.draw(context, createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(48, 48, 240, 120)],
+            diffCacheBounds: [createBound(48, 48, 240, 120)],
+        }));
+        (spreadsheet as any)._refreshIncrementalState = false;
+
+        expect(markerDraw).toHaveBeenCalledOnce();
+        expect(markerDraw.mock.calls[0][3]).toEqual([{
+            startRow: 2,
+            endRow: 2,
+            startColumn: 1,
+            endColumn: 1,
+        }]);
+    });
+
+    it('reuses style cache cell data when scanning sparse extension features', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const markerDraw = vi.fn();
+        const diffBound = createBound(48, 48, 240, 120);
+        const diffRange = skeleton.getRangeByViewBound(diffBound);
+        const getCellSpy = vi.spyOn(skeleton.worksheet, 'getCell');
+
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        for (let row = diffRange.startRow; row <= diffRange.endRow; row++) {
+            for (let col = diffRange.startColumn; col <= diffRange.endColumn; col++) {
+                skeleton.stylesCache.fontMatrix.setValue(row, col, {
+                    cellData: row === 2 && col === 1
+                        ? { markers: { tr: { color: '#ff0000', size: 4 } } }
+                        : { v: `${row}-${col}` },
+                } as any);
+            }
+        }
+        vi.spyOn(spreadsheet as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                draw: markerDraw,
+                uKey: 'DefaultMarkerExtension',
+            },
+        ]);
+
+        (spreadsheet as any)._refreshIncrementalState = true;
+        spreadsheet.draw(context, createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [diffBound],
+            diffCacheBounds: [diffBound],
+        }));
+        (spreadsheet as any)._refreshIncrementalState = false;
+
+        expect(getCellSpy).not.toHaveBeenCalled();
+        expect(markerDraw).toHaveBeenCalledOnce();
+        expect(markerDraw.mock.calls[0][3]).toEqual([{
+            startRow: 2,
+            endRow: 2,
+            startColumn: 1,
+            endColumn: 1,
+        }]);
+    });
+
+    it('skips style cache cell visits when scrolling inside the existing cache area', () => {
+        const { skeleton, scene, cacheCanvas } = fixture;
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        const styleCellSpy = vi.spyOn(skeleton as any, '_setStylesCacheForOneCell');
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(100, 60, 220, 140)],
+            diffCacheBounds: [],
+            diffX: 0,
+            diffY: 12,
+            shouldCacheUpdate: 0,
+            isDirty: 0,
+            isForceDirty: false,
+        });
+
+        skeleton.setStylesCache(viewportInfo);
+
+        expect(styleCellSpy).not.toHaveBeenCalled();
+        expect(skeleton.rowColumnSegment).toEqual(skeleton.getCacheRangeByViewport(viewportInfo));
+    });
+
+    it('reuses cached member styles while rebuilding merged borders during scrolling', () => {
+        const { skeleton, scene, cacheCanvas } = fixture;
+        skeleton.setStylesCache(createViewportInfo(scene, cacheCanvas));
+        const cachedStyle = skeleton.stylesCache.fontMatrix.getValue(1, 1);
+        expect(cachedStyle).toBeDefined();
+        const borderStyleSpy = vi.spyOn(skeleton, '_setBorderStylesCache');
+
+        skeleton.setStylesCache(createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(100, 60, 220, 140)],
+            diffCacheBounds: [createBound(100, 60, 220, 140)],
+            diffX: 0,
+            diffY: 12,
+            shouldCacheUpdate: 1,
+            isDirty: 0,
+            isForceDirty: false,
+        }));
+
+        expect(skeleton.stylesCache.fontMatrix.getValue(1, 1)).toBe(cachedStyle);
+        expect(borderStyleSpy.mock.calls.some(([, , , options]) => options?.mergeRange)).toBe(true);
+    });
+
+    it('skips merge lookups for one-cell style cache when merge data is absent', () => {
+        const { skeleton } = fixture;
+        const mergeInfoSpy = vi.spyOn(skeleton.worksheet, 'getCellInfoInMergeData');
+
+        (skeleton as any)._setStylesCacheForOneCell(0, 0, {
+            cacheItem: { bg: true, border: true },
+            hasMergeData: false,
+        });
+
+        expect(mergeInfoSpy).not.toHaveBeenCalled();
+    });
+
+    it('reuses row visibility from the style cache row scan', () => {
+        const { skeleton, scene, cacheCanvas } = fixture;
+        const getRowVisibleSpy = vi.spyOn(skeleton.worksheet, 'getRowVisible');
+        const viewportInfo = createViewportInfo(scene, cacheCanvas);
+
+        skeleton.setStylesCache(viewportInfo);
+
+        const visibleRange = skeleton.rowColumnSegment;
+        const visibleRowCount = visibleRange.endRow - visibleRange.startRow + 1;
+        expect(getRowVisibleSpy.mock.calls.length).toBeLessThan(visibleRowCount * 3);
+    });
+
+    it('reuses cached overflow-only font styles without reading cell data again', () => {
+        const { skeleton } = fixture;
+        const getCellSpy = vi.spyOn(skeleton.worksheet, 'getCell');
+        const getStyleSpy = vi.spyOn(skeleton.worksheet, 'getComposedCellStyleByCellData');
+        const options = { cacheItem: { bg: false, border: false }, reuseExisting: true };
+
+        (skeleton as any)._setStylesCacheForOneCell(0, 0, options);
+        const getCellCalls = getCellSpy.mock.calls.length;
+        const getStyleCalls = getStyleSpy.mock.calls.length;
+
+        (skeleton as any)._setStylesCacheForOneCell(0, 0, options);
+
+        expect(getCellSpy.mock.calls.length).toBe(getCellCalls);
+        expect(getStyleSpy.mock.calls.length).toBe(getStyleCalls);
+    });
+
+    it('reuses fully cached cell styles during incremental scrolling', () => {
+        const { skeleton } = fixture;
+        const getCellSpy = vi.spyOn(skeleton.worksheet, 'getCell');
+        const getStyleSpy = vi.spyOn(skeleton.worksheet, 'getComposedCellStyleByCellData');
+
+        (skeleton as any)._setStylesCacheForOneCell(0, 0, { cacheItem: { bg: true, border: true } });
+        const getCellCalls = getCellSpy.mock.calls.length;
+        const getStyleCalls = getStyleSpy.mock.calls.length;
+
+        (skeleton as any)._setStylesCacheForOneCell(0, 0, { cacheItem: { bg: true, border: true }, reuseExisting: true });
+
+        expect(getCellSpy.mock.calls.length).toBe(getCellCalls);
+        expect(getStyleSpy.mock.calls.length).toBe(getStyleCalls);
+    });
+
+    it('skips overflow boundary scanning when text fits in the current column', () => {
+        const { skeleton } = fixture;
+        const overflowBoundSpy = vi.spyOn(skeleton as any, '_getOverflowBound');
+        const fontCache = {
+            cellData: { v: 'A1' },
+            fontString: '12px Arial',
+            horizontalAlign: HorizontalAlign.LEFT,
+            verticalAlign: VerticalAlign.TOP,
+            wrapStrategy: WrapStrategy.OVERFLOW,
+        } as any;
+
+        const result = (skeleton as any)._calculateOverflowCell(0, 0, fontCache);
+
+        expect(result).toBe(true);
+        expect(fontCache.textFitsCurrentCell).toBe(true);
+        expect(overflowBoundSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips overflow text measurement when the adjacent cell blocks overflow', () => {
+        const { skeleton } = fixture;
+        const measureSpy = vi.spyOn(FontCache, 'getMeasureText');
+        vi.spyOn(skeleton.worksheet, 'getCell').mockImplementation((row: number, col: number) => (
+            row === 0 && col === 1 ? { v: 'blocked' } as any : { v: 'long text' } as any
+        ));
+
+        const result = (skeleton as any)._calculateOverflowCell(0, 0, {
+            cellData: { v: 'this is a very long text that would normally be measured' },
+            fontString: '12px Arial',
+            horizontalAlign: HorizontalAlign.LEFT,
+            verticalAlign: VerticalAlign.TOP,
+            wrapStrategy: WrapStrategy.OVERFLOW,
+        });
+
+        expect(result).toBe(true);
+        expect(measureSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses raw adjacent cell data to block overflow without worksheet reads', () => {
+        const { skeleton } = fixture;
+        const getCellSpy = vi.spyOn(skeleton.worksheet, 'getCell');
+        const measureSpy = vi.spyOn(FontCache, 'getMeasureText');
+
+        const result = (skeleton as any)._calculateOverflowCell(0, 0, {
+            cellData: { v: 'this is a very long text that would normally inspect the adjacent cell' },
+            fontString: '12px Arial',
+            horizontalAlign: HorizontalAlign.LEFT,
+            verticalAlign: VerticalAlign.TOP,
+            wrapStrategy: WrapStrategy.OVERFLOW,
+        });
+
+        expect(result).toBe(true);
+        expect(getCellSpy).not.toHaveBeenCalled();
+        expect(measureSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips merge checks during overflow calculation when the sheet has no merged cells', () => {
+        const { skeleton } = fixture;
+        const mergeSpy = vi.spyOn(skeleton, 'intersectMergeRange');
+        vi.spyOn(skeleton.worksheet, 'getCell').mockImplementation((row: number, col: number) => (
+            row === 0 && col === 1 ? { v: 'blocked' } as any : { v: 'long text' } as any
+        ));
+
+        const result = (skeleton as any)._calculateOverflowCell(0, 0, {
+            cellData: { v: 'this is a very long text that would normally check merge ranges' },
+            fontString: '12px Arial',
+            horizontalAlign: HorizontalAlign.LEFT,
+            verticalAlign: VerticalAlign.TOP,
+            wrapStrategy: WrapStrategy.OVERFLOW,
+        }, false);
+
+        expect(result).toBe(true);
+        expect(mergeSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips style cache work for sheet header viewports', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext();
+        const styleCacheSpy = vi.spyOn(skeleton, 'setStylesCache');
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            viewportKey: SHEET_VIEWPORT_KEY.VIEW_ROW_TOP,
+        });
+
+        spreadsheet.render(context, viewportInfo);
+
+        expect(styleCacheSpy).not.toHaveBeenCalled();
+    });
+
+    it('copies the full cache viewport so the first row and column remain visible', () => {
+        const { spreadsheet, skeleton, scene, cacheCanvas, mainCanvas } = fixture;
+        const context = mainCanvas.getContext() as any;
+        const applyCacheSpy = vi.spyOn(spreadsheet as any, '_applyCache').mockImplementation(() => {});
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [],
+            diffCacheBounds: [],
+            isDirty: 0,
+            isForceDirty: false,
+            viewPortPosition: createBound(10, 20, 410, 220),
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(applyCacheSpy).toHaveBeenCalledWith(
+            cacheCanvas,
+            context,
+            12,
+            8,
+            400 + skeleton.rowHeaderWidthAndMarginLeft,
+            200 + skeleton.columnHeaderHeightAndMarginTop,
+            10,
+            20,
+            400 + skeleton.rowHeaderWidthAndMarginLeft,
+            200 + skeleton.columnHeaderHeightAndMarginTop
+        );
+    });
+
+    it('refreshes cache instead of incremental painting for large scroll jumps', () => {
+        const { spreadsheet, skeleton, mainCanvas, cacheCanvas, scene } = fixture;
+        const context = mainCanvas.getContext();
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(0, 10000, 460, 10280)],
+            diffCacheBounds: [createBound(0, 10000, 460, 10280)],
+            diffX: 0,
+            diffY: -10000,
+            isDirty: 0,
+            isForceDirty: false,
+            shouldCacheUpdate: 1,
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+
+        const paintSpy = vi.spyOn(spreadsheet, 'paintNewAreaForScrolling');
+        const refreshSpy = vi.spyOn(spreadsheet, 'refreshCacheCanvas');
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(refreshSpy).toHaveBeenCalledOnce();
+        expect(paintSpy).not.toHaveBeenCalled();
+    });
+
+    it('uses backing-store cache size when detecting large scroll jumps', () => {
+        const { spreadsheet, skeleton, mainCanvas, scene } = fixture;
+        const context = mainCanvas.getContext();
+        const cacheCanvas = new Canvas({ width: 700, height: 420, pixelRatio: 1.5 });
+        vi.spyOn(skeleton.worksheet, 'getMergeData').mockReturnValue([]);
+        context.setTransform(1.5, 0, 0, 1.5, 0, 0);
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(0, 360, 460, 640)],
+            diffCacheBounds: [createBound(0, 360, 460, 640)],
+            diffX: 0,
+            diffY: -360,
+            isDirty: 0,
+            isForceDirty: false,
+            shouldCacheUpdate: 1,
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+
+        const paintSpy = vi.spyOn(spreadsheet, 'paintNewAreaForScrolling');
+        const refreshSpy = vi.spyOn(spreadsheet, 'refreshCacheCanvas');
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(paintSpy).toHaveBeenCalledOnce();
+        expect(refreshSpy).not.toHaveBeenCalled();
+        cacheCanvas.dispose();
+    });
+
+    it('repairs the full merged range incrementally so merged text remains visible', () => {
+        const { spreadsheet, skeleton, mainCanvas, cacheCanvas, scene } = fixture;
+        const context = mainCanvas.getContext();
+        const mergeInfo = skeleton.getCellWithCoordByIndex(2, 2, false).mergeInfo;
+        const mergedBound = createBound(
+            mergeInfo.startX + skeleton.rowHeaderWidthAndMarginLeft,
+            mergeInfo.startY + skeleton.columnHeaderHeightAndMarginTop,
+            mergeInfo.endX + skeleton.rowHeaderWidthAndMarginLeft,
+            mergeInfo.endY + skeleton.columnHeaderHeightAndMarginTop
+        );
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(mergedBound.right - 8, mergedBound.top, mergedBound.right, mergedBound.bottom)],
+            diffCacheBounds: [],
+            diffX: 0,
+            diffY: -8,
+            isDirty: 0,
+            isForceDirty: false,
+            shouldCacheUpdate: 0,
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+
+        const paintSpy = vi.spyOn(spreadsheet, 'paintNewAreaForScrolling');
+        const refreshSpy = vi.spyOn(spreadsheet, 'refreshCacheCanvas');
+        const drawSpy = vi.spyOn(spreadsheet, 'draw').mockImplementation(() => {});
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(refreshSpy).not.toHaveBeenCalled();
+        expect(paintSpy).toHaveBeenCalledOnce();
+        expect(drawSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+            diffBounds: [mergedBound],
+        }), true);
+    });
+
+    it('refreshes the cache when merge repair covers most of the cache area', () => {
+        const { spreadsheet, skeleton, mainCanvas, cacheCanvas, scene } = fixture;
+        const context = mainCanvas.getContext();
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(0, 200, 460, 280)],
+            diffCacheBounds: [],
+            diffX: 0,
+            diffY: -80,
+            isDirty: 0,
+            isForceDirty: false,
+            shouldCacheUpdate: 0,
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+        vi.spyOn(skeleton.worksheet, 'getMergedCellRange').mockReturnValue([
+            { startRow: 0, endRow: 9, startColumn: 0, endColumn: 6, rangeType: RANGE_TYPE.NORMAL },
+        ]);
+
+        const paintSpy = vi.spyOn(spreadsheet, 'paintNewAreaForScrolling');
+        const refreshSpy = vi.spyOn(spreadsheet, 'refreshCacheCanvas');
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(refreshSpy).toHaveBeenCalledOnce();
+        expect(paintSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not repaint merged cells outside the scroll diff', () => {
+        const { spreadsheet, skeleton, mainCanvas, cacheCanvas, scene } = fixture;
+        const context = mainCanvas.getContext();
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(0, 360, 460, 640)],
+            diffCacheBounds: [],
+            diffX: 0,
+            diffY: -48,
+            isDirty: 0,
+            isForceDirty: false,
+            shouldCacheUpdate: 0,
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+
+        const drawSpy = vi.spyOn(spreadsheet, 'draw').mockImplementation(() => {});
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(drawSpy).not.toHaveBeenCalled();
+    });
+
+    it('refreshes cache for horizontal cache updates to avoid exposing stale cache edges', () => {
+        const { spreadsheet, skeleton, mainCanvas, cacheCanvas, scene } = fixture;
+        const context = mainCanvas.getContext();
+        const viewportInfo = createViewportInfo(scene, cacheCanvas, {
+            diffBounds: [createBound(520, 0, 640, 280)],
+            diffCacheBounds: [createBound(520, 0, 640, 280)],
+            diffX: -80,
+            diffY: 0,
+            isDirty: 0,
+            isForceDirty: false,
+            shouldCacheUpdate: 1,
+        });
+        spreadsheet.makeDirty(false);
+        spreadsheet.makeForceDirty(false);
+
+        const paintSpy = vi.spyOn(spreadsheet, 'paintNewAreaForScrolling');
+        const refreshSpy = vi.spyOn(spreadsheet, 'refreshCacheCanvas');
+
+        spreadsheet.renderByViewports(context, viewportInfo, skeleton);
+
+        expect(refreshSpy).toHaveBeenCalledOnce();
+        expect(paintSpy).not.toHaveBeenCalled();
     });
 
     it('draws row and column gap areas using defaults from gapConfig', () => {
@@ -539,5 +1411,58 @@ describe('spreadsheet integration', () => {
             'rgba(24, 119, 242, 0.08)',
             'rgba(24, 119, 242, 0.25)'
         );
+    });
+
+    it('alternates scroll buffers independently for each viewport', () => {
+        const { spreadsheet, skeleton, scene, viewport, mainCanvas } = fixture;
+        const mainCtx = mainCanvas.getContext() as any;
+        const mainCache = viewport.canvas!;
+        mainCache.setSize(460, 280, 1);
+        const frozenViewport = new Viewport(SHEET_VIEWPORT_KEY.VIEW_MAIN_LEFT, scene, {
+            left: 0,
+            top: 0,
+            width: 80,
+            height: 240,
+            active: true,
+            allowCache: true,
+        });
+        const frozenCache = frozenViewport.canvas!;
+        frozenCache.setSize(120, 280, 1);
+
+        const paint = (viewportKey: string, cacheCanvas: Canvas) => spreadsheet.paintNewAreaForScrolling(
+            createViewportInfo(scene, cacheCanvas, {
+                viewportKey,
+                cacheCanvas,
+                diffX: 4,
+                diffY: 3,
+                diffBounds: [createBound(100, 60, 220, 140)],
+                diffCacheBounds: [createBound(100, 60, 220, 140)],
+            }),
+            {
+                cacheCanvas,
+                cacheCtx: cacheCanvas.getContext() as any,
+                mainCtx,
+                topOrigin: 0,
+                leftOrigin: 0,
+                bufferEdgeX: 8,
+                bufferEdgeY: 6,
+                rowHeaderWidthAndMarginLeft: skeleton.rowHeaderWidthAndMarginLeft,
+                columnHeaderHeightAndMarginTop: skeleton.columnHeaderHeightAndMarginTop,
+                scaleX: 1,
+                scaleY: 1,
+            }
+        );
+
+        const nextMainCache = paint(SHEET_VIEWPORT_KEY.VIEW_MAIN, mainCache);
+        const nextFrozenCache = paint(SHEET_VIEWPORT_KEY.VIEW_MAIN_LEFT, frozenCache);
+        expect(viewport.canvas).toBe(nextMainCache);
+        expect(frozenViewport.canvas).toBe(nextFrozenCache);
+        expect(nextMainCache).not.toBe(mainCache);
+        expect(nextFrozenCache).not.toBe(frozenCache);
+        expect(nextMainCache.getWidth()).toBe(460);
+        expect(nextFrozenCache.getWidth()).toBe(120);
+
+        expect(paint(SHEET_VIEWPORT_KEY.VIEW_MAIN, nextMainCache)).toBe(mainCache);
+        expect(paint(SHEET_VIEWPORT_KEY.VIEW_MAIN_LEFT, nextFrozenCache)).toBe(frozenCache);
     });
 });

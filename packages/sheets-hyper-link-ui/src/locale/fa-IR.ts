@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'ویرایش لینک',
             addTitle: 'درج لینک',
             label: 'برچسب',
             type: 'نوع',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'درج لینک',
         },
+        permission: {
+            hyperLinkErr: 'شما مجوز درج لینک را ندارید.',
+        },
         message: {
             noSheet: 'برگ هدف حذف شده است',
             refError: 'محدوده نامعتبر',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'لینک به کلیپ بورد کپی شد',
         },
         popup: {
+            title: 'ابرپیوند',
+            open: 'باز کردن لینک',
             copy: 'کپی لینک',
             edit: 'ویرایش لینک',
             cancel: 'لینک را لغو کنید',

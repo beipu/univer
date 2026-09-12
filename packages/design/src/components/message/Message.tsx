@@ -16,7 +16,7 @@
 
 import type { ComponentProps, ReactNode } from 'react';
 import { ErrorIcon, InfoIcon, LoadingMultiIcon, SuccessIcon, WarningIcon } from '@univerjs/icons';
-import { Toaster as Sonner, toast } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import { clsx } from '../../helper/clsx';
 
 export enum MessageType {
@@ -35,7 +35,7 @@ export interface IMessageProps {
     onClose?: () => void;
 }
 
-export type IMessagerProps = Omit<ComponentProps<typeof Sonner>, 'id' | 'position' | 'visibleToasts' | 'toastOptions'>;
+export type IMessagerProps = Omit<ComponentProps<typeof Toaster>, 'id' | 'position' | 'visibleToasts' | 'toastOptions'>;
 
 const MESSAGE_TOASTER_ID = 'univer-message-toaster';
 const DEFAULT_MESSAGE_DURATION = 3000;
@@ -90,7 +90,7 @@ const createMessageId = () => {
 };
 
 export const Messager = ({ className, ...props }: IMessagerProps) => (
-    <Sonner
+    <Toaster
         id={MESSAGE_TOASTER_ID}
         position="top-center"
         visibleToasts={4}
@@ -100,7 +100,7 @@ export const Messager = ({ className, ...props }: IMessagerProps) => (
         offset={{ top: 16 }}
         className={clsx(
             `
-              [&_[data-sonner-toast]]:univer-bg-white/95
+              [&_[data-sonner-toast]]:univer-bg-gray-0/95
               dark:[&_[data-sonner-toast]]:!univer-bg-gray-800/95
               [&_[data-sonner-toast]]:univer-rounded-2xl [&_[data-sonner-toast]]:univer-border
               [&_[data-sonner-toast]]:univer-border-solid [&_[data-sonner-toast]]:univer-border-gray-200

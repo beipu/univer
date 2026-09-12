@@ -21,12 +21,22 @@ import type {
     IDocumentSkeletonDivide,
     IDocumentSkeletonGlyph,
 } from '../../../../basics/i-document-skeleton-cached';
-
 import type { IFontCreateConfig } from '../../../../basics/interfaces';
-import type { IOpenTypeGlyphInfo } from '../shaping-engine/text-shaping';
-import { BooleanNumber, BulletAlignment, DataStreamTreeTokenType as DT, GridType } from '@univerjs/core';
+import { BooleanNumber, BulletAlignment, DataStreamTreeTokenType, GridType } from '@univerjs/core';
+import { cjk } from '../../../../basics/cjk-regexp';
 import { GlyphType } from '../../../../basics/i-document-skeleton-cached';
-import { hasCJK, hasCJKText, isCjkCenterAlignedPunctuation, isCjkLeftAlignedPunctuation, isCjkRightAlignedPunctuation, ptToPixel } from '../../../../basics/tools';
+import {
+    getFontStyleString,
+    isCjkCenterAlignedPunctuation,
+    isCjkLeftAlignedPunctuation,
+    isCjkRightAlignedPunctuation,
+} from '../../../../basics/tools';
+import { getCheckboxShapeSize, isCheckboxGlyph } from '../../../../shape/checkbox';
+import {
+    applyFontMetricCompatibility,
+    getDocumentCompatibilityPolicy,
+    isTraditionalDocumentCompatibility,
+} from '../../document-compatibility';
 import { FontCache } from '../shaping-engine/font-cache';
 import { validationGrid } from '../tools';
 
@@ -41,7 +51,7 @@ export function isJustifiable(
 ) {
     // punctuation style is not relevant here.
     return isSpace(content)
-        || hasCJKText(content)
+        || cjk.hasCJKText(content)
         || isCjkLeftAlignedPunctuation(content)
         || isCjkRightAlignedPunctuation(content)
         || isCjkCenterAlignedPunctuation(content);
@@ -88,14 +98,54 @@ export function createSkeletonWordGlyph(
 export function createSkeletonLetterGlyph(
     content: string,
     config: IFontCreateConfig,
-    glyphWidth?: number,
-    glyphInfo?: IOpenTypeGlyphInfo
+    glyphMetrics?: number | { ascent?: number; descent?: number; width?: number }
 ): IDocumentSkeletonGlyph {
-    return _createSkeletonWordOrLetter(GlyphType.LETTER, content, config, glyphWidth, glyphInfo);
+    const glyphWidth = typeof glyphMetrics === 'number' ? glyphMetrics : glyphMetrics?.width;
+    const glyph = _createSkeletonWordOrLetter(GlyphType.LETTER, content, config, glyphWidth);
+
+    if (typeof glyphMetrics === 'object') {
+        if (glyphMetrics.ascent != null) {
+            glyph.bBox.ba = glyph.bBox.aba = glyphMetrics.ascent;
+        }
+        if (glyphMetrics.descent != null) {
+            glyph.bBox.bd = glyph.bBox.abd = glyphMetrics.descent;
+        }
+    }
+
+    return glyph;
+}
+
+const WHOLE_ENTITY_RENDER_MARKER = '\u200B';
+
+/**
+ * Creates one non-text skeleton glyph for a whole entity whose source spans
+ * multiple model characters. `raw` and `count` retain the source mapping.
+ *
+ * The zero-width marker keeps the glyph in the document paint loop so a
+ * component extension can render the entity, without painting its model
+ * source as ordinary text.
+ */
+export function createSkeletonWholeEntityGlyph(
+    raw: string,
+    config: IFontCreateConfig,
+    glyphMetrics: { ascent?: number; descent?: number; width?: number }
+): IDocumentSkeletonGlyph {
+    const glyph = createSkeletonLetterGlyph(raw, config, glyphMetrics);
+
+    glyph.adjustability = baseAdjustability(WHOLE_ENTITY_RENDER_MARKER, glyph.width);
+    glyph.bBox.width = glyph.width;
+    glyph.content = WHOLE_ENTITY_RENDER_MARKER;
+    glyph.count = raw.length;
+    glyph.glyphType = GlyphType.PLACEHOLDER;
+    glyph.isJustifiable = false;
+    glyph.raw = raw;
+    glyph.streamType = DataStreamTreeTokenType.LETTER;
+
+    return glyph;
 }
 
 export function createSkeletonTabGlyph(config: IFontCreateConfig, glyphWidth?: number): IDocumentSkeletonGlyph {
-    return _createSkeletonWordOrLetter(GlyphType.TAB, DT.TAB, config, glyphWidth);
+    return _createSkeletonWordOrLetter(GlyphType.TAB, DataStreamTreeTokenType.TAB, config, glyphWidth);
 }
 
 export function createHyphenDashGlyph(config: IFontCreateConfig) {
@@ -108,7 +158,7 @@ export function createHyphenDashGlyph(config: IFontCreateConfig) {
 // It is used to create inline custom blocks, such as inline images, to occupy placeholders in the layout.
 export function createSkeletonCustomBlockGlyph(config: IFontCreateConfig, glyphWidth = 0, glyphHeight = 0, drawingId = ''): IDocumentSkeletonGlyph {
     const { fontStyle, textStyle } = config;
-    const content = DT.CUSTOM_BLOCK;
+    const content = DataStreamTreeTokenType.CUSTOM_BLOCK;
 
     return {
         content: '',
@@ -133,7 +183,7 @@ export function createSkeletonCustomBlockGlyph(config: IFontCreateConfig, glyphW
         isJustifiable: false,
         adjustability: baseAdjustability(content, 0),
         glyphType: GlyphType.PLACEHOLDER,
-        streamType: content as DT,
+        streamType: content as DataStreamTreeTokenType,
         count: 1,
         drawingId,
     };
@@ -143,26 +193,31 @@ export function _createSkeletonWordOrLetter(
     glyphType: GlyphType,
     content: string,
     config: IFontCreateConfig,
-    glyphWidth?: number,
-    glyphInfo?: IOpenTypeGlyphInfo
+    glyphWidth?: number
 ): IDocumentSkeletonGlyph {
     const { fontStyle, textStyle, charSpace = 1, gridType = GridType.LINES, snapToGrid = BooleanNumber.FALSE } = config;
     const skipWidthList: string[] = [
-        DT.SECTION_BREAK,
-        DT.TABLE_START,
-        DT.TABLE_END,
-        DT.TABLE_ROW_START,
-        DT.TABLE_ROW_END,
-        DT.TABLE_CELL_START,
-        DT.TABLE_CELL_END,
-        DT.CUSTOM_RANGE_START,
-        DT.CUSTOM_RANGE_END,
-        DT.COLUMN_BREAK,
-        DT.PAGE_BREAK,
-        DT.DOCS_END,
-        DT.CUSTOM_BLOCK,
+        DataStreamTreeTokenType.SECTION_BREAK,
+        DataStreamTreeTokenType.TABLE_START,
+        DataStreamTreeTokenType.TABLE_END,
+        DataStreamTreeTokenType.TABLE_ROW_START,
+        DataStreamTreeTokenType.TABLE_ROW_END,
+        DataStreamTreeTokenType.TABLE_CELL_START,
+        DataStreamTreeTokenType.TABLE_CELL_END,
+        DataStreamTreeTokenType.COLUMN_GROUP_START,
+        DataStreamTreeTokenType.COLUMN_START,
+        DataStreamTreeTokenType.COLUMN_END,
+        DataStreamTreeTokenType.COLUMN_GROUP_END,
+        DataStreamTreeTokenType.BLOCK_START,
+        DataStreamTreeTokenType.BLOCK_END,
+        DataStreamTreeTokenType.CUSTOM_RANGE_START,
+        DataStreamTreeTokenType.CUSTOM_RANGE_END,
+        DataStreamTreeTokenType.COLUMN_BREAK,
+        DataStreamTreeTokenType.PAGE_BREAK,
+        DataStreamTreeTokenType.DOCS_END,
+        DataStreamTreeTokenType.CUSTOM_BLOCK,
     ];
-    let streamType = DT.LETTER;
+    let streamType = DataStreamTreeTokenType.LETTER;
 
     if (skipWidthList.indexOf(content) > -1) {
         return {
@@ -188,43 +243,40 @@ export function _createSkeletonWordOrLetter(
             isJustifiable: false,
             adjustability: baseAdjustability(content, 0),
             glyphType: GlyphType.PLACEHOLDER,
-            streamType: content as DT,
+            streamType: content as DataStreamTreeTokenType,
             count: 1,
         };
     }
 
-    if (content === DT.PARAGRAPH) {
-        streamType = DT.PARAGRAPH;
+    if (content === DataStreamTreeTokenType.PARAGRAPH) {
+        streamType = DataStreamTreeTokenType.PARAGRAPH;
     }
 
     let bBox = null;
     let xOffset = 0;
 
-    if (glyphInfo && glyphInfo.boundingBox && glyphInfo.font) {
-        bBox = FontCache.getBBoxFromGlyphInfo(glyphInfo, fontStyle);
-    } else {
-        bBox = FontCache.getTextSize(content, fontStyle);
+    const documentCompatibilityPolicy = config.documentCompatibilityPolicy ?? getDocumentCompatibilityPolicy();
+    bBox = FontCache.getTextSize(content, fontStyle, isTraditionalDocumentCompatibility(documentCompatibilityPolicy));
+    bBox = applyFontMetricCompatibility(
+        content,
+        fontStyle,
+        bBox,
+        documentCompatibilityPolicy
+    );
+    if (content === DataStreamTreeTokenType.PARAGRAPH && isTraditionalDocumentCompatibility(documentCompatibilityPolicy)) {
+        bBox = { ...bBox, width: 0 };
     }
 
     const { width: contentWidth = 0 } = bBox;
     let width = glyphWidth ?? contentWidth;
 
     if (validationGrid(gridType, snapToGrid)) {
-        // 当文字也需要对齐到网格式，进行处理
+        // When text also needs to align to the grid, process it
         // const multiple = Math.ceil(contentWidth / charSpace);
-        width = contentWidth + (hasCJK(content) ? charSpace : charSpace / 2);
+        width = contentWidth + (cjk.hasCJK(content) ? charSpace : charSpace / 2);
         if (gridType === GridType.SNAP_TO_CHARS) {
             xOffset = (width - contentWidth) / 2;
         }
-    }
-
-    // Handle kerning.
-    if (glyphInfo && glyphInfo.kerning !== 0 && glyphInfo.font) {
-        const radio = ptToPixel(fontStyle.fontSize) / glyphInfo.font.unitsPerEm;
-        const delta = glyphInfo.kerning * radio;
-
-        width += delta;
-        xOffset += delta;
     }
 
     return {
@@ -250,27 +302,34 @@ export function createSkeletonBulletGlyph(
     charSpaceApply: number
 ): IDocumentSkeletonGlyph {
     const {
-        // bBox: boundingBox,
         symbol: content,
-        // ts: textStyle,
-        // fontStyle,
+        ts: bulletTextStyle,
         bulletAlign = BulletAlignment.START,
         bulletType = false,
     } = bulletSkeleton;
-    const { fontStyle } = glyph;
-    // glyph.fontStyle
-    // getFontStyleString(fontStyle, localeService);
-    const boundingBox = FontCache.getTextSize(content, fontStyle!);
+    const textStyle = {
+        ...glyph.ts,
+        ...bulletTextStyle,
+        st: {
+            s: BooleanNumber.FALSE,
+        },
+    };
+    const fontStyle = getFontStyleString(textStyle);
+    const measuredBoundingBox = FontCache.getTextSize(content, fontStyle);
+    const checkboxSize = isCheckboxGlyph(content) ? getCheckboxShapeSize(textStyle.fs) : null;
+    const boundingBox = checkboxSize == null
+        ? measuredBoundingBox
+        : _getCheckboxBoundingBox(measuredBoundingBox, checkboxSize);
     const contentWidth = boundingBox.width;
-    // 当文字也需要对齐到网格式，进行处理, LINES默认参照是doc全局字体大小
+    // When text also needs to align to the grid, process it. LINES default reference is the global font size of the doc
 
     const multiple = Math.ceil(contentWidth / charSpaceApply);
-    let width = (multiple < 2 ? 2 : multiple) * charSpaceApply; // 默认 bullet 有 2 个 tab
+    let width = (multiple < 2 ? 2 : multiple) * charSpaceApply; // Default bullet has 2 tabs
 
     let left = 0;
 
     if (bulletType) {
-        // 有序列表的处理，左对齐时left=0，其余情况根据contentWidth调整
+        // Ordered list processing, left=0 when left-aligned, otherwise adjusted based on contentWidth
         if (bulletAlign === BulletAlignment.CENTER) {
             left = -contentWidth / 2;
             width -= left;
@@ -280,17 +339,11 @@ export function createSkeletonBulletGlyph(
         }
     }
 
-    const bBox = _getMaxBoundingBox(glyph, boundingBox);
+    const bBox = checkboxSize == null ? _getMaxBoundingBox(glyph, boundingBox) : boundingBox;
 
     return {
         content,
-        ts: {
-            ...glyph.ts,
-            // ...textStyle,
-            st: {
-                s: BooleanNumber.FALSE,
-            },
-        },
+        ts: textStyle,
         fontStyle,
         width,
         xOffset: 0,
@@ -299,10 +352,28 @@ export function createSkeletonBulletGlyph(
         isJustifiable: isJustifiable(content),
         adjustability: baseAdjustability(content, width),
         glyphType: GlyphType.LIST,
-        streamType: DT.LETTER,
+        streamType: DataStreamTreeTokenType.LETTER,
         // Deliberately set to 0 so that there is no need to count when calculating the cursor.
         count: 0,
         raw: content,
+    };
+}
+
+function _getCheckboxBoundingBox(
+    boundingBox: IDocumentSkeletonBoundingBox,
+    size: number
+): IDocumentSkeletonBoundingBox {
+    const fontExtra = size - Math.abs(boundingBox.ba) - Math.abs(boundingBox.bd);
+    const actualExtra = size - Math.abs(boundingBox.aba) - Math.abs(boundingBox.abd);
+
+    // Expand equally above and below the measured glyph so its font-relative center stays stable.
+    return {
+        ...boundingBox,
+        width: size,
+        ba: Math.abs(boundingBox.ba) + fontExtra / 2,
+        bd: Math.abs(boundingBox.bd) + fontExtra / 2,
+        aba: Math.abs(boundingBox.aba) + actualExtra / 2,
+        abd: Math.abs(boundingBox.abd) + actualExtra / 2,
     };
 }
 

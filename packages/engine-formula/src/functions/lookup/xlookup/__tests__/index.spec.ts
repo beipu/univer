@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-import type { BaseValueObject } from '../../../../engine/value-object/base-value-object';
 import { describe, expect, it } from 'vitest';
 import { ErrorType } from '../../../../basics/error-type';
 import { ArrayValueObject } from '../../../../engine/value-object/array-value-object';
-import { ErrorValueObject } from '../../../../engine/value-object/base-value-object';
+import { BaseValueObject, ErrorValueObject } from '../../../../engine/value-object/base-value-object';
 import { NullValueObject, NumberValueObject, StringValueObject } from '../../../../engine/value-object/primitive-object';
+import { Concatenate } from '../../../text/concatenate';
+import { FUNCTION_NAMES_TEXT } from '../../../text/function-names';
 import { getObjectValue } from '../../../util';
 import { FUNCTION_NAMES_LOOKUP } from '../../function-names';
 import { Xlookup } from '../index';
@@ -105,6 +106,59 @@ describe('Test xlookup', () => {
             expect(getObjectValue(resultObject).toString()).toBe('2');
         });
 
+        it('Blank return cell should be returned as zero', async () => {
+            const tableArray = ArrayValueObject.createByArray([
+                ['A', null],
+            ]);
+
+            const resultObject = testFunction.calculate(
+                StringValueObject.create('A'),
+                tableArray.slice(undefined, [0, 1])!,
+                tableArray.slice(undefined, [1, 2])!
+            ) as BaseValueObject;
+
+            expect(getObjectValue(resultObject)).toBe(0);
+        });
+
+        it('keeps blank, numeric zero, text zero, and empty text distinct', () => {
+            const lookupArray = ArrayValueObject.create({
+                calculateValueList: [
+                    [NullValueObject.create()],
+                    [NumberValueObject.create(0)],
+                    [StringValueObject.create('0')],
+                    [StringValueObject.create('')],
+                ],
+                rowCount: 4,
+                columnCount: 1,
+                unitId: '',
+                sheetId: '',
+                row: 0,
+                column: 0,
+            });
+            const returnArray = ArrayValueObject.createByArray([
+                ['blank'],
+                ['zero'],
+                ['zero-text'],
+                ['empty-text'],
+            ]);
+
+            expect(getObjectValue(testFunction.calculate(
+                NumberValueObject.create(0),
+                lookupArray,
+                returnArray
+            ))).toBe('zero');
+            expect(getObjectValue(testFunction.calculate(
+                StringValueObject.create('0'),
+                lookupArray,
+                returnArray
+            ))).toBe('zero-text');
+            expect(getObjectValue(testFunction.calculate(
+                StringValueObject.create(''),
+                lookupArray,
+                returnArray
+            ))).toBe('empty-text');
+        });
+
         it('Search array', async () => {
             const resultObject = testFunction.calculate(
                 arrayValueObject2.slice(undefined, [1, 2])!,
@@ -116,6 +170,147 @@ describe('Test xlookup', () => {
                 [89],
                 [70],
             ]);
+        });
+
+        it('Reference-derived lookup array should use legacy implicit intersection', async () => {
+            const positionedFunction = new Xlookup(FUNCTION_NAMES_LOOKUP.XLOOKUP);
+            positionedFunction.setRefInfo('unit', 'summary', 2, 5);
+
+            const lookupValue = ArrayValueObject.createByArray([
+                ['A'],
+                ['B'],
+                ['C'],
+            ]);
+            lookupValue.setUnitId('unit');
+            lookupValue.setSheetId('source');
+            lookupValue.setCurrent(1, 1);
+
+            const resultObject = positionedFunction.calculate(
+                lookupValue,
+                ArrayValueObject.createByArray([
+                    ['A'],
+                    ['B'],
+                    ['C'],
+                ]),
+                ArrayValueObject.createByArray([
+                    [10],
+                    [20],
+                    [30],
+                ])
+            );
+            if (!(resultObject instanceof BaseValueObject)) {
+                throw new TypeError('Expected XLOOKUP to return a value object');
+            }
+
+            expect(getObjectValue(resultObject)).toBe(20);
+        });
+
+        it('Reference-derived lookup array should stay an array in a dynamic array formula', async () => {
+            const positionedFunction = new Xlookup(FUNCTION_NAMES_LOOKUP.XLOOKUP);
+            positionedFunction.setRefInfo('unit', 'summary', 2, 5, 3, 1);
+
+            const lookupValue = ArrayValueObject.createByArray([
+                ['A'],
+                ['B'],
+                ['C'],
+            ]);
+            lookupValue.setUnitId('unit');
+            lookupValue.setSheetId('source');
+            lookupValue.setCurrent(1, 1);
+
+            const resultObject = positionedFunction.calculate(
+                lookupValue,
+                ArrayValueObject.createByArray([
+                    ['A'],
+                    ['B'],
+                    ['C'],
+                ]),
+                ArrayValueObject.createByArray([
+                    [10],
+                    [20],
+                    [30],
+                ])
+            );
+            if (!(resultObject instanceof BaseValueObject)) {
+                throw new TypeError('Expected XLOOKUP to return a value object');
+            }
+
+            expect(getObjectValue(resultObject)).toStrictEqual([
+                [10],
+                [20],
+                [30],
+            ]);
+        });
+
+        it('Reference-derived single-cell lookup value should use the cell value directly', async () => {
+            const positionedFunction = new Xlookup(FUNCTION_NAMES_LOOKUP.XLOOKUP);
+            positionedFunction.setRefInfo('unit', 'summary', 8, 6);
+
+            const lookupValue = ArrayValueObject.createByArray([['B']]);
+            lookupValue.setUnitId('unit');
+            lookupValue.setSheetId('source');
+            lookupValue.setCurrent(8, 1);
+
+            const resultObject = positionedFunction.calculate(
+                lookupValue,
+                ArrayValueObject.createByArray([
+                    ['A'],
+                    ['B'],
+                    ['C'],
+                ]),
+                ArrayValueObject.createByArray([
+                    [10],
+                    [20],
+                    [30],
+                ])
+            ) as BaseValueObject;
+
+            expect(getObjectValue(resultObject)).toBe(20);
+        });
+
+        it('Reference-derived concatenated lookup array should use legacy implicit intersection', async () => {
+            const positionedFunction = new Xlookup(FUNCTION_NAMES_LOOKUP.XLOOKUP);
+            positionedFunction.setRefInfo('unit', 'scorecard', 1, 3);
+
+            const laneIds = ArrayValueObject.createByArray([
+                ['L001'],
+                ['L002'],
+                ['L003'],
+            ]);
+            laneIds.setUnitId('unit');
+            laneIds.setSheetId('shipments');
+            laneIds.setCurrent(1, 5);
+
+            const modes = ArrayValueObject.createByArray([
+                ['Ground'],
+                ['Air'],
+                ['Ground'],
+            ]);
+            modes.setUnitId('unit');
+            modes.setSheetId('shipments');
+            modes.setCurrent(1, 6);
+
+            const concatenateFunction = new Concatenate(FUNCTION_NAMES_TEXT.CONCATENATE);
+            const lookupValue = concatenateFunction.calculate(
+                concatenateFunction.calculate(laneIds, StringValueObject.create('|')),
+                modes
+            );
+
+            const resultObject = positionedFunction.calculate(
+                lookupValue,
+                ArrayValueObject.createByArray([
+                    ['L001|Ground'],
+                    ['L002|Air'],
+                    ['L003|Ground'],
+                ]),
+                ArrayValueObject.createByArray([
+                    [0.45],
+                    [1.2],
+                    [0.5],
+                ])
+            ) as BaseValueObject;
+
+            expect(getObjectValue(resultObject)).toBe(0.45);
         });
 
         it('Search across multiple columns', async () => {
@@ -174,6 +369,18 @@ describe('Test xlookup', () => {
                 NumberValueObject.create(-1)
             ) as BaseValueObject;
             expect(getObjectValue(resultObject).toString()).toBe('800');
+        });
+
+        it('keeps the first duplicate approximate candidate in forward search', () => {
+            const resultObject = testFunction.calculate(
+                NumberValueObject.create(3),
+                ArrayValueObject.createByArray([[1], [2], [2], [4], [7]]),
+                ArrayValueObject.createByArray([['one'], ['two-first'], ['two-last'], ['four'], ['seven']]),
+                NullValueObject.create(),
+                NumberValueObject.create(-1)
+            );
+
+            expect(getObjectValue(resultObject)).toBe('two-first');
         });
 
         it('match_mode 1', async () => {

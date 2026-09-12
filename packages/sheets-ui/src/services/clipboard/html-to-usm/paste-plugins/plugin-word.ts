@@ -16,12 +16,12 @@
 
 import type { IParagraph } from '@univerjs/core';
 import type { IPastePlugin } from './type';
-import { BooleanNumber } from '@univerjs/core';
-import { extractNodeStyle as getInlineStyle } from '../parse-node-style';
+import { BooleanNumber, createParagraphId } from '@univerjs/core';
+import { extractNodeStyle } from '../parse-node-style';
 import { getParagraphStyle } from '../utils';
 
 export const WordPastePlugin: IPastePlugin = {
-    name: 'univer-doc-paste-plugin-word',
+    name: 'univer-sheet-paste-plugin-word',
     checkPasteType(html: string) {
         return /word|mso/i.test(html);
     },
@@ -30,7 +30,7 @@ export const WordPastePlugin: IPastePlugin = {
         {
             filter: ['b'],
             getStyle(node) {
-                const inlineStyle = getInlineStyle(node);
+                const inlineStyle = extractNodeStyle(node);
 
                 return { bl: BooleanNumber.TRUE, ...inlineStyle };
             },
@@ -49,6 +49,7 @@ export const WordPastePlugin: IPastePlugin = {
 
                 const paragraph: IParagraph = {
                     startIndex: doc.dataStream.length,
+                    paragraphId: createParagraphId(new Set(doc.paragraphs.map((p) => p.paragraphId))),
                 };
 
                 const paragraphStyle = getParagraphStyle(el);

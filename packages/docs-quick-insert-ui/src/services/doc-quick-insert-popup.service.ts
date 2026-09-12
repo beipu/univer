@@ -15,12 +15,18 @@
  */
 
 import type { DocumentDataModel, IDisposable, Nullable } from '@univerjs/core';
-import type { IInsertCommandParams } from '@univerjs/docs-ui';
+import type { IInsertTextCommandParams } from '@univerjs/docs';
 import type { Documents, DocumentSkeleton, IBoundRectNoAngle, IDocumentSkeletonGlyph, ITextRangeWithStyle } from '@univerjs/engine-render';
 import type { Observable } from 'rxjs';
-import { Disposable, ICommandService, Inject, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import { Disposable, DisposableCollection, ICommandService, Inject, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
 import { DocSelectionManagerService, DocSkeletonManagerService } from '@univerjs/docs';
-import { DocCanvasPopManagerService, DocEventManagerService, getAnchorBounding, NodePositionConvertToCursor } from '@univerjs/docs-ui';
+import {
+    DocCanvasPopManagerService,
+    DocEventManagerService,
+    DocLayoutInteractionService,
+    getAnchorBounding,
+    NodePositionConvertToCursor,
+} from '@univerjs/docs-ui';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { BehaviorSubject, combineLatest, distinctUntilChanged, map, tap } from 'rxjs';
 import { DeleteSearchKeyCommand } from '../commands/commands/doc-quick-insert.command';
@@ -47,14 +53,14 @@ export interface IDocPopup {
     keyword: string;
     menus$: Observable<DocPopupMenu[]>;
     Placeholder?: React.ComponentType;
-    preconditions?: (params: IInsertCommandParams) => boolean;
+    preconditions?: (params: IInsertTextCommandParams) => boolean;
 }
 
 const noopDisposable = {
     dispose: () => {},
 };
 
-interface IKeywordInputPlaceholderExtraProps {
+interface IKeywordInputPlaceholderExtraProps extends Record<string, unknown> {
     fontSize?: number;
     fontString?: string;
     fontFamily?: string;
@@ -111,8 +117,8 @@ export class DocQuickInsertPopupService extends Disposable {
         mount: () => void;
     } | null = null;
 
-    private getDocEventManagerService(unitId: string) {
-        return this._renderManagerService.getRenderById(unitId)?.with(DocEventManagerService);
+    private _getDocEventManagerService(unitId: string) {
+        return this._renderManagerService.getRenderUnitById(unitId)?.with(DocEventManagerService);
     }
 
     constructor(
@@ -125,6 +131,13 @@ export class DocQuickInsertPopupService extends Disposable {
         super();
 
         this.disposeWithMe(this._editPopup$);
+        this.disposeWithMe(this._isComposing$);
+        this.disposeWithMe(this._inputOffset$);
+        this.disposeWithMe(this._renderManagerService.disposed$.subscribe((unitId) => {
+            if (this.editPopup?.unitId === unitId) {
+                this.closePopup();
+            }
+        }));
 
         const getBodySlice = (start: number, end: number) => this._univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC)?.getBody()?.dataStream.slice(start, end);
 
@@ -164,6 +177,16 @@ export class DocQuickInsertPopupService extends Disposable {
                 }
             })),
         ]).subscribe());
+    }
+
+    override dispose(): void {
+        if (this._disposed) {
+            return;
+        }
+        this.closePopup();
+        this._menuSelectedCallbacks.clear();
+        this._popups.clear();
+        super.dispose();
     }
 
     resolvePopup(keyword: string) {
@@ -214,7 +237,7 @@ export class DocQuickInsertPopupService extends Disposable {
             return null;
         }
 
-        const docEventManagerService = this.getDocEventManagerService(unitId);
+        const docEventManagerService = this._getDocEventManagerService(unitId);
         return docEventManagerService?.findParagraphBoundByIndex(paragraph.startIndex) ?? null;
     }
 
@@ -262,7 +285,7 @@ export class DocQuickInsertPopupService extends Disposable {
     }
 
     private _mountInputPlaceholder(unitId: string, fallbackRect: IBoundRectNoAngle): IDisposable {
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         const docSkeletonManagerService = currentRender?.with(DocSkeletonManagerService);
         const activeRange = this._docSelectionManagerService.getActiveTextRange();
         if (!currentRender || !docSkeletonManagerService || !activeRange) {
@@ -299,6 +322,10 @@ export class DocQuickInsertPopupService extends Disposable {
     showPopup(options: { popup: IDocPopup; index: number; unitId: string }) {
         const { popup, index, unitId } = options;
         this.closePopup();
+        const render = this._renderManagerService.getRenderUnitById(unitId);
+        if (!render) {
+            return;
+        }
         const paragraphBound = this._getParagraphBound(unitId, index);
         if (!paragraphBound) {
             return;
@@ -307,7 +334,8 @@ export class DocQuickInsertPopupService extends Disposable {
         this._inputPlaceholderRenderRoot = this._createInputPlaceholderRenderRoot(() => this._mountInputPlaceholder(unitId, paragraphBound.firstLine));
         this._inputPlaceholderRenderRoot.mount();
 
-        const disposable = this._docCanvasPopupManagerService.attachPopupToRect(
+        const layoutInteraction = render.with(DocLayoutInteractionService).beginInteraction();
+        const popupDisposable = this._docCanvasPopupManagerService.attachPopupToRect(
             paragraphBound.firstLine,
             {
                 componentKey: QuickInsertPopup.componentKey,
@@ -318,6 +346,9 @@ export class DocQuickInsertPopupService extends Disposable {
             },
             unitId
         );
+        const disposable = new DisposableCollection();
+        disposable.add(popupDisposable);
+        disposable.add(layoutInteraction);
 
         this._editPopup$.next({ disposable, popup, anchor: index, unitId });
     }

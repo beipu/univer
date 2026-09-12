@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-import type { IDocumentSkeletonGlyph, IDocumentSkeletonLine, IDocumentSkeletonPage } from '../../basics/i-document-skeleton-cached';
+import type {
+    IDocumentSkeletonGlyph,
+    IDocumentSkeletonLine,
+    IDocumentSkeletonPage,
+} from '../../basics/i-document-skeleton-cached';
 import type { IBoundRectNoAngle, IViewportInfo } from '../../basics/vector2';
 import type { UniverRenderingContext } from '../../context';
 import type { DOCS_EXTENSION_TYPE } from './doc-extension';
@@ -31,6 +35,12 @@ export interface IPageMarginLayout {
 
 export interface IDocumentsConfig extends IPageMarginLayout {
     hasEditor?: boolean;
+    backgroundFillColor?: string;
+    pageFillColor?: string;
+    pageStrokeColor?: string;
+    marginStrokeColor?: string;
+    /** Called after an image used by a text fill finishes loading. */
+    onTextFillImageLoaded?: () => void;
 }
 
 export abstract class DocComponent extends RenderComponent<
@@ -44,6 +54,8 @@ export abstract class DocComponent extends RenderComponent<
 
     pageLayoutType: PageLayoutType = PageLayoutType.VERTICAL;
 
+    readonly onTextFillImageLoaded: () => void;
+
     constructor(
         oKey: string,
         private _skeleton?: DocumentSkeleton,
@@ -51,6 +63,11 @@ export abstract class DocComponent extends RenderComponent<
     ) {
         super(oKey);
 
+        this.onTextFillImageLoaded = () => {
+            // Picture text fills are unavailable during the first paint; loading must invalidate the document.
+            this.makeDirty(true);
+            config?.onTextFillImageLoaded?.();
+        };
         this._setConfig(config);
     }
 

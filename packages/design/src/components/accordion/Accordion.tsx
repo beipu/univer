@@ -20,6 +20,7 @@ import { useState } from 'react';
 import { clsx } from '../../helper/clsx';
 
 interface IAccordionItem {
+    id?: string;
     label: ReactNode;
     children: ReactNode;
 }
@@ -27,14 +28,22 @@ interface IAccordionItem {
 export interface IAccordionProps {
     className?: string;
     items: IAccordionItem[];
+    defaultOpenIndex?: number | null;
+    openIndex?: number | null;
+    onOpenIndexChange?: (openIndex: number | null) => void;
 }
 
 export function Accordion(props: IAccordionProps) {
-    const { className, items } = props;
-    const [openIndex, setOpenIndex] = useState<number | null>(null);
+    const { className, defaultOpenIndex = null, items, onOpenIndexChange } = props;
+    const [innerOpenIndex, setInnerOpenIndex] = useState<number | null>(defaultOpenIndex);
+    const openIndex = props.openIndex ?? innerOpenIndex;
 
     const toggleItem = (index: number) => {
-        setOpenIndex(openIndex === index ? null : index);
+        const nextOpenIndex = openIndex === index ? null : index;
+        if (props.openIndex === undefined) {
+            setInnerOpenIndex(nextOpenIndex);
+        }
+        onOpenIndexChange?.(nextOpenIndex);
     };
 
     return (
@@ -46,7 +55,7 @@ export function Accordion(props: IAccordionProps) {
             `, className)}
         >
             {items.map((item, index) => (
-                <div key={index}>
+                <div key={item.id ?? index}>
                     <button
                         className={`
                           univer-box-border univer-flex univer-w-full univer-cursor-pointer univer-items-center
@@ -55,14 +64,15 @@ export function Accordion(props: IAccordionProps) {
                           hover:univer-text-gray-900
                           focus:univer-outline-none
                           dark:!univer-text-gray-200
-                          dark:hover:!univer-text-white
+                          dark:hover:!univer-text-gray-0
                         `}
                         type="button"
                         onClick={() => toggleItem(index)}
                     >
                         <DownIcon
+                            aria-hidden="true"
                             className={clsx('univer-size-2.5 univer-flex-shrink-0 univer-transition-transform', {
-                                '-univer-rotate-90': openIndex !== index,
+                                '-univer-rotate-90 rtl:univer-rotate-90': openIndex !== index,
                                 'univer-rotate-0': openIndex === index,
                             })}
                         />

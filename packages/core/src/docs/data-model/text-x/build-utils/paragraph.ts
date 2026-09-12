@@ -15,13 +15,22 @@
  */
 
 import type { ITextRange } from '../../../../sheets/typedef';
-import type { ICustomTable, IParagraph, IParagraphStyle, ITextStyle } from '../../../../types/interfaces';
+import type {
+    ICustomTable,
+    IDocumentBody,
+    IParagraph,
+    IParagraphStyle,
+    ITextStyle,
+} from '../../../../types/interfaces';
 import type { DocumentDataModel } from '../../document-data-model';
 import { MemoryCursor } from '../../../../common/memory-cursor';
-import { generateRandomId, UpdateDocsAttributeType } from '../../../../shared';
+import { UpdateDocsAttributeType } from '../../../../shared';
+import { generateRandomId } from '../../../../shared/random-id';
 import { PRESET_LIST_TYPE, PresetListType } from '../../preset-list-type';
+import { DataStreamTreeTokenType } from '../../types';
 import { TextXActionType } from '../action-types';
 import { TextX } from '../text-x';
+import { containsStreamIndex, getBlockRangeInterval, getTableRangeInterval } from './range-interval';
 import { getParagraphsInRanges } from './selection';
 
 export interface ISwitchParagraphBulletParams {
@@ -34,7 +43,7 @@ export interface ISwitchParagraphBulletParams {
 export const switchParagraphBullet = (params: ISwitchParagraphBulletParams) => {
     const { paragraphs: currentParagraphs, segmentId, document: docDataModel } = params;
     let listType = params.listType;
-    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody()?.paragraphs ?? [];
+    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody()?.paragraphs ?? [];
     const isAlreadyList = currentParagraphs.every((paragraph) => paragraph.bullet?.listType.indexOf(listType) === 0);
 
     const ID_LENGTH = 6;
@@ -66,7 +75,7 @@ export const switchParagraphBullet = (params: ISwitchParagraphBulletParams) => {
     const textX = new TextX();
 
     for (const paragraph of currentParagraphs) {
-        const { startIndex, paragraphStyle = {}, bullet } = paragraph;
+        const { startIndex, paragraphId, paragraphStyle = {}, bullet } = paragraph;
 
         textX.push({
             t: TextXActionType.RETAIN,
@@ -81,19 +90,18 @@ export const switchParagraphBullet = (params: ISwitchParagraphBulletParams) => {
                 paragraphs: [
                     isAlreadyList
                         ? {
+                            paragraphId,
                             paragraphStyle,
                             startIndex: 0,
                         }
                         : {
                             startIndex: 0,
+                            paragraphId,
                             paragraphStyle: {
                                 ...paragraphStyle,
                             },
                             bullet: {
                                 nestingLevel: bullet?.nestingLevel ?? 0,
-                                textStyle: {
-                                    fs: 20,
-                                },
                                 listType,
                                 listId,
                             },
@@ -117,7 +125,7 @@ export interface IToggleChecklistParagraphParams {
 
 export const toggleChecklistParagraph = (params: IToggleChecklistParagraphParams) => {
     const { paragraphIndex, segmentId, document: docDataModel } = params;
-    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody()?.paragraphs;
+    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody()?.paragraphs;
     if (paragraphs == null) {
         return false;
     }
@@ -171,20 +179,21 @@ export const toggleChecklistParagraph = (params: IToggleChecklistParagraphParams
 export interface ISetParagraphBulletParams {
     paragraphs: IParagraph[];
     listType: string;
+    listId?: string;
     segmentId?: string;
     document: DocumentDataModel;
 }
 
 export const setParagraphBullet = (params: ISetParagraphBulletParams) => {
-    const { paragraphs: currentParagraphs, listType, segmentId, document: docDataModel } = params;
-    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody()?.paragraphs;
+    const { paragraphs: currentParagraphs, listType, listId: explicitListId, segmentId, document: docDataModel } = params;
+    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody()?.paragraphs;
 
     if (paragraphs == null) {
         return false;
     }
 
     const ID_LENGTH = 6;
-    const listId = generateRandomId(ID_LENGTH);
+    const listId = explicitListId ?? generateRandomId(ID_LENGTH);
 
     const memoryCursor = new MemoryCursor();
 
@@ -193,7 +202,7 @@ export const setParagraphBullet = (params: ISetParagraphBulletParams) => {
     const textX = new TextX();
 
     for (const paragraph of currentParagraphs) {
-        const { startIndex, paragraphStyle = {}, bullet } = paragraph;
+        const { startIndex, paragraphId, paragraphStyle = {}, bullet } = paragraph;
 
         textX.push({
             t: TextXActionType.RETAIN,
@@ -208,14 +217,13 @@ export const setParagraphBullet = (params: ISetParagraphBulletParams) => {
                 paragraphs: [
                     {
                         startIndex: 0,
+                        paragraphId,
                         paragraphStyle,
                         bullet: {
                             nestingLevel: bullet?.nestingLevel ?? 0,
-                            textStyle: bullet?.listType === listType
-                                ? bullet.textStyle
-                                : {
-                                    fs: 20,
-                                },
+                            ...(bullet?.listType === listType && bullet.textStyle
+                                ? { textStyle: bullet.textStyle }
+                                : {}),
                             listType,
                             listId,
                         },
@@ -239,7 +247,84 @@ export interface IChangeParagraphBulletNestLevelParams {
 }
 
 export function hasParagraphInTable(paragraph: IParagraph, tables: ICustomTable[]) {
-    return tables.some((table) => paragraph.startIndex > table.startIndex && paragraph.startIndex < table.endIndex);
+    return tables.some((table) => {
+        const interval = getTableRangeInterval(table);
+        return paragraph.startIndex > interval.startOffset && containsStreamIndex(interval, paragraph.startIndex);
+    });
+}
+
+const PARAGRAPH_CONTAINER_TOKENS = new Set<string>([
+    DataStreamTreeTokenType.SECTION_BREAK,
+    DataStreamTreeTokenType.TABLE_START,
+    DataStreamTreeTokenType.TABLE_ROW_START,
+    DataStreamTreeTokenType.TABLE_CELL_START,
+    DataStreamTreeTokenType.TABLE_CELL_END,
+    DataStreamTreeTokenType.TABLE_ROW_END,
+    DataStreamTreeTokenType.TABLE_END,
+    DataStreamTreeTokenType.COLUMN_GROUP_START,
+    DataStreamTreeTokenType.COLUMN_START,
+    DataStreamTreeTokenType.COLUMN_END,
+    DataStreamTreeTokenType.COLUMN_GROUP_END,
+    DataStreamTreeTokenType.BLOCK_START,
+    DataStreamTreeTokenType.BLOCK_END,
+]);
+
+export function getParagraphContentStartOffset(
+    body: Pick<IDocumentBody, 'dataStream' | 'paragraphs'>,
+    paragraph: Pick<IParagraph, 'startIndex'>
+): number {
+    let previousParagraph: IParagraph | undefined;
+    for (const candidate of body.paragraphs ?? []) {
+        if (
+            candidate.startIndex < paragraph.startIndex &&
+            (!previousParagraph || candidate.startIndex > previousParagraph.startIndex)
+        ) {
+            previousParagraph = candidate;
+        }
+    }
+    let startOffset = previousParagraph ? previousParagraph.startIndex + 1 : 0;
+
+    while (
+        startOffset < paragraph.startIndex &&
+        PARAGRAPH_CONTAINER_TOKENS.has(body.dataStream[startOffset])
+    ) {
+        startOffset++;
+    }
+
+    return startOffset;
+}
+
+export function getParagraphContentStartOffsets(
+    body: Pick<IDocumentBody, 'dataStream' | 'paragraphs'>
+): Map<number, number> {
+    const startOffsets = new Map<number, number>();
+    const paragraphs = [...(body.paragraphs ?? [])].sort((left, right) => left.startIndex - right.startIndex);
+
+    for (let index = 0; index < paragraphs.length; index++) {
+        const paragraph = paragraphs[index];
+        let startOffset = index > 0 ? paragraphs[index - 1].startIndex + 1 : 0;
+        while (
+            startOffset < paragraph.startIndex &&
+            PARAGRAPH_CONTAINER_TOKENS.has(body.dataStream[startOffset])
+        ) {
+            startOffset++;
+        }
+        startOffsets.set(paragraph.startIndex, startOffset);
+    }
+
+    return startOffsets;
+}
+
+export function getParagraphFollowingBlockOffset(
+    body: Pick<IDocumentBody, 'blockRanges'>,
+    paragraph: Pick<IParagraph, 'startIndex'>
+): number {
+    const containingBlock = (body.blockRanges ?? []).find((blockRange) => {
+        const interval = getBlockRangeInterval(blockRange);
+        return paragraph.startIndex > interval.startOffset && paragraph.startIndex < interval.endOffset - 1;
+    });
+
+    return containingBlock ? getBlockRangeInterval(containingBlock).endOffset : paragraph.startIndex + 1;
 }
 
 export const changeParagraphBulletNestLevel = (params: IChangeParagraphBulletNestLevelParams) => {
@@ -259,7 +344,7 @@ export const changeParagraphBulletNestLevel = (params: IChangeParagraphBulletNes
     };
 
     for (const paragraph of currentParagraphs) {
-        const { startIndex, paragraphStyle = {}, bullet } = paragraph;
+        const { startIndex, paragraphId, paragraphStyle = {}, bullet } = paragraph;
         const isInTable = hasParagraphInTable(paragraph, tables);
 
         textX.push({
@@ -282,6 +367,7 @@ export const changeParagraphBulletNestLevel = (params: IChangeParagraphBulletNes
                     paragraphs: [
                         {
                             startIndex: 0,
+                            paragraphId,
                             paragraphStyle: {
                                 ...paragraphStyle,
                             },
@@ -332,8 +418,8 @@ export const setParagraphStyle = (params: ISetParagraphStyleParams) => {
         textX: _textX,
     } = params;
     const segment = docDataModel.getSelfOrHeaderFooterModel(segmentId);
-    const paragraphs = segment.getBody()?.paragraphs ?? [];
-    const dataStream = segment.getBody()?.dataStream ?? '';
+    const paragraphs = segment?.getBody()?.paragraphs ?? [];
+    const dataStream = segment?.getBody()?.dataStream ?? '';
     const currentParagraphs = getParagraphsInRanges(textRanges, paragraphs, dataStream);
     const memoryCursor = new MemoryCursor();
     if (cursor) {
@@ -359,7 +445,7 @@ export const setParagraphStyle = (params: ISetParagraphStyleParams) => {
     }
 
     for (const paragraph of currentParagraphs) {
-        const { startIndex, paragraphStyle = {} } = paragraph;
+        const { startIndex, paragraphId, paragraphStyle = {} } = paragraph;
         const len = startIndex - memoryCursor.cursor;
         textX.push({
             t: TextXActionType.RETAIN,
@@ -387,6 +473,7 @@ export const setParagraphStyle = (params: ISetParagraphStyleParams) => {
                 paragraphs: [
                     {
                         startIndex: 0,
+                        paragraphId,
                         paragraphStyle: {
                             ...paragraphStyle,
                             ...style,

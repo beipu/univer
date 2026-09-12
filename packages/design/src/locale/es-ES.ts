@@ -18,15 +18,29 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'Cerrar insignia',
+            close: 'Cerrar',
+            menu: 'Menú',
+            previous: 'Anterior',
+            next: 'Siguiente',
+            imageGallery: 'Galería de imágenes',
+            image: 'Imagen {0} de {1}',
+            zoomIn: 'Acercar',
+            zoomOut: 'Alejar',
+            resetZoom: 'Restablecer zoom',
+            increment: 'Incrementar',
+            decrement: 'Disminuir',
+        },
         Confirm: {
-            cancel: 'cancel·la',
-            confirm: 'ok',
+            cancel: 'Cancelar',
+            confirm: 'Aceptar',
         },
         CascaderList: {
             empty: 'Cap',
         },
         Calendar: {
-            year: '',
+            year: 'Año',
             weekDays: ['Dg', 'Dl', 'Dt', 'Dc', 'Dj', 'Dv', 'Ds'],
             months: [
                 'Gener',
@@ -42,24 +56,27 @@ const locale: typeof enUS = {
                 'Novembre',
                 'Desembre',
             ],
-        },
-        Select: {
-            empty: 'Cap',
+            ariaLabels: {
+                previousMonth: 'Mes anterior',
+                nextMonth: 'Mes siguiente',
+                selectYear: 'Seleccionar año',
+                selectMonth: 'Seleccionar mes',
+            },
         },
         ColorPicker: {
-            more: 'Més colors',
-            cancel: 'cancel·la',
-            confirm: 'ok',
+            more: 'Más colores',
+            cancel: 'Cancelar',
+            confirm: 'Aceptar',
         },
         GradientColorPicker: {
             linear: 'Lineal',
             radial: 'Radial',
             angular: 'Angular',
-            diamond: 'Diamant',
-            offset: 'Desplaçament',
-            angle: 'Angle',
-            flip: 'Girar',
+            diamond: 'Diamante',
+            offset: 'Desplazamiento',
+            angle: 'Ángulo',
             delete: 'Eliminar',
+            transparency: 'Transparencia',
         },
     },
 };

@@ -16,7 +16,7 @@
 
 /* eslint-disable complexity */
 
-import type { ICustomRange, IDocumentBody, IDocumentData, ITextRun, ITextStyle, Nullable } from '@univerjs/core';
+import type { ICustomRange, IDocumentBody, IDocumentData, IStyleData, ITextRun, ITextStyle, Nullable } from '@univerjs/core';
 import type { SpreadsheetSkeleton } from '@univerjs/engine-render';
 import type { ISheetSkeletonManagerParam } from '@univerjs/sheets';
 import type {
@@ -26,7 +26,7 @@ import type {
     IUniverSheetCopyDataModel,
 } from '../type';
 import type { IAfterProcessRule, IPastePlugin } from './paste-plugins/type';
-import { CustomRangeType, DEFAULT_WORKSHEET_ROW_HEIGHT, generateRandomId, getNumfmtParseValueFilter, isRealNum, ObjectMatrix, skipParseTagNames } from '@univerjs/core';
+import { createDocumentModelWithStyle, createParagraphId, CustomRangeType, DEFAULT_WORKSHEET_ROW_HEIGHT, generateRandomId, getNumfmtParseValueFilter, isDefaultFormat, isSafeUrl, numfmt, ObjectMatrix, skipParseTagNames } from '@univerjs/core';
 import { handleStringToStyle, textTrim } from '@univerjs/ui';
 import { extractNodeStyle } from './parse-node-style';
 import parseToDom, { convertToCellStyle, generateParagraphs } from './utils';
@@ -79,6 +79,7 @@ function matchFilter(node: HTMLElement, filter: IStyleRule['filter']) {
 
 interface IHtmlToUSMServiceProps {
     getCurrentSkeleton: () => Nullable<ISheetSkeletonManagerParam>;
+    getNumfmtParseOptions?: () => Parameters<typeof getNumfmtParseValueFilter>[1];
 }
 
 export class HtmlToUSMService {
@@ -94,6 +95,14 @@ export class HtmlToUSMService {
 
     private _styleMap = new Map<string, CSSStyleDeclaration>();
 
+    private _selectorStyleValueCache = new Map<string, string>();
+
+    private _styleObjectCache = new Map<string, Record<string, string>>();
+
+    private _computedStyleStringCache = new Map<string, string>();
+
+    private _cellStyleDataCache = new Map<string, IStyleData>();
+
     private _styleCache: Map<ChildNode, ITextStyle> = new Map();
 
     private _styleRules: IStyleRule[] = [];
@@ -102,14 +111,22 @@ export class HtmlToUSMService {
 
     private _dom: HTMLElement | null = null;
 
+    // mso-number-format is a css property used in html copied from excel to indicate the cell format, we need to parse it and apply the corresponding format in univer sheet.
+    private _msoNumfmtMap = new Map<string, string>();
+
     private _getCurrentSkeleton: () => Nullable<ISheetSkeletonManagerParam>;
+    private _getNumfmtParseOptions?: () => Parameters<typeof getNumfmtParseValueFilter>[1];
+    private _numfmtParseOptions?: Parameters<typeof getNumfmtParseValueFilter>[1];
 
     constructor(props: IHtmlToUSMServiceProps) {
         this._getCurrentSkeleton = props.getCurrentSkeleton;
+        this._getNumfmtParseOptions = props.getNumfmtParseOptions;
     }
 
     // eslint-disable-next-line max-lines-per-function
     convert(html: string): IUniverSheetCopyDataModel {
+        // This service outlives the active workbook, so resolve locale and date system for every paste operation.
+        this._numfmtParseOptions = this._getNumfmtParseOptions?.();
         const pastePlugin = HtmlToUSMService._pluginList.find((plugin) => plugin.checkPasteType(html));
         if (pastePlugin) {
             this._styleRules = [...pastePlugin.stylesRules];
@@ -120,6 +137,9 @@ export class HtmlToUSMService {
         // Convert stylesheets to map
         const style = this._dom.querySelector('style');
         if (style) {
+            // Must read textContent BEFORE shadow DOM moves the element, because browsers discard mso-* properties during CSS parsing.
+            this._parseMsoNumfmtFromCssText(style.textContent ?? '');
+
             const shadowHost = document.createElement('div');
             const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
             document.body.appendChild(shadowHost);
@@ -190,7 +210,8 @@ export class HtmlToUSMService {
                 });
                 const isEmptyMatrix = Object.keys(valueMatrix.getMatrix()).length === 0;
                 valueMatrix.setValue(isEmptyMatrix ? 0 : valueMatrix.getLength(), 0, {
-                    v: cellDataStream,
+                    // The document needs its terminal paragraph/section markers; the plain cell value does not.
+                    v: cellDataStream.slice(0, -2),
                     p,
                 });
                 rowProperties.push({}); // TODO@yuhongz
@@ -241,16 +262,85 @@ export class HtmlToUSMService {
         };
     }
 
+    /**
+     * Parse mso-number-format from raw CSS text before the browser drops proprietary properties.
+     * Must be called with style.textContent BEFORE the style element is moved into a shadow DOM.
+     */
+    private _parseMsoNumfmtFromCssText(rawCssText: string): void {
+        // Match CSS rule blocks: selector(s) { declarations }
+        const ruleRegex = /([^{]+)\{([^}]*)\}/g;
+        let match;
+        while ((match = ruleRegex.exec(rawCssText)) !== null) {
+            const selectors = match[1].trim();
+            const declarations = match[2];
+            const numfmtMatch = declarations.match(/mso-number-format\s*:\s*("(?:[^"\\]|\\.)*"|[^;]+)/i);
+            if (!numfmtMatch) continue;
+
+            let value = numfmtMatch[1].trim();
+            // Remove surrounding CSS quotes if present
+            if (value.startsWith('"') && value.endsWith('"')) {
+                value = value.slice(1, -1);
+            }
+            const decoded = decodeMsoNumberFormat(value);
+            // Excel can emit named formats such as `Percent` that are not valid Univer numfmt patterns.
+            // Skip them so the external paste flow can infer a valid pattern from the displayed value.
+            if (!numfmt.isValidFormat(decoded)) {
+                continue;
+            }
+            // A rule can have multiple comma-separated selectors
+            selectors.split(',').forEach((sel) => {
+                this._msoNumfmtMap.set(sel.trim(), decoded);
+            });
+        }
+    }
+
+    /**
+     * Get the mso-number-format value for a given DOM node,
+     * following the same priority as _getStyle: class > id > tag.
+     */
+    private _getMsoNumfmtForNode(node: HTMLElement): string | undefined {
+        for (const className of node.classList) {
+            const fmt = this._msoNumfmtMap.get(`.${className}`);
+            if (fmt) return fmt;
+        }
+        if (node.id) {
+            const fmt = this._msoNumfmtMap.get(`#${node.id}`);
+            if (fmt) return fmt;
+        }
+        return this._msoNumfmtMap.get(node.nodeName.toLowerCase());
+    }
+
     private _getStyleBySelectorText(selectorText: string, cssText: string) {
+        const cacheKey = `${selectorText}\0${cssText}`;
+        if (this._selectorStyleValueCache.has(cacheKey)) {
+            return this._selectorStyleValueCache.get(cacheKey)!;
+        }
+
         const css = this._styleMap.get(selectorText)?.getPropertyValue(cssText);
         if (!css) {
+            this._selectorStyleValueCache.set(cacheKey, '');
             return '';
         }
+        this._selectorStyleValueCache.set(cacheKey, css);
         return css;
     }
 
+    private _getStyleObject(styleStr: string) {
+        let styleObject = this._styleObjectCache.get(styleStr);
+        if (!styleObject) {
+            styleObject = turnToStyleObject(styleStr);
+            this._styleObjectCache.set(styleStr, styleObject);
+        }
+        return styleObject;
+    }
+
     private _getStyle(node: HTMLElement, styleStr: string) {
-        const recordStyle: Record<string, string> = turnToStyleObject(styleStr);
+        const styleCacheKey = `${styleStr}\0${node.nodeName}\0${node.id}\0${node.className}\0${node.style.cssText}`;
+        if (this._computedStyleStringCache.has(styleCacheKey)) {
+            return this._computedStyleStringCache.get(styleCacheKey)!;
+        }
+
+        const recordStyle: Record<string, string> = this._getStyleObject(styleStr);
         const style = node.style;
         // style represents inline styles with the highest priority, followed by selectorText which corresponds to stylesheet rules, and recordStyle pertains to inherited styles with the lowest priority.
         let newStyleStr = '';
@@ -295,7 +385,17 @@ export class HtmlToUSMService {
                 '';
             value && (newStyleStr += `${key}:${value};`);
         }
+        this._computedStyleStringCache.set(styleCacheKey, newStyleStr);
         return newStyleStr;
+    }
+
+    private _getCellStyleData(styleStr = '') {
+        let style = this._cellStyleDataCache.get(styleStr);
+        if (!style) {
+            style = handleStringToStyle(undefined, styleStr);
+            this._cellStyleDataCache.set(styleStr, style);
+        }
+        return style;
     }
 
     private _parseTable(html: string, tableElIndex: number) {
@@ -305,7 +405,7 @@ export class HtmlToUSMService {
         const parsedCellMatrix = this._parseTableByHtml(this._dom!, tableElIndex, this._getCurrentSkeleton()?.skeleton);
         parsedCellMatrix &&
             parsedCellMatrix.forValue((row, col, value) => {
-                let style = handleStringToStyle(undefined, value.style);
+                let style = this._getCellStyleData(value.style);
                 if (value?.richTextParma?.p?.body?.textRuns?.length) {
                     const textLen = value?.richTextParma?.v?.length;
                     for (let i = 0; i < value?.richTextParma?.p?.body?.textRuns?.length; i++) {
@@ -322,7 +422,7 @@ export class HtmlToUSMService {
                     }
                 }
 
-                const cellValue = value?.richTextParma?.p?.body?.textRuns
+                const cellValue: ICellDataWithSpanInfo = value?.richTextParma?.p?.body?.textRuns
                     ? {
                         v: value.richTextParma.v,
                         p: value.richTextParma.p,
@@ -336,6 +436,17 @@ export class HtmlToUSMService {
                         rowSpan: value.rowSpan,
                         colSpan: value.colSpan,
                     };
+
+                if (value.numfmtPattern) {
+                    cellValue.s = {
+                        ...(cellValue.s as IStyleData),
+                        n: {
+                            pattern: value.numfmtPattern,
+                        },
+                    };
+                    cellValue.v = Number(cellValue.v);
+                }
+
                 valueMatrix.setValue(row, col, cellValue);
             });
         return {
@@ -345,6 +456,7 @@ export class HtmlToUSMService {
         };
     }
 
+    // eslint-disable-next-line max-lines-per-function
     private _parseTableByHtml(htmlElement: HTMLElement, tableElIndex: number, skeleton?: SpreadsheetSkeleton) {
         const cellMatrix = new ObjectMatrix<IParsedCellValueByClipboard>();
         const tableEle = htmlElement.querySelectorAll('table')[tableElIndex];
@@ -393,8 +505,47 @@ export class HtmlToUSMService {
                     }
                 }
 
-                // Determine whether it is rich text based on whether there are html tags
-                const { cellText, cellRichStyle } = this._getCellTextAndRichText(cell, cellStyle, skeleton);
+                let cellText = '';
+                let cellRichStyle;
+                let numfmtPattern: string | undefined;
+
+                const pattern = this._getMsoNumfmtForNode(cell as HTMLElement);
+                if (!isDefaultFormat(pattern)) {
+                    cellText = cell.childElementCount === 0 ? normalizePlainCellText(cell.textContent ?? '') : cell.innerHTML;
+                    if (cellText.includes('mso-spacerun:yes')) {
+                        cellText = cleanMsoSpaceRun(cellText);
+                    }
+
+                    const parseData = getNumfmtParseValueFilter(cellText, this._numfmtParseOptions);
+
+                    if (
+                        typeof parseData?.v === 'number' &&
+                        (
+                            parseData.z === pattern ||
+                            numfmt.format(pattern, parseData.v, this._numfmtParseOptions) === cellText
+                        )
+                    ) {
+                        cellText = parseData.v.toString();
+                        numfmtPattern = pattern;
+                    } else if (parseData && parseData.z) {
+                        cellText = parseData.v.toString();
+                        numfmtPattern = parseData.z;
+                    } else if (!parseData) {
+                        const extractedNumber = extractNumber(cellText);
+
+                        if (extractedNumber !== null && !Number.isNaN(extractedNumber) && numfmt.format(pattern, extractedNumber, this._numfmtParseOptions) === cellText) {
+                            cellText = extractedNumber.toString();
+                            numfmtPattern = pattern;
+                        }
+                    }
+                }
+
+                if (!numfmtPattern) {
+                    // Determine whether it is rich text based on whether there are html tags
+                    const cellTextAndRichText = this._getCellTextAndRichText(cell, cellStyle, skeleton);
+                    cellText = cellTextAndRichText.cellText;
+                    cellRichStyle = cellTextAndRichText.cellRichStyle;
+                }
 
                 const cellValue = {
                     rowSpan,
@@ -405,6 +556,7 @@ export class HtmlToUSMService {
                         p: cellRichStyle,
                         v: cellText,
                     },
+                    numfmtPattern,
                 };
 
                 if (cellMatrix.getValue(rowIndex, colSetValueIndex)) {
@@ -450,12 +602,15 @@ export class HtmlToUSMService {
                 if (!doc.paragraphs) {
                     doc.paragraphs = [];
                 }
-                doc.paragraphs.push({ startIndex: doc.dataStream.length });
+                doc.paragraphs.push({
+                    startIndex: doc.dataStream.length,
+                    paragraphId: createParagraphId(new Set(doc.paragraphs.map((paragraph) => paragraph.paragraphId))),
+                });
                 doc.dataStream += '\r';
             } else if (node.nodeType === Node.ELEMENT_NODE) {
                 const currentNodeStyle = this._getStyle(node as HTMLElement, styleStr);
                 const parentStyles = parent ? styleCache.get(parent) : {};
-                const predefinedStyles = turnToStyleObject(currentNodeStyle);
+                const predefinedStyles = this._getStyleObject(currentNodeStyle);
                 const nodeStyles = extractNodeStyle(node as HTMLElement, predefinedStyles);
 
                 styleCache.set(node, { ...parentStyles, ...nodeStyles });
@@ -466,17 +621,25 @@ export class HtmlToUSMService {
     }
 
     private _getCellTextAndRichText(cell: Element, styleStr: string, skeleton?: SpreadsheetSkeleton) {
+        if (cell.childElementCount === 0) {
+            return {
+                cellText: normalizePlainCellText(cell.textContent ?? ''),
+                cellRichStyle: undefined,
+            };
+        }
+
+        const cellHtml = cell.innerHTML;
         /**
          * mso-spacerun:yes is used to force spaces in html copied from excel.
          * if the remaining text is a number or parse to a number, return the remaining text directly.
          * e.g. excel cell value is 1234.567, and cell format is "#,##0.00", then the copied html is:
          * "<span style="mso-spacerun:yes">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span>1,234.57 "
          */
-        if (cell.innerHTML.includes('mso-spacerun:yes')) {
-            const cellText = cell.innerHTML.replace(/<span[^>]*mso-spacerun:yes[^>]*>[\s\S]*?<\/span>/gi, '').replace(/\s/g, '');
-            const parseInfo = getNumfmtParseValueFilter(cellText);
+        if (cellHtml.includes('mso-spacerun:yes')) {
+            const cellText = cleanMsoSpaceRun(cellHtml);
+            const parseInfo = getNumfmtParseValueFilter(cellText, this._numfmtParseOptions);
 
-            if (parseInfo && parseInfo.z && isRealNum(parseInfo.v)) {
+            if (parseInfo && parseInfo.z && typeof parseInfo.v === 'number') {
                 return {
                     cellText,
                     cellRichStyle: undefined,
@@ -486,7 +649,7 @@ export class HtmlToUSMService {
 
         let cellText = '';
         let cellRichStyle;
-        const isRichText = /<[^>]+>/.test(cell.innerHTML);
+        const isRichText = /<[^>]+>/.test(cellHtml);
         if (isRichText && skeleton) {
             const newDocBody: IDocumentBody = {
                 dataStream: '',
@@ -494,7 +657,7 @@ export class HtmlToUSMService {
             };
             // Rich text parsing method, refer to the doc
             this._parseCellHtml(null, cell.childNodes, newDocBody, undefined, styleStr);
-            const documentModel = skeleton.getBlankCellDocumentModel()?.documentModel;
+            const documentModel = createDocumentModelWithStyle('', {});
             const p = documentModel?.getSnapshot();
             const singleDataStream = `${newDocBody.dataStream}\r\n`;
             const documentData = {
@@ -511,7 +674,7 @@ export class HtmlToUSMService {
             cellRichStyle = documentModel?.getSnapshot();
             cellText = newDocBody.dataStream;
         } else {
-            cellText = decodeHTMLEntities(cell.innerHTML.replace(/[\r\n]/g, ''));
+            cellText = decodeHTMLEntities(cellHtml.replace(/[\r\n]/g, ''));
         }
         return {
             cellText,
@@ -524,8 +687,7 @@ export class HtmlToUSMService {
         if (currentSkeleton == null) {
             return null;
         }
-        const { skeleton } = currentSkeleton;
-        const documentModel = skeleton.getBlankCellDocumentModel()?.documentModel;
+        const documentModel = createDocumentModelWithStyle('', {});
         const p = documentModel?.getSnapshot();
         const documentData = { ...p, ...snapshot };
         documentModel?.reset(documentData);
@@ -580,7 +742,10 @@ export class HtmlToUSMService {
                 if (!doc.paragraphs) {
                     doc.paragraphs = [];
                 }
-                doc.paragraphs.push({ startIndex: doc.dataStream.length });
+                doc.paragraphs.push({
+                    startIndex: doc.dataStream.length,
+                    paragraphId: createParagraphId(new Set(doc.paragraphs.map((paragraph) => paragraph.paragraphId))),
+                });
                 doc.dataStream += '\r';
             } else if (node.nodeType === Node.ELEMENT_NODE) {
                 if (node.nodeName === 'STYLE') {
@@ -622,13 +787,17 @@ export class HtmlToUSMService {
         const element = node as HTMLElement;
 
         if (element.tagName.toUpperCase() === 'A') {
+            const href = (element as HTMLAnchorElement).href;
+            if (!isSafeUrl(href)) {
+                return;
+            }
             body.customRanges = body.customRanges ?? [];
             body.customRanges.push({
                 startIndex: start,
                 endIndex: body.dataStream.length - 1,
                 rangeId: element.dataset.rangeid ?? generateRandomId(),
                 rangeType: CustomRangeType.HYPERLINK,
-                properties: { url: (element as HTMLAnchorElement).href },
+                properties: { url: href },
             });
         }
     }
@@ -637,6 +806,11 @@ export class HtmlToUSMService {
         this._dom = null;
         this._styleCache.clear();
         this._styleMap.clear();
+        this._selectorStyleValueCache.clear();
+        this._styleObjectCache.clear();
+        this._computedStyleStringCache.clear();
+        this._cellStyleDataCache.clear();
+        this._msoNumfmtMap.clear();
     }
 }
 
@@ -763,6 +937,10 @@ function decodeHTMLEntities(input: string): string {
     return input.replace(/&lt;|&gt;|&amp;|&quot;|&#39;|&nbsp;|<br>/g, (match) => entities[match]);
 }
 
+function normalizePlainCellText(input: string): string {
+    return input.replace(/[\r\n]/g, '').replace(/\u00A0/g, ' ');
+}
+
 function extractStyleProperty(styleString?: string, propertyName?: string) {
     if (!styleString || !propertyName) return null;
     const regex = new RegExp(`(${propertyName}\\s*:\\s*[^;]+);`, 'i');
@@ -807,4 +985,55 @@ function setMergedCellStyle(
             }
         }
     }
+}
+
+/**
+ * Decode mso-number-format value from Excel HTML CSS.
+ * Excel escapes certain characters in CSS with backslash, and uses \0022 for double-quote.
+ * e.g. "_\(* \#\,\#\#0_\)\;_\(* \\\(\#\,\#\#0\\\)\;_\(* \0022-\0022??_\)\;_\(\@_\)"
+ *   → "_(* #,##0_);_(* \(#,##0\);_(* \"-\"??_);_(@_)"
+ */
+function decodeMsoNumberFormat(value: string): string {
+    // 1. Replace Unicode escapes: \0022 → "
+    let result = value.replace(/\\([0-9a-fA-F]{4})/g, (_, hex) =>
+        String.fromCharCode(Number.parseInt(hex, 16)));
+    // 2. Replace \\ → \  (must come before single-char escapes)
+    result = result.replace(/\\\\/g, '\x00BACKSLASH\x00');
+    // 3. Unescape other backslash-escaped chars: \# \, \( \) \; \@ \. \- etc.
+    result = result.replace(/\\([^\\])/g, '$1');
+    // 4. Restore literal backslashes
+    result = result.replace(/\x00BACKSLASH\x00/g, '\\');
+    return result;
+}
+
+function cleanMsoSpaceRun(value: string): string {
+    return value
+        // remove mso-spacerun spans but keep their content
+        .replace(/<span[^>]*mso-spacerun:yes[^>]*>/gi, '')
+        .replace(/<\/span>/gi, '')
+        // remove any remaining non-breaking spaces
+        .replace(/\u00A0|&nbsp;/gi, '');
+}
+
+function extractNumber(value: string): number | null {
+    const match = value.match(/\(?-?\d[\d,]*(\.\d+)?%?\)?/);
+    if (!match) return null;
+
+    let numStr = match[0];
+
+    const isPercent = numStr.includes('%');
+
+    numStr = numStr.replace(/[,%]/g, '');
+
+    if (/^\(.*\)$/.test(numStr)) {
+        numStr = `-${numStr.slice(1, -1)}`;
+    }
+
+    let num = Number(numStr);
+
+    if (isPercent) {
+        num = num / 100;
+    }
+
+    return num;
 }

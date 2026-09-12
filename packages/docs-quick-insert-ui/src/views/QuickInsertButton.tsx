@@ -37,7 +37,7 @@ export const QuickInsertButton = ({ className = '' }: {
     const univerInstanceService = useDependency(IUniverInstanceService);
     const renderManagerService = useDependency(IRenderManagerService);
     const currentDoc = useObservable(useMemo(() => univerInstanceService.getCurrentTypeOfUnit$<DocumentDataModel>(UniverInstanceType.UNIVER_DOC), [univerInstanceService]));
-    const currentUnit = currentDoc && renderManagerService.getRenderById(currentDoc.getUnitId());
+    const currentUnit = currentDoc && renderManagerService.getRenderUnitById(currentDoc.getUnitId());
     const docQuickInsertMenuController = currentUnit?.with(DocQuickInsertMenuController);
     const layoutService = useDependency(ILayoutService);
     const docSelectionManagerService = useDependency(DocSelectionManagerService);
@@ -85,7 +85,7 @@ export const QuickInsertButton = ({ className = '' }: {
               dark:hover:!univer-bg-gray-700
             `, borderClassName, {
                 'univer-bg-gray-100 dark:!univer-bg-gray-700': editPopup,
-                'univer-bg-white dark:!univer-bg-gray-900': !editPopup,
+                'univer-bg-gray-0 dark:!univer-bg-gray-900': !editPopup,
             }, className)}
             role="button"
             tabIndex={0}

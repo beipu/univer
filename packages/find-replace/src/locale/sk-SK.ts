@@ -19,24 +19,32 @@ import type enUS from './en-US';
 const locale: typeof enUS = {
     'find-replace': {
         toolbar: 'Hľadať a nahradiť',
+        mobile: {
+            settings: 'Nastavenia hľadania a nahrádzania',
+            'settings-title': 'Nastavenia hľadania a nahrádzania',
+            'previous-match': 'Predchádzajúca zhoda',
+            'next-match': 'Nasledujúca zhoda',
+            close: 'Zavrieť hľadanie a nahrádzanie',
+        },
         shortcut: {
-            'open-find-dialog': 'Otvoriť dialóg Hľadať',
-            'open-replace-dialog': 'Otvoriť dialóg Nahradiť',
-            'close-dialog': 'Zavrieť dialóg Hľadať a nahradiť',
+            'open-find-dialog': 'Otvoriť dialógové okno hľadania',
+            'open-replace-dialog': 'Otvoriť dialógové okno nahradenia',
             'go-to-next-match': 'Prejsť na ďalšiu zhodu',
             'go-to-previous-match': 'Prejsť na predchádzajúcu zhodu',
             'focus-selection': 'Zamerať výber',
+            panel: 'Hľadať a nahradiť',
         },
         dialog: {
             title: 'Hľadať',
             find: 'Hľadať',
             replace: 'Nahradiť',
             'replace-all': 'Nahradiť všetko',
-            'case-sensitive': 'Rozlišovať veľkosť písmen',
-            'find-placeholder': 'Hľadať v tomto hárku',
-            'advanced-finding': 'Rozšírené hľadanie a nahrádzanie',
+            'case-sensitive': 'Rozlišovať veľké a malé písmená',
+            'find-placeholder': 'Hľadať',
+            'advanced-finding': 'Pokročilé hľadanie a nahradenie',
             'replace-placeholder': 'Zadajte reťazec na nahradenie',
-            'match-the-whole-cell': 'Zhodovať celú bunku',
+            'match-the-whole-cell': 'Zhoda s celou bunkou',
+            'match-the-whole-word': 'Hľadať iba celé slová',
             'find-direction': {
                 title: 'Smer hľadania',
                 row: 'Hľadať podľa riadkov',
@@ -50,20 +58,24 @@ const locale: typeof enUS = {
             'find-by': {
                 title: 'Hľadať podľa',
                 value: 'Hľadať podľa hodnoty',
-                formula: 'Hľadať podľa vzorca',
+                formula: 'Hľadať vzorec',
             },
-            'no-match': 'Hľadanie dokončené, ale nenašla sa zhoda.',
-            'no-result': 'Žiadny výsledok',
+            'no-match': 'Hľadanie bolo dokončené, ale nenašla sa žiadna zhoda.',
+            'no-result': 'Žiadne výsledky',
         },
         replace: {
-            'all-success': 'Nahradených všetkých {0} zhôd',
+            'all-success': 'Všetkých {0} zhôd bolo nahradených',
+            'partial-success': 'Nahradených {0} zhôd, {1} sa nepodarilo nahradiť',
             'all-failure': 'Nahradenie zlyhalo',
             confirm: {
-                title: 'Naozaj nahradiť všetky zhody?',
+                title: 'Ste si istí, že chcete nahradiť všetky zhody?',
             },
         },
+        button: {
+            confirm: 'OK',
+            cancel: 'Zrušiť',
+        },
     },
-    'find-replace-shortcuts': 'Hľadať a nahradiť',
 };
 
 export default locale;

@@ -14,17 +14,7 @@
  * limitations under the License.
  */
 
-import type {
-    DocumentDataModel,
-    ICommand,
-    IDocumentBody,
-    IMutationInfo,
-    IStyleBase,
-    ITextDecoration,
-    ITextRun,
-    ITextStyle,
-    Nullable,
-} from '@univerjs/core';
+import type { DocumentDataModel, ICommand, IDocumentBody, IMutationInfo, IStyleBase, ITextDecoration, ITextRun, ITextStyle, Nullable } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { ITextRangeWithStyle } from '@univerjs/engine-render';
 import {
@@ -32,8 +22,10 @@ import {
     BooleanNumber,
     CommandType,
     DOC_RANGE_TYPE,
-    getBodySlice,
+    getRichTextEditPath,
+    getTextRunSlice,
     ICommandService,
+    isInternalEditorID,
     IUniverInstanceService,
     JSONX,
     MemoryCursor,
@@ -41,10 +33,11 @@ import {
     TextXActionType,
     Tools,
     UniverInstanceType,
+    UpdateDocsAttributeType,
 } from '@univerjs/core';
 import { DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
 import { DocMenuStyleService } from '../../services/doc-menu-style.service';
-import { getRichTextEditPath } from '../util';
+import { IEditorService } from '../../services/editor/editor-manager.service';
 
 function handleInlineFormat(
     preCommandId: string,
@@ -60,7 +53,7 @@ function handleInlineFormat(
 
 export interface ISetInlineFormatCommandParams {
     preCommandId: string;
-    value?: string;
+    value?: string | Partial<ITextStyle> | null;
 }
 
 const SetInlineFormatBoldCommandId = 'doc.command.set-inline-format-bold';
@@ -198,6 +191,36 @@ export const SetInlineFormatTextColorCommand: ICommand = {
     },
 };
 
+const ResetInlineFormatTextColorCommandId = 'doc.command.reset-inline-format-text-color';
+export const ResetInlineFormatTextColorCommand: ICommand = {
+    id: ResetInlineFormatTextColorCommandId,
+    type: CommandType.COMMAND,
+    handler: async (accessor, params) => {
+        const commandService = accessor.get(ICommandService);
+
+        return handleInlineFormat(
+            ResetInlineFormatTextColorCommandId,
+            params,
+            commandService
+        );
+    },
+};
+
+const SetInlineFormatTextFillCommandId = 'doc.command.set-inline-format-text-fill';
+export const SetInlineFormatTextFillCommand: ICommand = {
+    id: SetInlineFormatTextFillCommandId,
+    type: CommandType.COMMAND,
+    handler: async (accessor, params) => {
+        const commandService = accessor.get(ICommandService);
+
+        return handleInlineFormat(
+            SetInlineFormatTextFillCommandId,
+            params,
+            commandService
+        );
+    },
+};
+
 const SetInlineFormatTextBackgroundColorCommandId = 'doc.command.set-inline-format-text-background-color';
 export const SetInlineFormatTextBackgroundColorCommand: ICommand = {
     id: SetInlineFormatTextBackgroundColorCommandId,
@@ -236,6 +259,7 @@ const COMMAND_ID_TO_FORMAT_KEY_MAP: Record<string, keyof IStyleBase> = {
     [SetInlineFormatFontSizeCommand.id]: 'fs',
     [SetInlineFormatFontFamilyCommand.id]: 'ff',
     [SetInlineFormatTextColorCommand.id]: 'cl',
+    [ResetInlineFormatTextColorCommand.id]: 'cl',
     [SetInlineFormatTextBackgroundColorCommand.id]: 'bg',
     [ResetInlineFormatTextBackgroundColorCommand.id]: 'bg',
     [SetInlineFormatSubscriptCommand.id]: 'va',
@@ -249,11 +273,15 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
     handler: async (accessor, params: ISetInlineFormatCommandParams) => {
         const { value, preCommandId } = params;
         const commandService = accessor.get(ICommandService);
+        const editorService = accessor.has(IEditorService) ? accessor.get(IEditorService) : null;
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const docMenuStyleService = accessor.get(DocMenuStyleService);
 
-        const docRanges = docSelectionManagerService.getDocRanges();
+        const textRanges = docSelectionManagerService.getTextRanges() ?? [];
+        const docRanges = textRanges.length > 0
+            ? textRanges.filter((range) => range.startOffset != null && range.endOffset != null)
+            : docSelectionManagerService.getDocRanges();
         const activeRange = docRanges.find((r) => r.isActive) ?? docRanges[0];
 
         if (docRanges.length === 0) {
@@ -262,12 +290,12 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
 
         const { segmentId } = docRanges[0];
 
-        const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
         if (docDataModel == null) {
             return false;
         }
 
-        const body = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody();
+        const body = docDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody();
 
         if (body == null) {
             return false;
@@ -276,6 +304,7 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
         const unitId = docDataModel.getUnitId();
 
         let formatValue;
+        let formatPatch: Partial<ITextStyle> | undefined;
 
         switch (preCommandId) {
             case SetInlineFormatBoldCommand.id: // fallthrough
@@ -313,6 +342,12 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
                 break;
             }
 
+            case SetInlineFormatTextFillCommand.id: {
+                formatPatch = value as Partial<ITextStyle>;
+                break;
+            }
+
+            case ResetInlineFormatTextColorCommand.id:
             case ResetInlineFormatTextBackgroundColorCommand.id: {
                 formatValue = {
                     rgb: null,
@@ -336,6 +371,32 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
 
         const textX = new TextX();
         const jsonX = JSONX.getInstance();
+        const textStylePatch = formatPatch ?? {
+            [COMMAND_ID_TO_FORMAT_KEY_MAP[preCommandId]]: formatValue,
+        };
+        const shouldClearSolidTextFill = preCommandId === SetInlineFormatTextColorCommand.id
+            && !isInternalEditorID(unitId)
+            && !editorService?.isEditor(unitId);
+
+        const pushTextStyleUpdate = (len: number, ts: Partial<ITextStyle>, replace = false) => {
+            if (len <= 0) {
+                return;
+            }
+
+            textX.push({
+                t: TextXActionType.RETAIN,
+                body: {
+                    dataStream: '',
+                    textRuns: [{
+                        st: 0,
+                        ed: len,
+                        ts,
+                    }],
+                },
+                len,
+                ...(replace ? { coverType: UpdateDocsAttributeType.REPLACE } : {}),
+            });
+        };
 
         const memoryCursor = new MemoryCursor();
         memoryCursor.reset();
@@ -357,32 +418,23 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
                 const cacheStyle = docMenuStyleService.getStyleCache();
                 const key = COMMAND_ID_TO_FORMAT_KEY_MAP[preCommandId];
 
-                docMenuStyleService.setStyleCache(
-                    {
-                        [key]: cacheStyle?.[key] !== undefined && isNeedReverseValue(key)
-                            ? getReverseFormatValue(
-                                cacheStyle,
-                                key,
-                                preCommandId
-                            )
-                            : formatValue,
-                    }
-                );
+                if (formatPatch) {
+                    docMenuStyleService.setStyleCache(formatPatch);
+                } else {
+                    docMenuStyleService.setStyleCache(
+                        {
+                            [key]: cacheStyle?.[key] !== undefined && isNeedReverseValue(key)
+                                ? getReverseFormatValue(
+                                    cacheStyle,
+                                    key,
+                                    preCommandId
+                                )
+                                : formatValue,
+                        }
+                    );
+                }
                 continue;
             }
-
-            const body: IDocumentBody = {
-                dataStream: '',
-                textRuns: [
-                    {
-                        st: 0,
-                        ed: endOffset - startOffset,
-                        ts: {
-                            [COMMAND_ID_TO_FORMAT_KEY_MAP[preCommandId]]: formatValue,
-                        },
-                    },
-                ],
-            };
 
             const len = startOffset - memoryCursor.cursor;
 
@@ -393,11 +445,37 @@ export const SetInlineFormatCommand: ICommand<ISetInlineFormatCommandParams> = {
                 });
             }
 
-            textX.push({
-                t: TextXActionType.RETAIN,
-                body,
-                len: endOffset - startOffset,
-            });
+            if (shouldClearSolidTextFill) {
+                let currentOffset = startOffset;
+
+                for (const textRun of body.textRuns ?? []) {
+                    if (textRun.ts?.textFill?.type !== 'solid') {
+                        continue;
+                    }
+
+                    const solidStart = Math.max(currentOffset, textRun.st);
+                    const solidEnd = Math.min(endOffset, textRun.ed);
+
+                    if (solidStart >= solidEnd) {
+                        continue;
+                    }
+
+                    pushTextStyleUpdate(solidStart - currentOffset, textStylePatch);
+
+                    const replacementStyle = {
+                        ...textRun.ts,
+                        ...textStylePatch,
+                    };
+                    delete replacementStyle.textFill;
+                    pushTextStyleUpdate(solidEnd - solidStart, replacementStyle, true);
+
+                    currentOffset = solidEnd;
+                }
+
+                pushTextStyleUpdate(endOffset - currentOffset, textStylePatch);
+            } else {
+                pushTextStyleUpdate(endOffset - startOffset, textStylePatch);
+            }
 
             memoryCursor.reset();
             memoryCursor.moveCursor(endOffset);
@@ -474,7 +552,11 @@ export function getStyleInTextRange(
         return textRun?.ts ? { ...defaultStyle, ...textRun.ts } : defaultStyle;
     }
 
-    const { textRuns = [] } = getBodySlice(body, startOffset, endOffset);
+    // Menu state only reads text style. Building a full body slice also scans and
+    // clones tables, paragraphs, decorations and custom ranges for every toolbar
+    // observable. The text-run slice preserves normalization without touching those
+    // unrelated structures.
+    const textRuns = getTextRunSlice(body, startOffset, endOffset) ?? [];
 
     const style = Tools.deepClone(defaultStyle);
 
@@ -489,6 +571,7 @@ export function getStyleInTextRange(
     style.st = textRuns.length && textRuns.every((t) => t.ts?.st?.s === BooleanNumber.TRUE) ? textRuns[0].ts?.st : style.st;
     style.bg = textRuns.find((t) => t.ts?.bg != null)?.ts?.bg ?? style.bg;
     style.cl = textRuns.find((t) => t.ts?.cl != null)?.ts?.cl ?? style.cl;
+    style.textFill = textRuns.find((t) => t.ts?.textFill != null)?.ts?.textFill ?? style.textFill;
 
     const vas = textRuns.filter((t) => t?.ts?.va != null);
 

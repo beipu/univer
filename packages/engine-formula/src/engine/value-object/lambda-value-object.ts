@@ -15,7 +15,6 @@
  */
 
 import type { Nullable } from '@univerjs/core';
-
 import type { BaseAstNode } from '../ast-node/base-ast-node';
 import type { LambdaParameterNode } from '../ast-node/lambda-parameter-node';
 import type { Interpreter } from '../interpreter/interpreter';
@@ -67,7 +66,7 @@ export class LambdaValueObjectObject extends BaseValueObject {
 
         private _lambdaPrivacyVarKeys: string[]
     ) {
-        super(0);
+        super();
         this._lambdaPrivacyValueMap.clear();
     }
 
@@ -117,8 +116,9 @@ export class LambdaValueObjectObject extends BaseValueObject {
      * @param variants
      */
     executeCustom(...variants: PrimitiveValueType[]) {
-        // Create base value object from primitive value, then execute
-        const baseValueObjects = variants.map((variant) => ValueObjectFactory.create(variant));
+        const dateSystem = this._interpreter?.getDateSystem();
+        // Primitive arguments must be converted before nested execution, using the same workbook context.
+        const baseValueObjects = variants.map((variant) => ValueObjectFactory.create(variant, false, dateSystem));
         return this.execute(...baseValueObjects);
     }
 

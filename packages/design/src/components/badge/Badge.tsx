@@ -16,7 +16,9 @@
 
 import type { ReactNode } from 'react';
 import { CloseIcon } from '@univerjs/icons';
+import { useContext } from 'react';
 import { clsx } from '../../helper/clsx';
+import { ConfigContext } from '../config-provider/ConfigProvider';
 
 export interface IBadgeProps {
     className?: string;
@@ -27,6 +29,7 @@ export interface IBadgeProps {
 
 export function Badge(props: IBadgeProps) {
     const { className, children, closable = false, onClose } = props;
+    const { locale } = useContext(ConfigContext);
 
     return (
         <span
@@ -47,13 +50,13 @@ export function Badge(props: IBadgeProps) {
 
             {closable && (
                 <button
-                    className={`
+                    className="
                       univer-flex univer-cursor-pointer univer-items-center univer-justify-center univer-border-none
                       univer-p-0 univer-outline-none univer-transition-opacity
                       hover:univer-opacity-70
-                    `}
+                    "
                     type="button"
-                    aria-label="Close badge"
+                    aria-label={locale?.Accessibility.closeBadge}
                     onClick={onClose}
                 >
                     <CloseIcon className="univer-text-current" />

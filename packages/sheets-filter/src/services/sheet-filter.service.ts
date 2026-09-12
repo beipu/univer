@@ -76,7 +76,7 @@ export class SheetsFilterService extends Disposable {
             return already;
         }
 
-        const workbook = this._univerInstanceService.getUniverSheetInstance(unitId);
+        const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
         if (!workbook) {
             throw new Error(`[SheetsFilterService]: could not create "FilterModel" on a non-existing workbook ${unitId}!`);
         }
@@ -113,7 +113,7 @@ export class SheetsFilterService extends Disposable {
     private _updateActiveFilterModel(): void {
         let workbook: Nullable<Workbook>;
         try {
-            workbook = this._univerInstanceService.getCurrentUnitForType(UniverInstanceType.UNIVER_SHEET);
+            workbook = this._univerInstanceService.getCurrentUnitOfType(UniverInstanceType.UNIVER_SHEET);
             if (!workbook) {
                 this._activeFilterModel$.next(null);
                 return;
@@ -165,7 +165,7 @@ export class SheetsFilterService extends Disposable {
     }
 
     private _deserializeAutoFiltersForUnit(unitId: string, json: ISheetsFilterResource): void {
-        const workbook = this._univerInstanceService.getUniverSheetInstance(unitId)!;
+        const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET)!;
         Object.keys(json).forEach((worksheetId: WorksheetID) => {
             const autoFilter = json[worksheetId]!;
             const filterModel = FilterModel.deserialize(unitId, worksheetId, workbook.getSheetBySheetId(worksheetId)!, autoFilter);

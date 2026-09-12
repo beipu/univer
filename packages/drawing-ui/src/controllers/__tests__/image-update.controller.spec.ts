@@ -14,14 +14,51 @@
  * limitations under the License.
  */
 
-import { DrawingTypeEnum, UniverInstanceType } from '@univerjs/core';
-import { SetDrawingSelectedOperation } from '@univerjs/drawing';
-import { Subject } from 'rxjs';
+import { ContextService, DrawingTypeEnum, ICommandService, IContextService, IImageIoService, ImageSourceType, Injector, IUniverInstanceService, LocaleService, ThemeService, UniverInstanceType } from '@univerjs/core';
+import { IDrawingManagerService, SetDrawingSelectedOperation } from '@univerjs/drawing';
+import { IRenderManagerService } from '@univerjs/engine-render';
+import { IDialogService, ILayoutService, IMessageService, IShortcutService } from '@univerjs/ui';
+import { NEVER, Subject } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ImageResetSizeOperation } from '../../commands/operations/image-reset-size.operation';
+import { DOC_DRAWING_BEHIND_TEXT_LAYER_INDEX, DrawingRenderService } from '../../services/drawing-render.service';
+import { ImageCropperController } from '../image-cropper.controller';
 import { ImageUpdateController } from '../image-update.controller';
 
+const injectors: Injector[] = [];
+
+function createController(
+    command: ICommandService,
+    render: IRenderManagerService,
+    drawing: IDrawingManagerService,
+    dialog: IDialogService,
+    imageIo: IImageIoService,
+    instance: IUniverInstanceService,
+    drawingRender: DrawingRenderService
+) {
+    const injector = new Injector([
+        [ICommandService, { useValue: command }],
+        [IRenderManagerService, { useValue: render }],
+        [IDrawingManagerService, { useValue: drawing }],
+        [IDialogService, { useValue: dialog }],
+        [IImageIoService, { useValue: imageIo }],
+        [IUniverInstanceService, { useValue: { ...instance, getCurrentTypeOfUnit$: () => NEVER } }],
+        [DrawingRenderService, { useValue: drawingRender }],
+        [IContextService, { useClass: ContextService }],
+        [ThemeService],
+        [LocaleService],
+        [ILayoutService, { useValue: { focus: vi.fn() } }],
+        [IMessageService, { useValue: { show: vi.fn() } }],
+        [IShortcutService, { useValue: { registerShortcut: vi.fn(() => ({ dispose: vi.fn() })) } }],
+        [ImageCropperController],
+        [ImageUpdateController],
+    ]);
+    injectors.push(injector);
+    return injector.get(ImageUpdateController);
+}
+
 afterEach(() => {
+    injectors.splice(0).forEach((injector) => injector.dispose());
     vi.useRealTimers();
 });
 
@@ -62,10 +99,10 @@ describe('ImageUpdateController', () => {
             syncExecuteCommand: vi.fn(),
         };
 
-        const controller = new ImageUpdateController(
+        const controller = createController(
             commandService as never,
             {
-                getRenderById: vi.fn(() => ({
+                getRenderUnitById: vi.fn(() => ({
                     scene: {
                         getObject: vi.fn(() => imageShape),
                         getTransformerByCreate: vi.fn(() => ({
@@ -117,10 +154,10 @@ describe('ImageUpdateController', () => {
         };
         const renderImages = vi.fn(async () => []);
 
-        const controller = new ImageUpdateController(
+        const controller = createController(
             { onCommandExecuted: vi.fn(() => ({ dispose: vi.fn() })), syncExecuteCommand: vi.fn() } as never,
             {
-                getRenderById: vi.fn(() => ({
+                getRenderUnitById: vi.fn(() => ({
                     scene: { getTransformerByCreate: vi.fn(), getObject: vi.fn() },
                 })),
             } as never,
@@ -140,5 +177,130 @@ describe('ImageUpdateController', () => {
 
         expect(renderImages).toHaveBeenCalledTimes(1);
         expect(drawingManagerService.refreshTransform).toHaveBeenCalledWith([imageParam]);
+    });
+
+    it('refreshes a loaded image from the current drawing state after updates during loading', async () => {
+        vi.useFakeTimers();
+        const add$ = new Subject<Array<{ unitId: string; subUnitId: string; drawingId: string }>>();
+        const update$ = new Subject();
+        const insertedImage = {
+            unitId: 'book-1',
+            subUnitId: 'sheet-1',
+            drawingId: 'shape-2',
+            drawingType: DrawingTypeEnum.DRAWING_IMAGE,
+            transform: { left: 0, top: 0, width: 100, height: 50, angle: 0 },
+        };
+        const updatedImage = {
+            ...insertedImage,
+            transform: { ...insertedImage.transform, left: 200, top: 120 },
+        };
+        let currentImage = insertedImage;
+        let finishRendering!: (images: never[]) => void;
+        const renderImages = vi.fn(() => new Promise<never[]>((resolve) => {
+            finishRendering = resolve;
+        }));
+        const refreshTransform = vi.fn();
+        const controller = createController(
+            { onCommandExecuted: vi.fn(() => ({ dispose: vi.fn() })), syncExecuteCommand: vi.fn() } as never,
+            {
+                getRenderUnitById: vi.fn(() => ({
+                    scene: { getTransformerByCreate: vi.fn(), getObject: vi.fn() },
+                })),
+            } as never,
+            {
+                add$,
+                update$,
+                getDrawingByParam: vi.fn(() => currentImage),
+                refreshTransform,
+            } as never,
+            {} as never,
+            {} as never,
+            { getUnit: vi.fn(() => createSheetUnit()), getFocusedUnit: vi.fn(() => createSheetUnit()) } as never,
+            { renderImages } as never
+        );
+
+        add$.next([{ unitId: 'book-1', subUnitId: 'sheet-1', drawingId: 'shape-2' }]);
+        await vi.advanceTimersByTimeAsync(40);
+        currentImage = updatedImage;
+        finishRendering([]);
+        await Promise.resolve();
+
+        expect(refreshTransform).toHaveBeenCalledWith([updatedImage]);
+
+        controller.dispose();
+    });
+
+    it('applies refreshed transform, clip bounds, and behind-text layer to existing images', () => {
+        const add$ = new Subject();
+        const update$ = new Subject<Array<{ unitId: string; subUnitId: string; drawingId: string }>>();
+        const transform = {
+            angle: 0,
+            clipBounds: { height: 120, left: 0, top: 0, width: 80 },
+            height: 60,
+            left: 10,
+            top: 20,
+            width: 100,
+        };
+        const imageParam = {
+            behindText: true,
+            drawingId: 'shape-3',
+            drawingType: DrawingTypeEnum.DRAWING_IMAGE,
+            imageSourceType: ImageSourceType.BASE64,
+            source: 'data:image/png;base64,Zm9v',
+            srcRect: { bottom: 0, left: 0, right: 0, top: 0 },
+            subUnitId: 'sheet-1',
+            transform,
+            unitId: 'book-1',
+        };
+        const imageShape = {
+            changeSource: vi.fn(),
+            layer: { zIndex: 4 },
+            setClipBounds: vi.fn(),
+            setPrstGeom: vi.fn(),
+            setSrcRect: vi.fn(),
+            transformByState: vi.fn(),
+        };
+        const scene = {
+            addObject: vi.fn(),
+            getObject: vi.fn(() => imageShape),
+            getTransformerByCreate: vi.fn(),
+            removeObject: vi.fn(),
+        };
+        const drawingManagerService = {
+            add$,
+            update$,
+            getDrawingByParam: vi.fn(() => imageParam),
+        };
+
+        const controller = createController(
+            { onCommandExecuted: vi.fn(() => ({ dispose: vi.fn() })), syncExecuteCommand: vi.fn() } as never,
+            {
+                getRenderUnitById: vi.fn(() => ({ scene })),
+            } as never,
+            drawingManagerService as never,
+            {} as never,
+            {} as never,
+            { getUnit: vi.fn(() => createSheetUnit()), getFocusedUnit: vi.fn(() => createSheetUnit()) } as never,
+            { renderImages: vi.fn() } as never
+        );
+
+        expect(controller).toBeTruthy();
+
+        update$.next([{ unitId: 'book-1', subUnitId: 'sheet-1', drawingId: 'shape-3' }]);
+
+        expect(imageShape.transformByState).toHaveBeenCalledWith({
+            angle: 0,
+            flipX: false,
+            flipY: false,
+            height: 60,
+            left: 10,
+            skewX: 0,
+            skewY: 0,
+            top: 20,
+            width: 100,
+        });
+        expect(imageShape.setClipBounds).toHaveBeenCalledWith(transform.clipBounds);
+        expect(scene.removeObject).toHaveBeenCalledWith(imageShape);
+        expect(scene.addObject).toHaveBeenCalledWith(imageShape, DOC_DRAWING_BEHIND_TEXT_LAYER_INDEX);
     });
 });

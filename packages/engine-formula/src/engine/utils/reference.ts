@@ -15,7 +15,14 @@
  */
 
 import type { IRange, IUnitRangeName, IUnitRangeWithName } from '@univerjs/core';
-import { AbsoluteRefType, columnLabelToNumber, MAX_COLUMN_COUNT, MAX_ROW_COUNT, RANGE_TYPE, Tools } from '@univerjs/core';
+import {
+    AbsoluteRefType,
+    columnLabelToNumber,
+    MAX_COLUMN_COUNT,
+    MAX_ROW_COUNT,
+    RANGE_TYPE,
+    Tools,
+} from '@univerjs/core';
 import { includeFormulaLexerToken } from '../../basics/match-token';
 import { isReferenceString, UNIT_NAME_REGEX_PRECOMPILING } from '../../basics/regex';
 import { prefixToken, SPACE_TOKEN } from '../../basics/token';
@@ -198,11 +205,11 @@ export function singleReferenceToGrid(refBody: string) {
 
 export function handleRefStringInfo(refString: string) {
     const unitIdMatch = UNIT_NAME_REGEX_PRECOMPILING.exec(refString);
-    let unitId = '';
+    let unitQualifier = '';
 
     if (unitIdMatch != null) {
-        unitId = unitIdMatch[0].trim();
-        unitId = unquoteSheetName(unitId.slice(1, unitId.length - 1));
+        unitQualifier = unitIdMatch[0].trim();
+        unitQualifier = unquoteSheetName(unitQualifier.slice(1, unitQualifier.length - 1));
         refString = refString.replace(UNIT_NAME_REGEX_PRECOMPILING, '');
     }
 
@@ -224,12 +231,12 @@ export function handleRefStringInfo(refString: string) {
     return {
         refBody,
         sheetName,
-        unitId,
+        unitQualifier,
     };
 }
 
 export function deserializeRangeWithSheet(refString: string): IUnitRangeName {
-    const { refBody, sheetName, unitId } = handleRefStringInfo(refString);
+    const { refBody, sheetName, unitQualifier } = handleRefStringInfo(refString);
 
     const colonIndex = refBody.indexOf(':');
 
@@ -248,7 +255,7 @@ export function deserializeRangeWithSheet(refString: string): IUnitRangeName {
         };
 
         return {
-            unitId,
+            unitId: unitQualifier,
             sheetName,
             range,
         };
@@ -275,7 +282,7 @@ export function deserializeRangeWithSheet(refString: string): IUnitRangeName {
     }
 
     return {
-        unitId,
+        unitId: unitQualifier,
         sheetName,
         range: {
             startRow,
@@ -345,7 +352,7 @@ export function replaceRefPrefixString(token: string) {
 /**
  * implement getSheetIdByName
  * function getSheetIdByName(name: string) {
-        return univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetName(name)?.getSheetId() || '';
+        return univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetName(name)?.getSheetId() || '';
     }
  */
 export function getRangeWithRefsString(refString: string, getSheetIdByName: (name: string) => string): IUnitRangeWithName[] {
@@ -477,12 +484,60 @@ function startsWithNonAlphabetic(name: string) {
 }
 
 export function splitTableStructuredRef(ref: string) {
-    const idx = ref.indexOf('[');
+    let unitQualifier = '';
+    let tableRef = ref.trim();
+    let quoteOpen = false;
+    let bracketDepth = 0;
+    let qualifierEnd = -1;
+
+    for (let i = 0; i < tableRef.length; i++) {
+        const char = tableRef[i];
+        if (char === "'") {
+            if (quoteOpen && tableRef[i + 1] === "'") {
+                i++;
+                continue;
+            }
+            quoteOpen = !quoteOpen;
+        } else if (!quoteOpen && char === '[') {
+            bracketDepth++;
+        } else if (!quoteOpen && char === ']') {
+            if (bracketDepth > 0 && tableRef[i + 1] === ']') {
+                i++;
+                continue;
+            }
+            bracketDepth--;
+        } else if (!quoteOpen && bracketDepth === 0 && char === '!') {
+            qualifierEnd = i;
+            break;
+        }
+    }
+
+    if (qualifierEnd >= 0) {
+        unitQualifier = tableRef.slice(0, qualifierEnd).trim();
+        tableRef = tableRef.slice(qualifierEnd + 1);
+        const isQuotedQualifier = unitQualifier.startsWith("'") && unitQualifier.endsWith("'");
+        const isBracketedQualifier = !isQuotedQualifier && unitQualifier.startsWith('[') && unitQualifier.endsWith(']');
+        if (isQuotedQualifier) {
+            unitQualifier = unitQualifier.slice(1, -1);
+        } else if (isBracketedQualifier) {
+            unitQualifier = unitQualifier.slice(1, -1).replaceAll(']]', ']');
+        }
+        unitQualifier = unquoteSheetName(unitQualifier);
+    } else if (tableRef.startsWith('[')) {
+        const legacyQualifierEnd = tableRef.indexOf(']');
+        if (legacyQualifierEnd > 0) {
+            unitQualifier = unquoteSheetName(tableRef.slice(1, legacyQualifierEnd));
+            tableRef = tableRef.slice(legacyQualifierEnd + 1);
+        }
+    }
+
+    const idx = tableRef.indexOf('[');
     if (idx === -1) {
-        return { tableName: ref, struct: '' };
+        return { unitQualifier, tableName: tableRef, columnStruct: '' };
     }
     return {
-        tableName: ref.slice(0, idx),
-        columnStruct: ref.slice(idx), // include [[...]]
+        unitQualifier,
+        tableName: tableRef.slice(0, idx),
+        columnStruct: tableRef.slice(idx), // include [[...]]
     };
 }

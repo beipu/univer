@@ -14,12 +14,19 @@
  * limitations under the License.
  */
 
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
+import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { clsx } from '../../helper/clsx';
 import { Button } from '../button/Button';
 import { ConfigContext } from '../config-provider/ConfigProvider';
-import { DialogContent, DialogDescription, DialogFooter, DialogHeader, Dialog as DialogProvider, DialogTitle } from './DialogPrimitive';
+import {
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    Dialog as DialogProvider,
+    DialogTitle,
+} from './DialogPrimitive';
 
 export interface IDialogProps {
     children: ReactNode;
@@ -59,13 +66,6 @@ export interface IDialogProps {
     defaultPosition?: { x: number; y: number };
 
     /**
-     * Whether the dialog should be destroyed on close.
-     * @deprecated
-     * @default false
-     */
-    destroyOnClose?: boolean;
-
-    /**
      * Whether the dialog should preserve its position on destroy.
      * @default false
      */
@@ -85,6 +85,11 @@ export interface IDialogProps {
      * additional className for dialog
      */
     className?: string;
+
+    /**
+     * Additional className for the dialog overlay.
+     */
+    overlayClassName?: string;
 
     /**
      * whether show close button
@@ -148,7 +153,9 @@ function useDraggable(
     const initializedRef = useRef(false);
 
     useEffect(() => {
-        if (!elementRef.current || initializedRef.current || options.defaultPosition) return;
+        if (!elementRef.current || initializedRef.current || options.defaultPosition) {
+            return;
+        }
 
         const { width, height } = elementRef.current.getBoundingClientRect();
         const { innerWidth, innerHeight } = window;
@@ -162,7 +169,9 @@ function useDraggable(
     }, [options.defaultPosition]);
 
     const calculateBounds = useCallback((clientX: number, clientY: number) => {
-        if (!elementRef.current) return { x: clientX, y: clientY };
+        if (!elementRef.current) {
+            return { x: clientX, y: clientY };
+        }
 
         const rect = elementRef.current.getBoundingClientRect();
         const { clientWidth, clientHeight } = document.documentElement;
@@ -170,16 +179,26 @@ function useDraggable(
         let newX = startPosRef.current.x + (clientX - startClientRef.current.x);
         let newY = startPosRef.current.y + (clientY - startClientRef.current.y);
 
-        if (newX < 0) newX = 0;
-        if (newY < 0) newY = 0;
-        if (newX + rect.width > clientWidth) newX = clientWidth - rect.width;
-        if (newY + rect.height > clientHeight) newY = clientHeight - rect.height;
+        if (newX < 0) {
+            newX = 0;
+        }
+        if (newY < 0) {
+            newY = 0;
+        }
+        if (newX + rect.width > clientWidth) {
+            newX = clientWidth - rect.width;
+        }
+        if (newY + rect.height > clientHeight) {
+            newY = clientHeight - rect.height;
+        }
 
         return { x: newX, y: newY };
     }, []);
 
-    const startDrag = useCallback((e: ReactMouseEvent<HTMLElement> | MouseEvent) => {
-        if (!enabled) return;
+    const startDrag = useCallback((e: MouseEvent<HTMLElement> | MouseEvent) => {
+        if (!enabled) {
+            return;
+        }
 
         e.preventDefault();
         e.stopPropagation();
@@ -191,8 +210,10 @@ function useDraggable(
         document.body.style.userSelect = 'none';
     }, [enabled, position]);
 
-    const onDrag = useCallback((e: MouseEvent) => {
-        if (!isDragging) return;
+    const onDrag = useCallback((e: globalThis.MouseEvent) => {
+        if (!isDragging) {
+            return;
+        }
 
         e.preventDefault();
         e.stopPropagation();
@@ -244,6 +265,7 @@ function useDraggable(
 export function Dialog(props: IDialogProps) {
     const {
         className,
+        overlayClassName,
         children,
         style,
         open = false,
@@ -264,7 +286,7 @@ export function Dialog(props: IDialogProps) {
         onCancel,
     } = props;
 
-    const { locale } = useContext(ConfigContext);
+    const { locale, mountContainer, direction } = useContext(ConfigContext);
 
     const { position, isDragging, setElementRef, handleMouseDown } = useDraggable({ defaultPosition, enabled: draggable });
 
@@ -273,12 +295,12 @@ export function Dialog(props: IDialogProps) {
             <div className="univer-flex univer-justify-end univer-gap-2">
                 {showCancel && (
                     <Button onClick={onCancel}>
-                        {locale?.Confirm?.cancel ?? 'Cancel'}
+                        {locale?.Confirm.cancel}
                     </Button>
                 )}
                 {showOk && (
                     <Button variant="primary" onClick={onOk}>
-                        {locale?.Confirm?.confirm ?? 'OK'}
+                        {locale?.Confirm.confirm}
                     </Button>
                 )}
             </div>
@@ -336,6 +358,9 @@ export function Dialog(props: IDialogProps) {
                         : {}),
                 }}
                 closable={closable}
+                mountContainer={mountContainer}
+                overlayClassName={overlayClassName}
+                dir={direction}
                 onClickClose={handleClickClose}
                 onEscapeKeyDown={(e) => {
                     if (keyboard) {

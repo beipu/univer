@@ -14,13 +14,11 @@
  * limitations under the License.
  */
 
-import type { Nullable } from '@univerjs/core';
+import type { IImageIoService, IImageIoServiceParam, Nullable } from '@univerjs/core';
 import type { Observable } from 'rxjs';
-import type { IImageIoService, IImageIoServiceParam } from './image-io.service';
-import { generateRandomId } from '@univerjs/core';
+import { generateRandomId, ImageSourceType, ImageUploadStatusType } from '@univerjs/core';
 import { Subject } from 'rxjs';
-import { DRAWING_IMAGE_ALLOW_IMAGE_LIST, DRAWING_IMAGE_ALLOW_SIZE } from '../basics/config';
-import { ImageSourceType, ImageUploadStatusType } from './image-io.service';
+import { DRAWING_IMAGE_ALLOW_IMAGE_LIST, getDrawingImageAllowSize } from '../basics/config';
 
 export class ImageIoService implements IImageIoService {
     private _waitCount = 0;
@@ -35,12 +33,19 @@ export class ImageIoService implements IImageIoService {
 
     private _imageSourceCache: Map<string, HTMLImageElement> = new Map();
     getImageSourceCache(source: string, imageSourceType: ImageSourceType) {
+        const cachedImage = this._imageSourceCache.get(source);
+        if (cachedImage != null) {
+            return cachedImage;
+        }
         if (imageSourceType === ImageSourceType.BASE64) {
             const image = new Image();
+            image.onload = () => this._change$.next(this._waitCount);
+            image.onerror = () => this._change$.next(this._waitCount);
             image.src = source;
+            this._imageSourceCache.set(source, image);
             return image;
         }
-        return this._imageSourceCache.get(source);
+        return undefined;
     }
 
     addImageSourceCache(source: string, imageSourceType: ImageSourceType, imageSource: Nullable<HTMLImageElement>) {
@@ -61,12 +66,12 @@ export class ImageIoService implements IImageIoService {
                 this._decreaseWaiting();
                 return;
             }
-            if (imageFile.size > DRAWING_IMAGE_ALLOW_SIZE) {
+            if (imageFile.size > getDrawingImageAllowSize()) {
                 reject(new Error(ImageUploadStatusType.ERROR_EXCEED_SIZE));
                 this._decreaseWaiting();
                 return;
             }
-            // 获取上传的图片的宽高
+            // Get the width and height of the uploaded image
             const reader = new FileReader();
             reader.readAsDataURL(imageFile);
             reader.onload = (evt) => {

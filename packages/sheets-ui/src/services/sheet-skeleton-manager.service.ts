@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-import type { Nullable, Workbook } from '@univerjs/core';
+import type { DependencyIdentifier, Nullable, Workbook } from '@univerjs/core';
 import type { IRender, IRenderContext, IRenderModule, SpreadsheetSkeleton } from '@univerjs/engine-render';
 import type { ISheetSkeletonManagerParam } from '@univerjs/sheets';
 import { Disposable, Inject } from '@univerjs/core';
 import { SHEET_VIEWPORT_KEY } from '@univerjs/engine-render';
 import { SheetSkeletonService, SheetsSelectionsService } from '@univerjs/sheets';
 import { BehaviorSubject } from 'rxjs';
-import { SetColumnHeaderHeightCommand, SetRowHeaderWidthCommand } from '../commands/commands/headersize-changed.command';
+import {
+    SetColumnHeaderHeightCommand,
+    SetRowHeaderWidthCommand,
+} from '../commands/commands/headersize-changed.command';
 import { ISheetSelectionRenderService } from './selection/base-selection-render.service';
 
 export interface ISheetSkeletonManagerSearch {
@@ -189,10 +192,7 @@ export class SheetSkeletonManagerService extends Disposable implements IRenderMo
         render.scene.getViewport(SHEET_VIEWPORT_KEY.VIEW_LEFT_TOP)!.setViewportSize({
             height: size,
         });
-        const selectionService = render?.with(SheetsSelectionsService);
-        const selectionRenderService = render?.with(ISheetSelectionRenderService);
-        const currSelections = selectionService.getCurrentSelections();
-        selectionRenderService.resetSelectionsByModelData(currSelections);
+        this._resetSelectionsIfAvailable(render);
 
         const sheetSkeletonManagerParam = this._sheetSkeletonService.getSkeletonParam(render.unitId, sheetId);
         if (sheetSkeletonManagerParam) {
@@ -229,15 +229,35 @@ export class SheetSkeletonManagerService extends Disposable implements IRenderMo
         render.scene.getViewport(SHEET_VIEWPORT_KEY.VIEW_LEFT_TOP)!.setViewportSize({
             width: size,
         });
-        const selectionService = render?.with(SheetsSelectionsService);
-        const selectionRenderService = render?.with(ISheetSelectionRenderService);
-        const currSelections = selectionService.getCurrentSelections();
-        selectionRenderService.resetSelectionsByModelData(currSelections);
+        this._resetSelectionsIfAvailable(render);
 
         const sheetSkeletonManagerParam = this._sheetSkeletonService.getSkeletonParam(render.unitId, sheetId);
         if (sheetSkeletonManagerParam) {
             sheetSkeletonManagerParam.commandId = SetRowHeaderWidthCommand.id;
             this._currentSkeleton$.next(sheetSkeletonManagerParam);
+        }
+    }
+
+    private _resetSelectionsIfAvailable(render: IRender): void {
+        const selectionService = this._tryGetRenderDependency(render, SheetsSelectionsService);
+        const selectionRenderService = this._tryGetRenderDependency(render, ISheetSelectionRenderService);
+        if (!selectionService || !selectionRenderService) {
+            return;
+        }
+
+        const currSelections = selectionService.getCurrentSelections();
+        selectionRenderService.resetSelectionsByModelData(currSelections);
+    }
+
+    private _tryGetRenderDependency<T>(render: IRender, dependency: DependencyIdentifier<T>): Nullable<T> {
+        try {
+            return render.with(dependency);
+        } catch (error) {
+            if (error instanceof Error && (error.message.includes('DependencyNotFoundError') || error.message.includes('Cannot find'))) {
+                return null;
+            }
+
+            throw error;
         }
     }
 }

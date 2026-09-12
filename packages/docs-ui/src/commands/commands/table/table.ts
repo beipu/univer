@@ -16,7 +16,7 @@
 
 import type { IParagraph, ISectionBreak, ITable, ITableCell, ITableColumn, ITableRow, Nullable } from '@univerjs/core';
 import type { DataStreamTreeNode, DocumentViewModel, ITextRangeWithStyle } from '@univerjs/engine-render';
-import { DataStreamTreeTokenType, generateRandomId, ObjectRelativeFromH, ObjectRelativeFromV, TableAlignmentType, TableRowHeightRule, TableSizeType, TableTextWrapType, Tools } from '@univerjs/core';
+import { createParagraphId, createSectionId, DataStreamTreeTokenType, generateRandomId, ObjectRelativeFromH, ObjectRelativeFromV, TableAlignmentType, TableRowHeightRule, TableSizeType, TableTextWrapType, Tools } from '@univerjs/core';
 
 export enum INSERT_ROW_POSITION {
     ABOVE,
@@ -32,6 +32,8 @@ export function genEmptyTable(rowCount: number, colCount: number) {
     let dataStream: string = DataStreamTreeTokenType.TABLE_START;
     const paragraphs: IParagraph[] = [];
     const sectionBreaks: ISectionBreak[] = [];
+    const existingParagraphIds = new Set<string>();
+    const existingSectionIds = new Set<string>();
 
     for (let i = 0; i < rowCount; i++) {
         dataStream += DataStreamTreeTokenType.TABLE_ROW_START;
@@ -40,6 +42,7 @@ export function genEmptyTable(rowCount: number, colCount: number) {
             dataStream += `${DataStreamTreeTokenType.TABLE_CELL_START}\r\n${DataStreamTreeTokenType.TABLE_CELL_END}`;
             paragraphs.push({
                 startIndex: dataStream.length - 3,
+                paragraphId: createParagraphId(existingParagraphIds),
                 paragraphStyle: {
                     spaceAbove: { v: 3 },
                     lineSpacing: 2,
@@ -47,6 +50,7 @@ export function genEmptyTable(rowCount: number, colCount: number) {
                 },
             });
             sectionBreaks.push({
+                sectionId: createSectionId(existingSectionIds),
                 startIndex: dataStream.length - 2,
             });
         }
@@ -217,11 +221,14 @@ export function getInsertRowBody(col: number) {
     let dataStream: string = DataStreamTreeTokenType.TABLE_ROW_START;
     const paragraphs: IParagraph[] = [];
     const sectionBreaks: ISectionBreak[] = [];
+    const existingParagraphIds = new Set<string>();
+    const existingSectionIds = new Set<string>();
 
     for (let i = 0; i < col; i++) {
         dataStream += `${DataStreamTreeTokenType.TABLE_CELL_START}\r\n${DataStreamTreeTokenType.TABLE_CELL_END}`;
         paragraphs.push({
             startIndex: dataStream.length - 3,
+            paragraphId: createParagraphId(existingParagraphIds),
             paragraphStyle: {
                 spaceAbove: { v: 3 },
                 lineSpacing: 2,
@@ -229,6 +236,7 @@ export function getInsertRowBody(col: number) {
             },
         });
         sectionBreaks.push({
+            sectionId: createSectionId(existingSectionIds),
             startIndex: dataStream.length - 2,
         });
     }
@@ -249,6 +257,7 @@ export function getInsertColumnBody() {
 
     paragraphs.push({
         startIndex: 1,
+        paragraphId: createParagraphId(new Set()),
         paragraphStyle: {
             spaceAbove: { v: 3 },
             lineSpacing: 2,
@@ -256,6 +265,7 @@ export function getInsertColumnBody() {
         },
     });
     sectionBreaks.push({
+        sectionId: createSectionId(new Set()),
         startIndex: 2,
     });
 

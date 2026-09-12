@@ -15,17 +15,15 @@
  */
 
 import type { IRange, Nullable } from '@univerjs/core';
-import type { IDirtyUnitSheetDefinedNameMap, IExprTreeNode, ISuperTable } from '../../basics/common';
-
+import type { IDirtyUnitDefinedNameMap, IExprTreeNode, ISuperTable } from '../../basics/common';
 import type { IFunctionNames } from '../../basics/function';
 import type { IDefinedNamesServiceParam } from '../../services/defined-names.service';
 import type { ISequenceArray, ISequenceNode } from '../utils/sequence';
-import { AbsoluteRefType, Disposable, isValidRange, moveRangeByOffset, Tools } from '@univerjs/core';
-
+import { AbsoluteRefType, Disposable, isValidRange, MAX_COLUMN_COUNT, MAX_ROW_COUNT, moveRangeByOffset, Tools } from '@univerjs/core';
 import { FormulaAstLRU } from '../../basics/cache-lru';
 import { ERROR_TYPE_COUNT_ARRAY, ERROR_TYPE_SET, ErrorType } from '../../basics/error-type';
 import { isFormulaLexerToken, isTokenCannotBeAtEnd, isTokenCannotPrecedeSuffixToken } from '../../basics/match-token';
-import { regexTestSingeRange } from '../../basics/regex';
+import { isReferenceString, regexTestSingeRange } from '../../basics/regex';
 import {
     matchToken,
     OPERATOR_TOKEN_PRIORITY,
@@ -38,11 +36,18 @@ import {
 import {
     DEFAULT_TOKEN_CUBE_FUNCTION_NAME,
     DEFAULT_TOKEN_LAMBDA_FUNCTION_NAME,
+    DEFAULT_TOKEN_LET_FUNCTION_NAME,
     DEFAULT_TOKEN_TYPE_LAMBDA_PARAMETER,
     DEFAULT_TOKEN_TYPE_PARAMETER,
     DEFAULT_TOKEN_TYPE_ROOT,
 } from '../../basics/token-type';
-import { isReferenceStringWithEffectiveColumn, replaceRefPrefixString, serializeRangeToRefString } from '../utils/reference';
+import { NEW_EXCEL_FUNCTIONS } from '../../functions/new-excel-functions';
+import {
+    isReferenceStringWithEffectiveColumn,
+    replaceRefPrefixString,
+    serializeRangeToRefString,
+    splitTableStructuredRef,
+} from '../utils/reference';
 import { deserializeRangeWithSheetWithCache } from '../utils/reference-cache';
 import { generateStringWithSequence, sequenceNodeType } from '../utils/sequence';
 import { LexerNode } from './lexer-node';
@@ -53,6 +58,20 @@ enum bracketType {
     LAMBDA,
 }
 
+enum NewExcelFunctionNodeType {
+    NORMAL,
+    LET,
+    LAMBDA,
+    ROOT,
+    PARAMETER,
+    LAMBDA_PARAMETER,
+    FUNCTION,
+    SUFFIX,
+    COLON,
+    MINUS,
+    OTHER,
+}
+
 const FORMULA_CACHE_LRU_COUNT = 2000;
 
 export const FormulaLexerNodeCache = new FormulaAstLRU<LexerNode>(FORMULA_CACHE_LRU_COUNT);
@@ -61,8 +80,12 @@ export const FormulaSequenceNodeCache = new FormulaAstLRU<Array<string | ISequen
 
 interface IInjectDefinedNameParam {
     unitId: Nullable<string>;
-    getValueByName(unitId: string, name: string): Nullable<IDefinedNamesServiceParam>;
-    getDirtyDefinedNameMap(): IDirtyUnitSheetDefinedNameMap;
+    sheetId?: Nullable<string>;
+    refOffsetX: number;
+    refOffsetY: number;
+    hasFunction(functionToken: IFunctionNames): boolean;
+    getValueByName(unitId: string, name: string, sheetId?: Nullable<string>): Nullable<IDefinedNamesServiceParam>;
+    getDirtyDefinedNameMap(): IDirtyUnitDefinedNameMap;
     getSheetName: (unitId: string, sheetId: string) => string;
 }
 
@@ -92,6 +115,23 @@ export class LexerTreeBuilder extends Disposable {
     private _formulaErrorCount = 0;
 
     private _tableBracketState = false; // Table3[[#All],[Column1]:[Column2]]
+
+    private _hasNewExcelFunction = false;
+
+    private _lambdaFunctionParameterSet = new Set<string>();
+
+    private _xlpmPrefix = '_xlpm.';
+    private _xlfnPrefix = '_xlfn.';
+
+    private _resetPrefix() {
+        this._xlpmPrefix = '_xlpm.';
+        this._xlfnPrefix = '_xlfn.';
+    }
+
+    private _clearPrefix() {
+        this._xlpmPrefix = '';
+        this._xlfnPrefix = '';
+    }
 
     override dispose(): void {
         this._resetTemp();
@@ -662,8 +702,14 @@ export class LexerTreeBuilder extends Disposable {
         transformSuffix = true,
         injectDefinedNameParam?: IInjectDefinedNameParam
     ) {
-        if (transformSuffix === true) {
-            const lexerNode = FormulaLexerNodeCache.get(formulaString);
+        // Parsing LET/LAMBDA rewrites the lexer tree with runtime parameter bindings.
+        // Reusing that mutated tree would bind the next AST to the previous AST's nodes.
+        const isCacheable = !/\b(?:LET|LAMBDA)\s*\(/iu.test(formulaString);
+        const cacheKey = injectDefinedNameParam == null
+            ? formulaString
+            : `${injectDefinedNameParam.unitId ?? ''}\0${injectDefinedNameParam.sheetId ?? ''}\0${injectDefinedNameParam.refOffsetX}\0${injectDefinedNameParam.refOffsetY}\0${formulaString}`;
+        if (transformSuffix === true && isCacheable) {
+            const lexerNode = FormulaLexerNodeCache.get(cacheKey);
             const simpleCheckDefinedNameResult = injectDefinedNameParam && this._simpleCheckDefinedName?.(formulaString, injectDefinedNameParam);
             if (lexerNode && !simpleCheckDefinedNameResult) {
                 return lexerNode;
@@ -716,7 +762,9 @@ export class LexerTreeBuilder extends Disposable {
             if (!isValid) {
                 return ErrorType.VALUE;
             }
-            FormulaLexerNodeCache.set(formulaString, this._currentLexerNode);
+            if (isCacheable) {
+                FormulaLexerNodeCache.set(cacheKey, this._currentLexerNode);
+            }
         }
 
         if (currentHasDefinedName) {
@@ -731,7 +779,7 @@ export class LexerTreeBuilder extends Disposable {
         hasDefinedName: boolean;
         definedNames: string[];
     } {
-        const { unitId, getValueByName, getSheetName } = param;
+        const { unitId, sheetId, hasFunction, getValueByName } = param;
 
         if (unitId == null) {
             return {
@@ -757,12 +805,24 @@ export class LexerTreeBuilder extends Disposable {
             let token = tokenRaw;
             if (nodeType === sequenceNodeType.REFERENCE || nodeType === sequenceNodeType.FUNCTION) {
                 if (nodeType === sequenceNodeType.FUNCTION) {
+                    const nextNode = sequenceNodes[i + 1];
+                    const isFunctionCall = typeof nextNode === 'string' && nextNode.trim() === matchToken.OPEN_BRACKET;
+                    if (isFunctionCall && hasFunction(tokenRaw.trim().toUpperCase())) {
+                        sequenceString += tokenRaw;
+                        continue;
+                    }
                     token = this._getHasSheetNameDefinedName(tokenRaw, unitId, param);
                 }
 
-                const definedContent = getValueByName(unitId, token);
+                const definedNameToken = token.trim();
+                const definedContent = getValueByName(unitId, definedNameToken, sheetId);
                 if (definedContent) {
-                    const refString = definedContent.formulaOrRefString;
+                    const refOffsetX = definedContent.localSheetId === 'AllDefaultWorkbook'
+                        ? param.refOffsetX - 1
+                        : param.refOffsetX;
+                    const refString = definedContent.formulaOrRefString.startsWith('=')
+                        ? definedContent.formulaOrRefString
+                        : this._moveDefinedNameRefOffset(definedContent.formulaOrRefString, refOffsetX, param.refOffsetY);
                     // if (refString.substring(0, 1) === operatorToken.EQUALS) {
                     //     refString = refString.substring(1);
                     // }
@@ -771,7 +831,7 @@ export class LexerTreeBuilder extends Disposable {
                     if (nestedDefinedNameParam == null || typeof nestedDefinedNameParam !== 'object') {
                         sequenceString += nestedDefinedNameParam || ErrorType.NAME;
                         hasDefinedName = true;
-                        definedNames.push(token);
+                        definedNames.push(definedNameToken);
                     } else if (typeof nestedDefinedNameParam === 'object') {
                         const { sequenceString: nestedSequenceString, definedNames: nestedDefinedNames } = nestedDefinedNameParam;
                         sequenceString += nestedSequenceString;
@@ -780,10 +840,10 @@ export class LexerTreeBuilder extends Disposable {
                         });
                         hasDefinedName = true;
                     }
-                } else if (this._checkDefinedNameDirty(token, param)) {
+                } else if (this._checkDefinedNameDirty(definedNameToken, param)) {
                     sequenceString += ErrorType.NAME;
                     hasDefinedName = true;
-                    definedNames.push(token);
+                    definedNames.push(definedNameToken);
                 } else {
                     sequenceString += token;
                 }
@@ -797,6 +857,38 @@ export class LexerTreeBuilder extends Disposable {
             hasDefinedName,
             definedNames,
         };
+    }
+
+    private _moveDefinedNameRefOffset(formulaString: string, refOffsetX: number, refOffsetY: number) {
+        const sequenceNodes = this.sequenceNodesBuilder(formulaString);
+
+        if (sequenceNodes == null) {
+            return formulaString;
+        }
+
+        return generateStringWithSequence(sequenceNodes.map((node) => {
+            if (typeof node === 'string' || node.nodeType !== sequenceNodeType.REFERENCE) {
+                return node;
+            }
+
+            const sequenceGrid = deserializeRangeWithSheetWithCache(node.token);
+            const range = moveRangeByOffset(sequenceGrid.range, refOffsetX, refOffsetY);
+            const wrap = (value: number, limit: number) => ((value % limit) + limit) % limit;
+
+            range.startRow = wrap(range.startRow, MAX_ROW_COUNT);
+            range.endRow = wrap(range.endRow, MAX_ROW_COUNT);
+            range.startColumn = wrap(range.startColumn, MAX_COLUMN_COUNT);
+            range.endColumn = wrap(range.endColumn, MAX_COLUMN_COUNT);
+
+            return {
+                ...node,
+                token: serializeRangeToRefString({
+                    range,
+                    unitId: sequenceGrid.unitId,
+                    sheetName: sequenceGrid.sheetName,
+                }),
+            };
+        }));
     }
 
     private _getHasSheetNameDefinedName(tokenRaw: string, unitId: string, param: IInjectDefinedNameParam) {
@@ -1464,8 +1556,9 @@ export class LexerTreeBuilder extends Disposable {
     // without a standalone lexer phase
     // eslint-disable-next-line max-lines-per-function, complexity
     private _nodeMaker(formulaStringRaw: string, sequenceArray?: ISequenceArray[], matchCurrentNodeIndex?: number) {
-        // Editor will add '\r\n' at the end of the formula string
-        let formulaString = formulaStringRaw.replace(/\r\n$|\r|\n/g, ' ');
+        // Editor may add a line break at the end of the formula string.
+        // Keep internal line breaks because Excel table column names can contain them.
+        let formulaString = formulaStringRaw.replace(/(?:\r\n|\r|\n)$/g, ' ');
         if (formulaString.substring(0, 1) === operatorToken.EQUALS) {
             formulaString = formulaString.substring(1);
         }
@@ -1511,7 +1604,8 @@ export class LexerTreeBuilder extends Disposable {
             } else if (
                 currentString === matchToken.OPEN_BRACKET &&
                 this.isSingleQuotationClose() &&
-                this.isDoubleQuotationClose()
+                this.isDoubleQuotationClose() &&
+                this.isSquareBracketClose()
             ) {
                 if (this._segmentCount() > 0 || this.isLambdaOpen()) {
                     if (this.isLambdaClose()) {
@@ -1552,7 +1646,8 @@ export class LexerTreeBuilder extends Disposable {
             } else if (
                 currentString === matchToken.CLOSE_BRACKET &&
                 this.isSingleQuotationClose() &&
-                this.isDoubleQuotationClose()
+                this.isDoubleQuotationClose() &&
+                this.isSquareBracketClose()
             ) {
                 if (this._formulaErrorLastTokenCheck(formulaChars, cur - 1)) {
                     this._formalErrorOccurred();
@@ -1978,16 +2073,471 @@ export class LexerTreeBuilder extends Disposable {
     }
 
     getNewFormulaWithPrefix(formulaString: string, hasFunction: (functionToken: IFunctionNames) => boolean): string | null {
+        const lexerNode = this.treeBuilder(formulaString, false);
+        if (!lexerNode || lexerNode === ErrorType.VALUE || (Array.isArray(lexerNode))) {
+            return null;
+        }
+
+        const formulaStrings: (string | number | boolean)[] = [];
+        this._hasNewExcelFunction = false;
+        this._generateNewFunctionString(lexerNode as LexerNode, formulaStrings, hasFunction);
+
+        if (this._hasNewExcelFunction) {
+            return `=${formulaStrings.join('')}`;
+        }
+
         return null;
     }
 
-    getFormulaExprTree(
-        formulaString: string,
-        unitId: string,
-        hasFunction: (functionToken: IFunctionNames) => boolean,
-        getDefinedNameName: (unitId: string, name: string) => Nullable<IDefinedNamesServiceParam>,
-        getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>
-    ): IExprTreeNode | null {
+    // eslint-disable-next-line complexity, max-lines-per-function
+    private _generateNewFunctionString(lexerNode: LexerNode, formulaStrings: (string | number | boolean)[], hasFunction: (functionToken: IFunctionNames) => boolean) {
+        const token = lexerNode.getToken();
+
+        const tokenTrim = token.trim();
+        const tokenTrimUpper = tokenTrim.toUpperCase();
+
+        const tokenForFunction = this._clearFunctionString(tokenTrimUpper);
+        const isFunctionNode = hasFunction(tokenForFunction);
+
+        let curNodeType = NewExcelFunctionNodeType.NORMAL;
+
+        if (token === DEFAULT_TOKEN_TYPE_ROOT) {
+            curNodeType = NewExcelFunctionNodeType.ROOT;
+        } else if (token === DEFAULT_TOKEN_TYPE_PARAMETER) {
+            curNodeType = NewExcelFunctionNodeType.PARAMETER;
+        } else if (token === DEFAULT_TOKEN_TYPE_LAMBDA_PARAMETER) {
+            curNodeType = NewExcelFunctionNodeType.LAMBDA_PARAMETER;
+        } else if (NEW_EXCEL_FUNCTIONS.has(tokenForFunction)) {
+            formulaStrings.push(`${this._xlfnPrefix}${tokenTrim}`);
+            this._hasNewExcelFunction = true;
+        } else if (tokenTrimUpper === DEFAULT_TOKEN_LAMBDA_FUNCTION_NAME) {
+            formulaStrings.push(`${this._xlfnPrefix}${tokenTrim}`);
+            this._hasNewExcelFunction = true;
+            curNodeType = NewExcelFunctionNodeType.LAMBDA;
+        } else if (tokenTrimUpper === DEFAULT_TOKEN_LET_FUNCTION_NAME) {
+            formulaStrings.push(`${this._xlfnPrefix}${tokenTrim}`);
+            this._hasNewExcelFunction = true;
+            curNodeType = NewExcelFunctionNodeType.LET;
+        } else if (tokenTrimUpper === matchToken.COLON) {
+            curNodeType = NewExcelFunctionNodeType.COLON;
+        } else if (SUFFIX_TOKEN_SET.has(tokenTrimUpper)) {
+            curNodeType = NewExcelFunctionNodeType.SUFFIX;
+        } else if (tokenTrimUpper === prefixToken.MINUS) {
+            // Check if brackets need to be added for minus sign, for example: -(a+b)
+            if (this._checkAddBracketForMinus(lexerNode)) {
+                curNodeType = NewExcelFunctionNodeType.MINUS;
+            }
+            formulaStrings.push(token);
+        } else {
+            formulaStrings.push(token);
+            curNodeType = NewExcelFunctionNodeType.OTHER;
+        }
+
+        if (isFunctionNode) {
+            if (curNodeType !== NewExcelFunctionNodeType.LAMBDA && curNodeType !== NewExcelFunctionNodeType.LET) {
+                curNodeType = NewExcelFunctionNodeType.FUNCTION;
+            }
+            formulaStrings.push('(');
+        } else if (curNodeType === NewExcelFunctionNodeType.MINUS) {
+            formulaStrings.push('(');
+        }
+
+        const children = lexerNode.getChildren();
+        const childrenCount = children.length;
+
+        // The first child node of a LAMBDA expression holds the invocation arguments; process it after the parameters and wrap in parentheses. For example: LAMBDA(a,b,a*b)(x,y) -> x,y
+        if (curNodeType === NewExcelFunctionNodeType.LAMBDA) {
+            const firstChild = children[0];
+            let firstIsInputIndex = 0;
+            if (firstChild instanceof LexerNode) {
+                const firstChildToken = firstChild.getToken();
+                if (firstChildToken === DEFAULT_TOKEN_TYPE_LAMBDA_PARAMETER) {
+                    firstIsInputIndex = 1;
+                }
+            }
+            for (let i = firstIsInputIndex; i < childrenCount - 1; i++) {
+                const item = children[i];
+                if (item instanceof LexerNode) {
+                    const varName = item.getChildren()[0];
+                    if (typeof varName === 'string') {
+                        if (this._lambdaFunctionParameterSet.has(varName)) {
+                            console.error(`Lambda parameter name "${varName}" is duplicated.`);
+                        }
+                        this._lambdaFunctionParameterSet.add(varName);
+
+                        formulaStrings.push(`${this._xlpmPrefix}${varName}`);
+                        this._hasNewExcelFunction = true;
+                    }
+                }
+                formulaStrings.push(',');
+            }
+
+            this._handleNewFunctionChild(children[childrenCount - 1], formulaStrings, hasFunction);
+
+            if (firstIsInputIndex === 1) {
+                formulaStrings.push(')');
+                formulaStrings.push('(');
+                this._generateNewFunctionString(firstChild as LexerNode, formulaStrings, hasFunction);
+                formulaStrings.push(')');
+            } else {
+                formulaStrings.push(')');
+            }
+            return;
+        } else if (curNodeType === NewExcelFunctionNodeType.LET) {
+            // Special handling for LET function: even positions are variable names, odd positions are values or other formulas, and the last one is the expression.
+            for (let i = 0; i < childrenCount - 1; i++) {
+                const item = children[i];
+
+                if (item instanceof LexerNode && i % 2 === 0) {
+                    const varName = item.getChildren()[0];
+                    if (typeof varName === 'string') {
+                        if (this._lambdaFunctionParameterSet.has(varName)) {
+                            console.error(`Let variable name "${varName}" is duplicated.`);
+                        }
+                        this._lambdaFunctionParameterSet.add(varName);
+                        formulaStrings.push(`${this._xlpmPrefix}${varName}`);
+                        this._hasNewExcelFunction = true;
+                        formulaStrings.push(',');
+                        continue;
+                    }
+                }
+
+                this._handleNewFunctionChild(item, formulaStrings, hasFunction);
+
+                if (item instanceof LexerNode) {
+                    const nextItem = children[i + 1];
+                    if (nextItem && nextItem instanceof LexerNode) {
+                        formulaStrings.push(',');
+                    }
+                }
+            }
+
+            this._handleNewFunctionChild(children[childrenCount - 1], formulaStrings, hasFunction);
+            formulaStrings.push(')');
+            return;
+        } else if (curNodeType === NewExcelFunctionNodeType.COLON) {
+            // Special handling for colon nodes: only two children exist, and the colon node is promoted to parent level by the algorithm, so it needs special handling to insert it in the middle
+            const firstNode = children[0];
+            const secondNode = children[1];
+
+            this._handleNewFunctionChild(firstNode, formulaStrings, hasFunction);
+            formulaStrings.push(token);
+            this._handleNewFunctionChild(secondNode, formulaStrings, hasFunction);
+
+            return;
+        }
+
+        for (let i = 0; i < childrenCount; i++) {
+            const item = children[i];
+            this._handleNewFunctionChild(item, formulaStrings, hasFunction);
+
+            if (item instanceof LexerNode) {
+                const nextItem = children[i + 1];
+                if (nextItem && nextItem instanceof LexerNode) {
+                    formulaStrings.push(',');
+                }
+            }
+        }
+
+        if (curNodeType === NewExcelFunctionNodeType.SUFFIX) {
+            formulaStrings.push(token);
+        }
+
+        if (isFunctionNode) {
+            formulaStrings.push(')');
+        } else if (curNodeType === NewExcelFunctionNodeType.MINUS) {
+            formulaStrings.push(')');
+        }
+    }
+
+    private _handleNewFunctionChild(item: string | LexerNode, formulaStrings: (string | number | boolean)[], hasFunction: (functionToken: IFunctionNames) => boolean) {
+        if (item instanceof LexerNode) {
+            this._generateNewFunctionString(item, formulaStrings, hasFunction);
+        } else {
+            if (this._lambdaFunctionParameterSet.has(item)) {
+                formulaStrings.push(`${this._xlpmPrefix}${item}`);
+                this._hasNewExcelFunction = true;
+            } else {
+                formulaStrings.push(item);
+            }
+        }
+    }
+
+    private _clearFunctionString(token: string): string {
+        let t = token.trim();
+        if (!t) return t;
+
+        const firstChar = t[0];
+        if (
+            firstChar === prefixToken.AT ||
+            firstChar === prefixToken.MINUS ||
+            firstChar === prefixToken.PLUS
+        ) {
+            t = t.slice(1);
+        }
+
+        if (!t) return t;
+
+        const lastChar = t[t.length - 1];
+        if (SUFFIX_TOKEN_SET.has(lastChar)) {
+            t = t.slice(0, -1);
+        }
+
+        return t;
+    }
+
+    private _checkAddBracketForMinus(node: LexerNode) {
+        const childrenFirst = node.getChildren()[0];
+        if (!childrenFirst || !(childrenFirst instanceof LexerNode) || node.getChildren().length > 1) {
+            return false;
+        }
+        const children = childrenFirst.getChildren();
+        const childrenCount = children.length;
+
+        if (childrenCount === 1) {
+            return false;
+        }
+
+        for (let i = 0; i < childrenCount; i++) {
+            const item = children[i];
+
+            if (!(item instanceof LexerNode) && OPERATOR_TOKEN_SET.has(item)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private _currentUnitId = '';
+
+    getFormulaExprTree(formulaString: string, unitId: string, hasFunction: (functionToken: IFunctionNames) => boolean, getDefinedNameName: (unitId: string, name: string) => Nullable<IDefinedNamesServiceParam>, getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>): IExprTreeNode | null {
+        const lexerNode = this.treeBuilder(formulaString, false);
+        if (!lexerNode || lexerNode === ErrorType.VALUE || (Array.isArray(lexerNode))) {
+            return null;
+        }
+
+        this._clearPrefix();
+        this._currentUnitId = unitId;
+        const newNode = this._generateExprTree(lexerNode as LexerNode, hasFunction, getDefinedNameName, getTable);
+        this._currentUnitId = '';
+        this._resetPrefix();
+        return newNode;
+    }
+
+    private _generateExprTree(lexerNodeRoot: LexerNode, hasFunction: (functionToken: IFunctionNames) => boolean, getDefinedNameName: (unitId: string, name: string) => Nullable<IDefinedNamesServiceParam>, getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>) {
+        const newNode: IExprTreeNode = {
+            value: '',
+            children: [],
+            startIndex: 0,
+        };
+
+        let lexerNode = lexerNodeRoot;
+
+        if (lexerNode instanceof LexerNode && (lexerNode.getToken() === DEFAULT_TOKEN_TYPE_ROOT || lexerNode.getToken() === DEFAULT_TOKEN_TYPE_PARAMETER) && lexerNode.getChildren().length === 1) {
+            lexerNode = lexerNode.getChildren()[0] as LexerNode;
+        }
+
+        if (!(lexerNode instanceof LexerNode)) {
+            return this._handleTextNodeForExprTree(lexerNode as string, getDefinedNameName, getTable);
+        }
+
+        const children = lexerNode.getChildren();
+        const childrenCount = children.length;
+
+        const formulaStrings: (string | number | boolean)[] = [];
+        this._generateNewFunctionString(lexerNode, formulaStrings, hasFunction);
+        newNode.value = formulaStrings.join('');
+        newNode.startIndex = lexerNode.getStartIndex();
+
+        const curNodeType = this._getCurNodeTypeForExprTree(lexerNode);
+
+        if (curNodeType === NewExcelFunctionNodeType.LAMBDA) {
+            const firstChild = children[0];
+
+            if (firstChild instanceof LexerNode) {
+                const firstChildToken = firstChild.getToken().trim();
+                if (firstChildToken !== DEFAULT_TOKEN_TYPE_LAMBDA_PARAMETER) {
+                    return newNode;
+                }
+                this._handleLambdaForExprTree(firstChild, newNode, hasFunction, getDefinedNameName, getTable);
+            }
+            return newNode;
+        } else if (curNodeType === NewExcelFunctionNodeType.LET) {
+            for (let i = 0; i < childrenCount - 1; i++) {
+                const item = children[i];
+
+                if (item instanceof LexerNode && i % 2 === 1) {
+                    const itemChildren = item.getChildren();
+                    if (itemChildren.length === 1 && !(itemChildren[0] instanceof LexerNode)) {
+                        continue;
+                    }
+                    const childNode = this._generateExprTree(item, hasFunction, getDefinedNameName, getTable);
+                    childNode && newNode.children.push(childNode);
+                }
+            }
+            return newNode;
+        } else if (curNodeType === NewExcelFunctionNodeType.COLON) {
+            // Special handling for colon nodes: only two children exist, and the colon node is promoted to parent level by the algorithm, so it needs special handling to insert it in the middle
+            const firstNode = children[0];
+            if ((firstNode instanceof LexerNode)) {
+                const firstChildNode = firstNode.getChildren()[0];
+                if ((firstChildNode instanceof LexerNode)) {
+                    newNode.startIndex = firstChildNode.getStartIndex();
+                }
+            }
+
+            if (this._checkColonNodeForExprTree(lexerNode)) {
+                return newNode;
+            }
+        } else if (curNodeType === NewExcelFunctionNodeType.SUFFIX) {
+            const firstNode = children[0];
+            if ((firstNode instanceof LexerNode)) {
+                const firstChildNode = firstNode.getChildren()[0];
+                if ((firstChildNode instanceof LexerNode)) {
+                    newNode.startIndex = firstChildNode.getStartIndex();
+                }
+            }
+        }
+
+        this._handleChildrenForExprTree(children, curNodeType, newNode, hasFunction, getDefinedNameName, getTable);
+
+        return newNode;
+    }
+
+    private _handleChildrenForExprTree(children: (string | LexerNode)[], curNodeType: NewExcelFunctionNodeType, newNode: IExprTreeNode, hasFunction: (functionToken: IFunctionNames) => boolean, getDefinedNameName: (unitId: string, name: string) => Nullable<IDefinedNamesServiceParam>, getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>) {
+        for (let i = 0; i < children.length; i++) {
+            let item = children[i];
+            if (!(item instanceof LexerNode)) {
+                const childNode = this._handleTextNodeForExprTree(item, getDefinedNameName, getTable);
+                childNode && newNode.children.push(childNode);
+                continue;
+            }
+
+            const itemChildren = item.getChildren();
+            if (itemChildren.length === 1 && !(itemChildren[0] instanceof LexerNode)) {
+                const itemChild = itemChildren[0];
+                if (!getDefinedNameName(this._currentUnitId, itemChild) && !this._getTableNameFromStructuredRef(itemChild, getTable) && !isReferenceString(itemChild)) {
+                    continue;
+                }
+            }
+
+            if (curNodeType === NewExcelFunctionNodeType.COLON) {
+                const refNode = itemChildren[0];
+                if (refNode instanceof LexerNode) {
+                    const refString = refNode.getToken().trim();
+                    if (isReferenceString(refString)) {
+                        continue;
+                    }
+                    item = refNode;
+                }
+            }
+
+            const childNode = this._generateExprTree(item, hasFunction, getDefinedNameName, getTable);
+
+            childNode && newNode.children.push(childNode);
+        }
+    }
+
+    private _checkColonNodeForExprTree(item: LexerNode) {
+        const itemChildren = item.getChildren();
+        if (itemChildren.length < 2) {
+            return false;
+        }
+
+        const firstChild = itemChildren[0];
+        const secondChild = itemChildren[1];
+        if (!(firstChild instanceof LexerNode) || !(secondChild instanceof LexerNode)) {
+            return false;
+        }
+        const firstGrandChild = firstChild.getChildren()[0];
+        const secondGrandChild = secondChild.getChildren()[0];
+
+        if (!(firstGrandChild instanceof LexerNode) || !(secondGrandChild instanceof LexerNode)) {
+            return false;
+        }
+
+        const firstChildToken = firstGrandChild.getToken().trim();
+        const secondChildToken = secondGrandChild.getToken().trim();
+
+        if (isReferenceString(`${firstChildToken}${matchToken.COLON}${secondChildToken}`)) {
+            return true;
+        }
+        return false;
+    }
+
+    private _handleTextNodeForExprTree(item: string, getDefinedNameName: (unitId: string, name: string) => Nullable<IDefinedNamesServiceParam>, getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>) {
+        const itemTrim = item.trim();
+        if ((itemTrim.startsWith('{') && itemTrim.endsWith('}'))
+            || getDefinedNameName(this._currentUnitId, itemTrim)
+            || this._getTableNameFromStructuredRef(itemTrim, getTable)
+            || isReferenceString(itemTrim)) {
+            const childNode: IExprTreeNode = {
+                value: itemTrim,
+                children: [],
+                startIndex: -1,
+            };
+            return childNode;
+        }
+
         return null;
+    }
+
+    private _getTableNameFromStructuredRef(token: string, getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>) {
+        const { tableName } = splitTableStructuredRef(token);
+        if (getTable(this._currentUnitId, tableName)) {
+            return tableName;
+        }
+        return null;
+    }
+
+    private _handleLambdaForExprTree(firstChild: LexerNode, newNode: IExprTreeNode, hasFunction: (functionToken: IFunctionNames) => boolean, getDefinedNameName: (unitId: string, name: string) => Nullable<IDefinedNamesServiceParam>, getTable: (unitId: string, tableName: string) => Nullable<ISuperTable>) {
+        const firstGrandchildren = firstChild.getChildren();
+
+        for (let i = 0; i < firstGrandchildren.length; i++) {
+            const item = firstGrandchildren[i];
+            if (!(item instanceof LexerNode)) {
+                continue;
+            }
+
+            const itemChildren = item.getChildren();
+            if (itemChildren.length === 1 && !(itemChildren[0] instanceof LexerNode)) {
+                continue;
+            }
+
+            const childNode = this._generateExprTree(item, hasFunction, getDefinedNameName, getTable);
+            childNode && newNode.children.push(childNode);
+        }
+    }
+
+    private _getCurNodeTypeForExprTree(lexerNode: LexerNode) {
+        const token = lexerNode.getToken();
+        const tokenTrim = token.trim();
+        const tokenTrimUpper = tokenTrim.toUpperCase();
+        let curNodeType = NewExcelFunctionNodeType.NORMAL;
+        if (token === DEFAULT_TOKEN_TYPE_ROOT) {
+            curNodeType = NewExcelFunctionNodeType.ROOT;
+        } else if (token === DEFAULT_TOKEN_TYPE_PARAMETER) {
+            curNodeType = NewExcelFunctionNodeType.PARAMETER;
+        } else if (token === DEFAULT_TOKEN_TYPE_LAMBDA_PARAMETER) {
+            curNodeType = NewExcelFunctionNodeType.LAMBDA_PARAMETER;
+        } else if (tokenTrimUpper === DEFAULT_TOKEN_LAMBDA_FUNCTION_NAME) {
+            curNodeType = NewExcelFunctionNodeType.LAMBDA;
+        } else if (tokenTrimUpper === DEFAULT_TOKEN_LET_FUNCTION_NAME) {
+            curNodeType = NewExcelFunctionNodeType.LET;
+        } else if (tokenTrimUpper === matchToken.COLON) {
+            curNodeType = NewExcelFunctionNodeType.COLON;
+        } else if (SUFFIX_TOKEN_SET.has(tokenTrimUpper)) {
+            curNodeType = NewExcelFunctionNodeType.SUFFIX;
+        } else if (tokenTrimUpper === prefixToken.MINUS) {
+            // Check if brackets need to be added for minus sign, for example: -(a+b)
+            if (this._checkAddBracketForMinus(lexerNode)) {
+                curNodeType = NewExcelFunctionNodeType.MINUS;
+            }
+        } else {
+            curNodeType = NewExcelFunctionNodeType.OTHER;
+        }
+
+        return curNodeType;
     }
 }

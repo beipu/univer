@@ -15,9 +15,8 @@
  */
 
 const locale = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Edit Link',
             addTitle: 'Insert Link',
             label: 'Label',
             type: 'Type',
@@ -36,6 +35,9 @@ const locale = {
         menu: {
             add: 'Insert Link',
         },
+        permission: {
+            hyperLinkErr: 'You do not have permission to insert a link.',
+        },
         message: {
             noSheet: 'Target sheet has been delete',
             refError: 'Invalid Range',
@@ -43,6 +45,8 @@ const locale = {
             coped: 'Link copied to clipboard',
         },
         popup: {
+            title: 'Hyperlink',
+            open: 'Open Link',
             copy: 'Copy Link',
             edit: 'Edit Link',
             cancel: 'Cancel Link',

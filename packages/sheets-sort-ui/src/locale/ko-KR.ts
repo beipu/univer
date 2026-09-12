@@ -17,7 +17,7 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-sort': {
+    'sheets-sort-ui': {
         general: {
             sort: '정렬',
             'sort-asc': '오름차순',
@@ -41,8 +41,12 @@ const locale: typeof enUS = {
             'sort-reminder-no': '범위 정렬 유지',
             'first-row-check': '첫 번째 행은 정렬에 참여하지 않습니다',
             'add-condition': '조건 추가',
+            'delete-condition': '조건 삭제',
             cancel: '취소',
             confirm: '확인',
+        },
+        info: {
+            tooltip: '툴팁',
         },
     },
 };

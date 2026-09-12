@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 
+import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
+import { IDrawingManagerService } from '@univerjs/drawing';
 import { MenuItemType } from '@univerjs/ui';
+import { map, startWith } from 'rxjs';
 import {
     SetDrawingArrangeBackOperation,
     SetDrawingArrangeBackwardOperation,
@@ -24,47 +28,53 @@ import {
 } from '../commands/operations/drawing-arrange.operation';
 
 export const DRAWING_ARRANGE_CONTEXT_MENU_ID = 'contextMenu.drawing-arrange';
-export function DrawingArrangeContextMenuItemFactory(): IMenuSelectorItem<string> {
+export function DrawingArrangeContextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
+    const drawingManagerService = accessor.get(IDrawingManagerService);
+
     return {
         id: DRAWING_ARRANGE_CONTEXT_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'TopmostIcon',
-        title: 'image-panel.arrange.title',
+        title: 'drawing-ui.image-panel.arrange.title',
+        hidden$: drawingManagerService.focus$.pipe(
+            startWith(drawingManagerService.getFocusDrawings()),
+            map((drawings) => drawings.length === 0)
+        ),
     };
 }
 
-export function SetDrawingArrangeFrontMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingArrangeFrontMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingArrangeFrontOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'TopmostIcon',
-        title: 'image-panel.arrange.front',
+        title: 'drawing-ui.image-panel.arrange.front',
     };
 }
 
-export function SetDrawingArrangeForwardMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingArrangeForwardMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingArrangeForwardOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'MoveUpIcon',
-        title: 'image-panel.arrange.forward',
+        title: 'drawing-ui.image-panel.arrange.forward',
     };
 }
 
-export function SetDrawingArrangeBackMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingArrangeBackMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingArrangeBackOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'BottomIcon',
-        title: 'image-panel.arrange.back',
+        title: 'drawing-ui.image-panel.arrange.back',
     };
 }
 
-export function SetDrawingArrangeBackwardMenuItemFactory(): IMenuButtonItem {
+export function SetDrawingArrangeBackwardMenuItemFactory(): IMenuButtonItem<LocaleKey> {
     return {
         id: SetDrawingArrangeBackwardOperation.id,
         type: MenuItemType.BUTTON,
         icon: 'MoveDownIcon',
-        title: 'image-panel.arrange.backward',
+        title: 'drawing-ui.image-panel.arrange.backward',
     };
 }

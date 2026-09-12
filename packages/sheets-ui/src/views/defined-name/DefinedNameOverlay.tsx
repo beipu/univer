@@ -16,12 +16,14 @@
 
 import type { Workbook } from '@univerjs/core';
 import type { IDefinedNamesServiceParam } from '@univerjs/engine-formula';
+import type { LocaleKey } from '../../locale/types';
 import { ICommandService, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
 import { borderBottomClassName, clsx, scrollbarClassName } from '@univerjs/design';
 import { IDefinedNamesService } from '@univerjs/engine-formula';
 import { SetWorksheetShowCommand } from '@univerjs/sheets';
-import { ISidebarService, useDependency, useVirtualList } from '@univerjs/ui';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ISidebarService, useDependency, useObservable, useVirtualList } from '@univerjs/ui';
+import { useEffect, useMemo, useRef } from 'react';
+import { map, startWith } from 'rxjs';
 import { SidebarDefinedNameOperation } from '../../commands/operations/sidebar-defined-name.operation';
 import { DEFINED_NAME_CONTAINER } from './component-name';
 
@@ -31,36 +33,36 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
     const definedNamesService = useDependency(IDefinedNamesService);
     const univerInstanceService = useDependency(IUniverInstanceService);
     const sidebarService = useDependency(ISidebarService);
+    const direction = localeService.getDirection();
 
-    const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+    const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
     const unitId = workbook.getUnitId();
 
     const getDefinedNameMap = () => {
         const definedNameMap = definedNamesService.getDefinedNameMap(unitId);
         if (definedNameMap) {
-            return Array.from(Object.values(definedNameMap));
+            return Object.values(definedNameMap);
         }
         return [];
     };
 
-    const [definedNames, setDefinedNames] = useState<IDefinedNamesServiceParam[]>(getDefinedNameMap());
-
-    useEffect(() => {
-        const definedNamesSubscription = definedNamesService.update$.subscribe(() => {
-            setDefinedNames(getDefinedNameMap());
-        });
-
-        return () => {
-            definedNamesSubscription.unsubscribe();
-        };
-    }, []); // Empty dependency array means this effect runs once on mount and clean up on unmount
+    const definedNames = useObservable(
+        () => definedNamesService.update$.pipe(map(getDefinedNameMap), startWith(getDefinedNameMap())),
+        getDefinedNameMap(),
+        false,
+        [definedNamesService, unitId]
+    );
 
     // When closing the panel, clear the react cache
     useEffect(() => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const d = sidebarService.sidebarOptions$.subscribe((info) => {
             if (info.id === DEFINED_NAME_CONTAINER) {
                 if (!info.visible) {
-                    setTimeout(() => {
+                    if (timer !== undefined) {
+                        clearTimeout(timer);
+                    }
+                    timer = setTimeout(() => {
                         sidebarService.sidebarOptions$.next({ visible: false });
                     });
                 }
@@ -68,6 +70,9 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
         });
         return () => {
             d.unsubscribe();
+            if (timer !== undefined) {
+                clearTimeout(timer);
+            }
         };
     }, []);
 
@@ -105,7 +110,14 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
     };
 
     return (
-        <div className="univer-w-[300px]">
+        <div
+            data-u-comp="defined-name-overlay"
+            dir={direction}
+            className="
+              univer-w-[300px]
+              rtl:univer-text-right
+            "
+        >
             <div
                 ref={listContainerRef}
                 className={clsx('univer-max-h-[360px] univer-min-h-0 univer-overflow-y-auto', scrollbarClassName, {
@@ -126,14 +138,18 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
                                 onClick={() => { focusDefinedName(definedName); }}
                             >
                                 <div
+                                    data-u-comp="defined-name-overlay-row"
                                     className={clsx(`
-                                      univer-flex univer-items-center univer-justify-between univer-gap-2 univer-py-1
+                                      univer-flex univer-items-center univer-gap-2 univer-py-1
+                                      rtl:univer-flex-row-reverse
                                     `, borderBottomClassName)}
                                 >
                                     <div
+                                        data-u-comp="defined-name-overlay-name"
                                         className={`
-                                          univer-w-[50%] univer-flex-shrink-0 univer-truncate univer-text-sm
+                                          univer-min-w-0 univer-flex-1 univer-basis-0 univer-truncate univer-text-sm
                                           univer-text-gray-600
+                                          rtl:univer-text-right
                                           dark:!univer-text-gray-200
                                         `}
                                         title={definedName.name}
@@ -141,9 +157,11 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
                                         {definedName.name}
                                     </div>
                                     <div
+                                        data-u-comp="defined-name-overlay-reference"
                                         className={`
-                                          univer-w-[50%] univer-flex-shrink-0 univer-truncate univer-text-xs
+                                          univer-min-w-0 univer-flex-1 univer-basis-0 univer-truncate univer-text-xs
                                           univer-text-gray-400
+                                          rtl:univer-text-right
                                         `}
                                         title={definedName.formulaOrRefString}
                                     >
@@ -156,9 +174,11 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
                 </div>
             </div>
             <div
+                data-u-comp="defined-name-overlay-footer"
                 className={`
                   univer-cursor-pointer univer-p-2 univer-transition-colors univer-duration-200
                   hover:univer-bg-gray-100
+                  rtl:univer-text-right
                   dark:hover:!univer-bg-gray-600
                 `}
                 onClick={openSlider}
@@ -169,10 +189,10 @@ export function DefinedNameOverlay({ search, isInputEvent }: { search: string; i
                       dark:!univer-text-gray-200
                     `}
                 >
-                    {localeService.t('definedName.managerTitle')}
+                    {localeService.t<LocaleKey>('sheets-ui.definedName.managerTitle')}
                 </div>
                 <div className="univer-text-xs univer-text-gray-400">
-                    {localeService.t('definedName.managerDescription')}
+                    {localeService.t<LocaleKey>('sheets-ui.definedName.managerDescription')}
                 </div>
             </div>
         </div>

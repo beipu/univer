@@ -16,20 +16,42 @@
 
 import type { Workbook } from '@univerjs/core';
 import type { IDrawingJsonUndo1, IDrawingSubunitMap } from '@univerjs/drawing';
-import type { ICopySheetCommandParams, IRemoveSheetCommandParams } from '@univerjs/sheets';
+import type { ICopySheetCommandInterceptorParams, IRemoveSheetCommandParams } from '@univerjs/sheets';
 import type { ISheetDrawing } from '../services/sheet-drawing.service';
-import { Disposable, DrawingTypeEnum, generateRandomId, ICommandService, Inject, IResourceManagerService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-import { IDrawingManagerService } from '@univerjs/drawing';
+import { Disposable, ICommandService, Inject, IResourceManagerService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import { getOrCreateDrawingCopyPlan, IDrawingManagerService } from '@univerjs/drawing';
 import { CopySheetCommand, RemoveSheetCommand, SheetInterceptorService } from '@univerjs/sheets';
 import { InsertSheetDrawingCommand } from '../commands/commands/insert-sheet-drawing.command';
 import { RemoveSheetDrawingCommand } from '../commands/commands/remove-sheet-drawing.command';
 import { SetDrawingArrangeCommand } from '../commands/commands/set-drawing-arrange.command';
+import { SetSheetDrawingPlacementCommand } from '../commands/commands/set-sheet-drawing-placement.command';
 import { SetSheetDrawingCommand } from '../commands/commands/set-sheet-drawing.command';
 import { DrawingApplyType, SetDrawingApplyMutation } from '../commands/mutations/set-drawing-apply.mutation';
 import { ClearSheetDrawingTransformerOperation } from '../commands/operations/clear-drawing-transformer.operation';
 import { ISheetDrawingService } from '../services/sheet-drawing.service';
 
 export const SHEET_DRAWING_PLUGIN = 'SHEET_DRAWING_PLUGIN';
+
+function getDrawingsInOrder(drawingData: Record<string, ISheetDrawing>, drawingOrder: string[]): ISheetDrawing[] {
+    const visited = new Set<string>();
+    const drawings: ISheetDrawing[] = [];
+
+    drawingOrder.forEach((drawingId) => {
+        const drawing = drawingData[drawingId];
+        if (drawing) {
+            visited.add(drawingId);
+            drawings.push(drawing);
+        }
+    });
+
+    Object.values(drawingData).forEach((drawing) => {
+        if (!visited.has(drawing.drawingId)) {
+            drawings.push(drawing);
+        }
+    });
+
+    return drawings;
+}
 
 export class SheetsDrawingLoadController extends Disposable {
     constructor(
@@ -55,6 +77,7 @@ export class SheetsDrawingLoadController extends Disposable {
             InsertSheetDrawingCommand,
             RemoveSheetDrawingCommand,
             SetDrawingArrangeCommand,
+            SetSheetDrawingPlacementCommand,
             ClearSheetDrawingTransformerOperation,
         ].forEach((command) => this.disposeWithMe(this._commandService.registerCommand(command)));
     }
@@ -115,13 +138,7 @@ export class SheetsDrawingLoadController extends Disposable {
                         }
 
                         const drawingData = this._sheetDrawingService.getDrawingData(unitId, subUnitId);
-                        const drawings = Object.values(drawingData).filter((drawing) => {
-                            // filter out chart types and let the chart handle it itself, because chart id must match the drawing id.
-                            if (drawing.drawingType === DrawingTypeEnum.DRAWING_CHART) {
-                                return false;
-                            }
-                            return true;
-                        });
+                        const drawings = Object.values(drawingData);
 
                         if (drawings.length === 0) {
                             return { redos: [], undos: [] };
@@ -129,6 +146,10 @@ export class SheetsDrawingLoadController extends Disposable {
 
                         const jsonOp = this._sheetDrawingService.getBatchRemoveOp(drawings) as IDrawingJsonUndo1;
                         const { unitId: jsonOpUnitId, subUnitId: jsonOpSubUnitId, undo, redo, objects } = jsonOp;
+
+                        if (Array.isArray(objects) && objects.length === 0) {
+                            return { redos: [], undos: [] };
+                        }
 
                         return {
                             redos: [
@@ -157,27 +178,21 @@ export class SheetsDrawingLoadController extends Disposable {
                             ],
                         };
                     } else if (commandInfo.id === CopySheetCommand.id) {
-                        const params = commandInfo.params as ICopySheetCommandParams & { targetSubUnitId: string };
-                        const { unitId, subUnitId, targetSubUnitId } = params;
+                        const params = commandInfo.params as ICopySheetCommandInterceptorParams;
+                        const { unitId, subUnitId, targetSubUnitId, copyContext } = params;
 
                         if (!unitId || !subUnitId || !targetSubUnitId) {
                             return { redos: [], undos: [] };
                         }
 
                         const drawingData = this._sheetDrawingService.getDrawingData(unitId, subUnitId);
-                        const drawings = Object.values(drawingData).filter((drawing) => {
-                            // filter out chart types and let the chart handle it itself, because chart id must match the drawing id.
-                            if (drawing.drawingType === DrawingTypeEnum.DRAWING_CHART) {
-                                return false;
-                            }
-                            return true;
-                        }).map((drawing) => {
-                            return {
-                                ...drawing,
-                                subUnitId: targetSubUnitId,
-                                drawingId: generateRandomId(6),
-                            };
+                        const sourceDrawings = getDrawingsInOrder(drawingData, this._sheetDrawingService.getDrawingOrder(unitId, subUnitId));
+                        const copyPlan = getOrCreateDrawingCopyPlan(copyContext, sourceDrawings, {
+                            unitId,
+                            sourceSubUnitId: subUnitId,
+                            targetSubUnitId,
                         });
+                        const drawings = copyPlan.drawings;
 
                         if (drawings.length === 0) {
                             return { redos: [], undos: [] };

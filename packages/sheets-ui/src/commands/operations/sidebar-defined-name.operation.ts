@@ -15,6 +15,7 @@
  */
 
 import type { IAccessor, ICommand } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import { CommandType, IUniverInstanceService, LocaleService } from '@univerjs/core';
 import { IEditorService } from '@univerjs/docs-ui';
 import { getSheetCommandTarget } from '@univerjs/sheets';
@@ -42,15 +43,11 @@ export const SidebarDefinedNameOperation: ICommand = {
             case 'open':
                 sidebarService.open({
                     id: DEFINED_NAME_CONTAINER,
-                    header: { title: localeService.t('definedName.featureTitle') },
+                    header: { title: localeService.t<LocaleKey>('sheets-ui.definedName.featureTitle') },
                     children: { label: DEFINED_NAME_CONTAINER },
                     onClose: () => {
                     },
                     width: 333,
-                    bodyStyle: {
-                        height: '100%',
-                        overflow: 'hidden',
-                    },
                 });
                 break;
 

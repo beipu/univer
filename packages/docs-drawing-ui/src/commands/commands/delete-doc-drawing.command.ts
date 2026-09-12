@@ -15,16 +15,16 @@
  */
 
 import type { IAccessor, ICommand } from '@univerjs/core';
-import type { IDocDrawing } from '@univerjs/docs-drawing';
-import type { IDeleteDrawingCommandParams } from './interfaces';
+import type { IDocDrawing, IRemoveDocDrawingCommandParams } from '@univerjs/docs-drawing';
 import { CommandType, ICommandService } from '@univerjs/core';
-import { IDocDrawingService } from '@univerjs/docs-drawing';
-import { RemoveDocDrawingCommand } from './remove-doc-drawing.command';
+import { IDocDrawingService, RemoveDocDrawingCommand } from '@univerjs/docs-drawing';
+import { DocSelectionRenderService } from '@univerjs/docs-ui';
+import { IRenderManagerService } from '@univerjs/engine-render';
 
 export const DeleteDocDrawingsCommand: ICommand = {
     id: 'doc.command.delete-drawing',
     type: CommandType.COMMAND,
-    handler: (accessor: IAccessor) => {
+    handler: async (accessor: IAccessor) => {
         const commandService = accessor.get(ICommandService);
         const docDrawingService = accessor.get(IDocDrawingService);
 
@@ -35,6 +35,12 @@ export const DeleteDocDrawingsCommand: ICommand = {
         }
 
         const { unitId } = drawings[0];
+        const selectionRenderService = accessor.get(IRenderManagerService)
+            .getRenderUnitById(unitId)
+            ?.with(DocSelectionRenderService);
+
+        // Keep the command and the immediately following shortcut on the document that owns the drawing.
+        selectionRenderService?.focus();
 
         const newDrawings = drawings.map((drawing) => {
             const { unitId, subUnitId, drawingId, drawingType } = drawing as IDocDrawing;
@@ -46,9 +52,13 @@ export const DeleteDocDrawingsCommand: ICommand = {
                 drawingType,
             };
         });
-        return commandService.executeCommand<IDeleteDrawingCommandParams>(RemoveDocDrawingCommand.id, {
+        const removed = await commandService.executeCommand<IRemoveDocDrawingCommandParams>(RemoveDocDrawingCommand.id, {
             unitId,
             drawings: newDrawings,
         });
+        if (removed) {
+            selectionRenderService?.focus();
+        }
+        return removed;
     },
 };

@@ -17,9 +17,16 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    sheetThreadComment: {
+    'sheets-thread-comment-ui': {
+        panel: {
+            title: 'Gestion des commentaires',
+        },
+        permission: {
+            commentErr: 'Vous n’avez pas l’autorisation d’utiliser les commentaires.',
+        },
         menu: {
             addComment: 'Ajouter un commentaire',
+            openComments: 'Ouvrir les commentaires',
             commentManagement: 'Gestion des commentaires',
         },
     },

@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
-import type { IUnitRange, LocaleType, Nullable, Workbook } from '@univerjs/core';
+import type { BaseDataModel, ITableSnapshot, IUnitRange, LocaleType, Nullable, Workbook } from '@univerjs/core';
 import type {
     IArrayFormulaRangeType,
+    IDirtyUnitDefinedNameMap,
     IDirtyUnitFeatureMap,
     IDirtyUnitOtherFormulaMap,
-    IDirtyUnitSheetDefinedNameMap,
     IDirtyUnitSheetNameMap,
+    IDirtyUnitSuperTableMap,
     IFormulaData,
     IFormulaDatasetConfig,
+    IFormulaExternalReferences,
+    IFormulaUnitNameMap,
     IRuntimeUnitDataType,
     IUnitData,
     IUnitExcludedCell,
@@ -31,8 +34,16 @@ import type {
     IUnitSheetNameMap,
     IUnitStylesData,
 } from '../basics/common';
-
-import { createIdentifier, Disposable, Inject, IUniverInstanceService, LocaleService, ObjectMatrix, UniverInstanceType } from '@univerjs/core';
+import {
+    createIdentifier,
+    DateSystem,
+    Disposable,
+    Inject,
+    IUniverInstanceService,
+    LocaleService,
+    ObjectMatrix,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { convertUnitDataToRuntime } from '../basics/runtime';
 import { FormulaDataModel } from '../models/formula-data.model';
 import { ISheetRowFilteredService } from './sheet-row-filtered.service';
@@ -41,13 +52,15 @@ export interface IFormulaDirtyData {
     forceCalculation: boolean;
     dirtyRanges: IUnitRange[];
     dirtyNameMap: IDirtyUnitSheetNameMap;
-    dirtyDefinedNameMap: IDirtyUnitSheetDefinedNameMap;
+    dirtyDefinedNameMap: IDirtyUnitDefinedNameMap;
+    dirtySuperTableMap?: IDirtyUnitSuperTableMap;
     dirtyUnitFeatureMap: IDirtyUnitFeatureMap;
     dirtyUnitOtherFormulaMap: IDirtyUnitOtherFormulaMap;
     clearDependencyTreeCache: IDirtyUnitSheetNameMap; // unitId -> sheetId
     maxIteration?: number;
     isCalculateTreeModel?: boolean; // whether to calculate the dependency tree model
     rowData?: IUnitRowData; // Include rows hidden by filters
+    externalReferences?: IFormulaExternalReferences;
 }
 
 export interface IFormulaCurrentConfigService {
@@ -64,13 +77,21 @@ export interface IFormulaCurrentConfigService {
 
     getSheetNameMap(): IUnitSheetNameMap;
 
+    getUnitNameMap(): IFormulaUnitNameMap;
+
+    getExternalReferences(): IFormulaExternalReferences;
+
+    getCalculationGeneration(): number;
+
     isForceCalculate(): boolean;
 
     getDirtyRanges(): IUnitRange[];
 
     getDirtyNameMap(): IDirtyUnitSheetNameMap;
 
-    getDirtyDefinedNameMap(): IDirtyUnitSheetDefinedNameMap;
+    getDirtyDefinedNameMap(): IDirtyUnitDefinedNameMap;
+
+    getDirtySuperTableMap(): IDirtyUnitSuperTableMap;
 
     getDirtyUnitFeatureMap(): IDirtyUnitFeatureMap;
 
@@ -79,6 +100,8 @@ export interface IFormulaCurrentConfigService {
     registerFormulaData(formulaData: IFormulaData): void;
 
     registerSheetNameMap(sheetNameMap: IUnitSheetNameMap): void;
+
+    registerUnitNameMap(unitNameMap: IFormulaUnitNameMap): void;
 
     getExcludedRange(): Nullable<IUnitExcludedCell>;
 
@@ -103,6 +126,7 @@ export interface IFormulaCurrentConfigService {
     getClearDependencyTreeCache(): IDirtyUnitSheetNameMap;
 
     getLocale(): LocaleType;
+    getDateSystem(unitId?: string): DateSystem;
 
     getSheetsInfo(): {
         sheetOrder: string[];
@@ -131,6 +155,12 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
 
     private _sheetNameMap: IUnitSheetNameMap = {};
 
+    private _unitNameMap: IFormulaUnitNameMap = {};
+
+    private _externalReferences: IFormulaExternalReferences = {};
+
+    private _calculationGeneration = 0;
+
     private _forceCalculate: boolean = false;
 
     private _clearDependencyTreeCache: IDirtyUnitSheetNameMap = {};
@@ -139,7 +169,9 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
 
     private _dirtyNameMap: IDirtyUnitSheetNameMap = {};
 
-    private _dirtyDefinedNameMap: IDirtyUnitSheetDefinedNameMap = {};
+    private _dirtyDefinedNameMap: IDirtyUnitDefinedNameMap = {};
+
+    private _dirtySuperTableMap: IDirtyUnitSuperTableMap = {};
 
     private _dirtyUnitFeatureMap: IDirtyUnitFeatureMap = {};
 
@@ -169,10 +201,13 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
         this._arrayFormulaRange = {};
         this._formulaData = {};
         this._sheetNameMap = {};
+        this._unitNameMap = {};
+        this._externalReferences = {};
         this._clearDependencyTreeCache = {};
         this._dirtyRanges = [];
         this._dirtyNameMap = {};
         this._dirtyDefinedNameMap = {};
+        this._dirtySuperTableMap = {};
         this._dirtyUnitFeatureMap = {};
         this._dirtyUnitOtherFormulaMap = {};
         this._excludedCell = {};
@@ -223,6 +258,18 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
         return this._sheetNameMap;
     }
 
+    getUnitNameMap() {
+        return this._unitNameMap;
+    }
+
+    getExternalReferences() {
+        return this._externalReferences;
+    }
+
+    getCalculationGeneration() {
+        return this._calculationGeneration;
+    }
+
     isForceCalculate() {
         return this._forceCalculate;
     }
@@ -237,6 +284,10 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
 
     getDirtyDefinedNameMap() {
         return this._dirtyDefinedNameMap;
+    }
+
+    getDirtySuperTableMap() {
+        return this._dirtySuperTableMap;
     }
 
     getDirtyUnitFeatureMap() {
@@ -267,17 +318,32 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
         return this._localeService.getCurrentLocale();
     }
 
+    getDateSystem(unitId = this._executeUnitId ?? undefined): DateSystem {
+        if (!unitId) return DateSystem.Date1900;
+        return this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET)?.getDateSystem() ?? DateSystem.Date1900;
+    }
+
     getSheetsInfo() {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        if (!workbook) {
+            return {
+                sheetOrder: [],
+                sheetNameMap: {},
+            };
+        }
         const { id, sheetOrder } = workbook.getSnapshot();
 
         return {
             sheetOrder,
-            sheetNameMap: this._sheetIdToNameMap[id] as { [sheetId: string]: string },
+            sheetNameMap: this._sheetIdToNameMap[id] ?? {},
         };
     }
 
     getSheetRowColumnCount(unitId: string, sheetId: string) {
+        if (this._univerInstanceService.getUnitType(unitId) !== UniverInstanceType.UNIVER_SHEET) {
+            return { rowCount: 0, columnCount: 0 };
+        }
+
         const workbook = this._univerInstanceService.getUnit<Workbook>(unitId);
         const worksheet = workbook?.getSheetBySheetId(sheetId);
         const snapshot = worksheet?.getSnapshot();
@@ -304,18 +370,22 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
     }
 
     load(config: IFormulaDatasetConfig) {
+        this._calculationGeneration++;
         if (config.allUnitData && config.unitSheetNameMap && config.unitStylesData) {
             this._unitData = config.allUnitData;
             this._unitStylesData = config.unitStylesData;
             this._sheetNameMap = config.unitSheetNameMap;
+            this._unitNameMap = config.unitNameMap || {};
         } else {
-            const { allUnitData, unitSheetNameMap, unitStylesData } = this._loadSheetData();
+            const { allUnitData, unitNameMap, unitSheetNameMap, unitStylesData } = this._loadSheetData();
 
             this._unitData = allUnitData;
 
             this._unitStylesData = unitStylesData;
 
             this._sheetNameMap = unitSheetNameMap;
+
+            this._unitNameMap = unitNameMap;
         }
 
         // apply row data, including rows hidden by filters
@@ -339,9 +409,13 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
 
         this._dirtyDefinedNameMap = config.dirtyDefinedNameMap;
 
+        this._dirtySuperTableMap = config.dirtySuperTableMap || {};
+
         this._dirtyUnitFeatureMap = config.dirtyUnitFeatureMap;
 
         this._dirtyUnitOtherFormulaMap = config.dirtyUnitOtherFormulaMap;
+
+        this._externalReferences = config.externalReferences ?? {};
 
         this._excludedCell = config.excludedCell;
 
@@ -349,13 +423,15 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
     }
 
     loadDataLite(rowData?: IUnitRowData) {
-        const { allUnitData, unitSheetNameMap, unitStylesData } = this._loadSheetData();
+        const { allUnitData, unitNameMap, unitSheetNameMap, unitStylesData } = this._loadSheetData();
 
         this._unitData = allUnitData;
 
         this._unitStylesData = unitStylesData;
 
         this._sheetNameMap = unitSheetNameMap;
+
+        this._unitNameMap = unitNameMap;
 
         this._formulaData = this._formulaDataModel.getFormulaData();
         this._arrayFormulaCellData = convertUnitDataToRuntime(this._formulaDataModel.getArrayFormulaCellData());
@@ -371,9 +447,11 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
             dirtyRanges: this._dirtyRanges,
             dirtyNameMap: this._dirtyNameMap,
             dirtyDefinedNameMap: this._dirtyDefinedNameMap,
+            dirtySuperTableMap: this._dirtySuperTableMap,
             dirtyUnitFeatureMap: this._dirtyUnitFeatureMap,
             dirtyUnitOtherFormulaMap: this._dirtyUnitOtherFormulaMap,
             clearDependencyTreeCache: this._clearDependencyTreeCache,
+            externalReferences: this._externalReferences,
         };
     }
 
@@ -398,6 +476,10 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
 
     registerSheetNameMap(sheetNameMap: IUnitSheetNameMap) {
         this._sheetNameMap = sheetNameMap;
+    }
+
+    registerUnitNameMap(unitNameMap: IFormulaUnitNameMap) {
+        this._unitNameMap = unitNameMap;
     }
 
     // private _loadOtherFormulaData() {
@@ -502,11 +584,13 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
     }
 
     private _loadSheetData() {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
         const worksheet = workbook?.getActiveSheet();
+        const base = workbook ? null : this._univerInstanceService.getCurrentUnitOfType<BaseDataModel>(UniverInstanceType.UNIVER_BASE);
+        const table = base ? getFirstBaseTable(base.getSnapshot().tables, base.getSnapshot().tableOrder) : null;
 
-        this._executeUnitId = workbook?.getUnitId();
-        this._executeSubUnitId = worksheet?.getSheetId();
+        this._executeUnitId = workbook?.getUnitId() ?? base?.getUnitId();
+        this._executeSubUnitId = worksheet?.getSheetId() ?? table?.id;
 
         return this._formulaDataModel.getCalculateData();
     }
@@ -546,6 +630,17 @@ export class FormulaCurrentConfigService extends Disposable implements IFormulaC
     }
 }
 
-export const IFormulaCurrentConfigService = createIdentifier<FormulaCurrentConfigService>(
+function getFirstBaseTable(tables: Record<string, ITableSnapshot>, tableOrder: string[]): ITableSnapshot | null {
+    for (const tableId of tableOrder) {
+        const table = tables[tableId];
+        if (table) {
+            return table;
+        }
+    }
+
+    return Object.values(tables)[0] ?? null;
+}
+
+export const IFormulaCurrentConfigService = createIdentifier<IFormulaCurrentConfigService>(
     'univer.formula.current-data.service'
 );

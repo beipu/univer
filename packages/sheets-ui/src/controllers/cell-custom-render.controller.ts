@@ -14,12 +14,33 @@
  * limitations under the License.
  */
 
-import type { ICellCustomRender, ICellDataForSheetInterceptor, ICellRenderContext, Nullable, Workbook } from '@univerjs/core';
-import type { IMouseEvent, IPointerEvent, IRenderContext, IRenderModule, RenderManagerService, Spreadsheet } from '@univerjs/engine-render';
+import type {
+    ICellCustomRender,
+    ICellDataForSheetInterceptor,
+    ICellRenderContext,
+    Nullable,
+    Workbook,
+} from '@univerjs/core';
+import type {
+    IMouseEvent,
+    IPointerEvent,
+    IRenderContext,
+    IRenderModule,
+    RenderManagerService,
+    Spreadsheet,
+} from '@univerjs/engine-render';
 import type { ICellPermission, ISheetSkeletonManagerParam } from '@univerjs/sheets';
-import { Disposable, DisposableCollection, fromEventSubject, Inject, IPermissionService, sortRules } from '@univerjs/core';
+import {
+    Disposable,
+    DisposableCollection,
+    fromEventSubject,
+    Inject,
+    IPermissionService,
+    sortRules,
+} from '@univerjs/core';
 import { IRenderManagerService, Vector2 } from '@univerjs/engine-render';
-import { UnitAction, WorkbookEditablePermission, WorksheetEditPermission } from '@univerjs/sheets';
+import { UnitAction } from '@univerjs/protocol';
+import { WorkbookEditablePermission, WorksheetEditPermission } from '@univerjs/sheets';
 import { throttleTime } from 'rxjs';
 import { SheetSkeletonManagerService } from '../services/sheet-skeleton-manager.service';
 
@@ -53,7 +74,7 @@ export class CellCustomRenderController extends Disposable implements IRenderMod
 
             const unitId = this._context.unitId;
             const { skeleton } = skeletonParam;
-            const currentRender = this._renderManagerService.getRenderById(unitId);
+            const currentRender = this._renderManagerService.getRenderUnitById(unitId);
             if (currentRender && currentRender.mainComponent) {
                 const spreadsheet = currentRender.mainComponent as Spreadsheet;
                 // eslint-disable-next-line max-lines-per-function
@@ -118,7 +139,7 @@ export class CellCustomRenderController extends Disposable implements IRenderMod
 
                     const info: ICellRenderContext = {
                         data: cellData,
-                        style: skeleton.getStyles().getStyleByCell(cellData),
+                        style: worksheet.getComposedCellStyleByCellData(row, col, cellData),
                         primaryWithCoord: skeleton.getCellWithCoordByIndex(cellIndex.actualRow, cellIndex.actualCol),
                         unitId,
                         subUnitId,

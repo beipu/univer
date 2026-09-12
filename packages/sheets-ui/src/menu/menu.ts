@@ -16,6 +16,7 @@
 
 import type { IAccessor, IColorStyle, Nullable, Workbook } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import {
     BooleanNumber,
     composeStyles,
@@ -54,6 +55,7 @@ import {
     SetSelectedColsVisibleCommand,
     SetSelectedRowsVisibleCommand,
     SetSelectionsOperation,
+    SetShrinkToFitCommand,
     SetTextRotationCommand,
     SetTextWrapCommand,
     SetVerticalTextAlignCommand,
@@ -100,11 +102,14 @@ import {
     SetRangeTextColorCommand,
     SetRangeUnderlineCommand,
 } from '../commands/commands/inline-format.command';
-import { SetInfiniteFormatPainterCommand, SetOnceFormatPainterCommand } from '../commands/commands/set-format-painter.command';
+import {
+    SetInfiniteFormatPainterCommand,
+    SetOnceFormatPainterCommand,
+} from '../commands/commands/set-format-painter.command';
 import { SetWorksheetColAutoWidthCommand } from '../commands/commands/set-worksheet-auto-col-width.command';
-import { MENU_ITEM_INPUT_COMPONENT } from '../components/menu-item-input';
 import { ISheetClipboardService } from '../services/clipboard/clipboard.service';
 import { FormatPainterStatus, IFormatPainterService } from '../services/format-painter/format-painter.service';
+import { MENU_ITEM_INPUT_COMPONENT } from '../views/menu-item-input/index';
 import { deriveStateFromActiveSheet$, getCurrentRangeDisable$, getObservableWithExclusiveRange$ } from './menu-util';
 import { getFontStyleAtCursor } from './utils';
 
@@ -115,7 +120,7 @@ export enum SheetMenuPosition {
     SHEET_FOOTER = 'SHEET_FOOTER',
 }
 
-export function FormatPainterMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FormatPainterMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const formatPainterService = accessor.get(IFormatPainterService);
 
     return {
@@ -123,8 +128,8 @@ export function FormatPainterMenuItemFactory(accessor: IAccessor): IMenuButtonIt
         subId: SetInfiniteFormatPainterCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'BrushIcon',
-        title: 'Format Painter',
-        tooltip: 'toolbar.formatPainter',
+        title: 'sheets-ui.toolbar.formatPainter',
+        tooltip: 'sheets-ui.toolbar.formatPainter',
         activated$: new Observable<boolean>((subscriber) => {
             let active = false;
 
@@ -140,11 +145,15 @@ export function FormatPainterMenuItemFactory(accessor: IAccessor): IMenuButtonIt
             };
         }),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
-        disabled$: getCurrentRangeDisable$(accessor, { workbookTypes: [WorkbookEditablePermission], worksheetTypes: [WorksheetCopyPermission, WorksheetEditPermission], rangeTypes: [RangeProtectionPermissionEditPoint] }, true),
+        disabled$: getCurrentRangeDisable$(accessor, {
+            workbookTypes: [WorkbookEditablePermission],
+            worksheetTypes: [WorksheetCopyPermission, WorksheetEditPermission],
+            rangeTypes: [RangeProtectionPermissionEditPoint],
+        }, true),
     };
 }
 
-export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const contextService = accessor.get(IContextService);
@@ -154,9 +163,13 @@ export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
         id: SetRangeBoldCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'BoldIcon',
-        title: 'Set bold',
-        tooltip: 'toolbar.bold',
-        disabled$: getCurrentRangeDisable$(accessor, { workbookTypes: [WorkbookEditablePermission], worksheetTypes: [WorksheetEditPermission, WorksheetSetCellStylePermission], rangeTypes: [RangeProtectionPermissionEditPoint] }, true),
+        title: 'sheets-ui.toolbar.bold',
+        tooltip: 'sheets-ui.toolbar.bold',
+        disabled$: getCurrentRangeDisable$(accessor, {
+            workbookTypes: [WorkbookEditablePermission],
+            worksheetTypes: [WorksheetEditPermission, WorksheetSetCellStylePermission],
+            rangeTypes: [RangeProtectionPermissionEditPoint],
+        }, true),
         activated$: deriveStateFromActiveSheet$(univerInstanceService, false, ({ worksheet }) => new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
@@ -206,7 +219,7 @@ export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -216,8 +229,8 @@ export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
         id: SetRangeItalicCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'ItalicIcon',
-        title: 'Set italic',
-        tooltip: 'toolbar.italic',
+        title: 'sheets-ui.toolbar.italic',
+        tooltip: 'sheets-ui.toolbar.italic',
         disabled$: getCurrentRangeDisable$(
             accessor,
             {
@@ -268,7 +281,7 @@ export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -278,8 +291,8 @@ export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
         id: SetRangeUnderlineCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'UnderlineIcon',
-        title: 'Set underline',
-        tooltip: 'toolbar.underline',
+        title: 'sheets-ui.toolbar.underline',
+        tooltip: 'sheets-ui.toolbar.underline',
         activated$: deriveStateFromActiveSheet$(univerInstanceService, false, ({ worksheet }) => new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
@@ -326,7 +339,7 @@ export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -336,8 +349,8 @@ export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonIt
         id: SetRangeStrickThroughCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'StrikethroughIcon',
-        title: 'Set strike through',
-        tooltip: 'toolbar.strikethrough',
+        title: 'sheets-ui.toolbar.strikethrough',
+        tooltip: 'sheets-ui.toolbar.strikethrough',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetEditPermission, WorksheetSetCellStylePermission],
@@ -388,7 +401,7 @@ export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonIt
     };
 }
 
-export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -402,7 +415,7 @@ export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSel
 
     return {
         id: SetRangeFontFamilyCommand.id,
-        tooltip: 'toolbar.font',
+        tooltip: 'sheets-ui.toolbar.font',
         type: MenuItemType.SELECTOR,
         label: {
             name: FONT_FAMILY_COMPONENT,
@@ -467,11 +480,11 @@ export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSel
     };
 }
 
-export function ResetTextColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ResetTextColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: ResetRangeTextColorCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'toolbar.resetColor',
+        title: 'sheets-ui.toolbar.resetColor',
         icon: 'NoColorDoubleIcon',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
@@ -482,7 +495,7 @@ export function ResetTextColorMenuItemFactory(accessor: IAccessor): IMenuButtonI
     };
 }
 
-export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string, string | undefined> {
+export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string, string | undefined> {
     const commandService = accessor.get(ICommandService);
     const themeService = accessor.get(ThemeService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -490,7 +503,7 @@ export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSele
     return {
         id: SetRangeTextColorCommand.id,
         icon: 'FontColorDoubleIcon',
-        tooltip: 'toolbar.textColor.main',
+        tooltip: 'sheets-ui.toolbar.textColor.main',
         type: MenuItemType.BUTTON_SELECTOR,
         selections: [
             {
@@ -500,7 +513,7 @@ export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSele
                     selectable: false,
                 },
                 value$: new Observable<string>((subscriber) => {
-                    const defaultValue = DEFAULT_STYLES.cl.rgb;
+                    const defaultValue = themeService.getColorFromTheme('gray.900');
                     const { isAllValuesSame, value: currentValue } = selectionManagerService.getCellStylesProperty('cl');
 
                     if (isAllValuesSame) {
@@ -532,11 +545,11 @@ export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSele
     };
 }
 
-export function ResetBackgroundColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ResetBackgroundColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: ResetBackgroundColorCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'toolbar.resetColor',
+        title: 'sheets-ui.toolbar.resetColor',
         icon: 'NoColorDoubleIcon',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
@@ -546,14 +559,14 @@ export function ResetBackgroundColorMenuItemFactory(accessor: IAccessor): IMenuB
     };
 }
 
-export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string, string | undefined> {
+export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string, string | undefined> {
     const commandService = accessor.get(ICommandService);
     const themeService = accessor.get(ThemeService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
 
     return {
         id: SetBackgroundColorCommand.id,
-        tooltip: 'toolbar.fillColor.main',
+        tooltip: 'sheets-ui.toolbar.fillColor.main',
         type: MenuItemType.BUTTON_SELECTOR,
         icon: 'PaintBucketDoubleIcon',
         selections: [
@@ -564,7 +577,7 @@ export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMe
                     selectable: false,
                 },
                 value$: new Observable<string>((subscriber) => {
-                    const defaultValue = DEFAULT_STYLES.bg.rgb;
+                    const defaultValue = themeService.getColorFromTheme('primary.600');
                     const { isAllValuesSame, value: currentValue } = selectionManagerService.getCellStylesProperty('bg');
 
                     if (isAllValuesSame) {
@@ -601,23 +614,23 @@ export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMe
 
 export const HORIZONTAL_ALIGN_CHILDREN = [
     {
-        label: 'align.left',
+        label: 'sheets-ui.align.left',
         icon: 'LeftJustifyingIcon',
         value: HorizontalAlign.LEFT,
     },
     {
-        label: 'align.center',
+        label: 'sheets-ui.align.center',
         icon: 'HorizontallyIcon',
         value: HorizontalAlign.CENTER,
     },
     {
-        label: 'align.right',
+        label: 'sheets-ui.align.right',
         icon: 'RightJustifyingIcon',
         value: HorizontalAlign.RIGHT,
     },
 ];
 
-export function HorizontalAlignMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<HorizontalAlign> {
+export function HorizontalAlignMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, HorizontalAlign> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
 
@@ -629,7 +642,7 @@ export function HorizontalAlignMenuItemFactory(accessor: IAccessor): IMenuSelect
     return {
         id: SetHorizontalTextAlignCommand.id,
         icon: HORIZONTAL_ALIGN_CHILDREN.find((child) => child.value === defaultValue)?.icon,
-        tooltip: 'toolbar.horizontalAlignMode.main',
+        tooltip: 'sheets-ui.toolbar.horizontalAlignMode.main',
         type: MenuItemType.SELECTOR,
         selections: HORIZONTAL_ALIGN_CHILDREN,
         value$: deriveStateFromActiveSheet$(univerInstanceService, defaultValue, ({ worksheet }) => new Observable<HorizontalAlign>((subscriber) => {
@@ -676,23 +689,23 @@ export function HorizontalAlignMenuItemFactory(accessor: IAccessor): IMenuSelect
 
 export const VERTICAL_ALIGN_CHILDREN = [
     {
-        label: 'align.top',
+        label: 'sheets-ui.align.top',
         icon: 'AlignTopIcon',
         value: VerticalAlign.TOP,
     },
     {
-        label: 'align.middle',
+        label: 'sheets-ui.align.middle',
         icon: 'VerticalCenterIcon',
         value: VerticalAlign.MIDDLE,
     },
     {
-        label: 'align.bottom',
+        label: 'sheets-ui.align.bottom',
         icon: 'AlignBottomIcon',
         value: VerticalAlign.BOTTOM,
     },
 ];
 
-export function VerticalAlignMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<VerticalAlign> {
+export function VerticalAlignMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, VerticalAlign> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
 
@@ -704,7 +717,7 @@ export function VerticalAlignMenuItemFactory(accessor: IAccessor): IMenuSelector
     return {
         id: SetVerticalTextAlignCommand.id,
         icon: VERTICAL_ALIGN_CHILDREN.find((child) => child.value === defaultValue)?.icon,
-        tooltip: 'toolbar.verticalAlignMode.main',
+        tooltip: 'sheets-ui.toolbar.verticalAlignMode.main',
         type: MenuItemType.SELECTOR,
         selections: VERTICAL_ALIGN_CHILDREN,
         value$: deriveStateFromActiveSheet$(univerInstanceService, defaultValue, ({ worksheet }) => new Observable<VerticalAlign>((subscriber) => {
@@ -751,23 +764,23 @@ export function VerticalAlignMenuItemFactory(accessor: IAccessor): IMenuSelector
 
 export const TEXT_WRAP_CHILDREN = [
     {
-        label: 'textWrap.overflow',
+        label: 'sheets-ui.textWrap.overflow',
         icon: 'OverflowIcon',
         value: WrapStrategy.OVERFLOW,
     },
     {
-        label: 'textWrap.wrap',
+        label: 'sheets-ui.textWrap.wrap',
         icon: 'AutowrapIcon',
         value: WrapStrategy.WRAP,
     },
     {
-        label: 'textWrap.clip',
+        label: 'sheets-ui.textWrap.clip',
         icon: 'TruncationIcon',
         value: WrapStrategy.CLIP,
     },
 ];
 
-export function WrapTextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<WrapStrategy> {
+export function WrapTextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, WrapStrategy> {
     const selectionManagerService = accessor.get(SheetsSelectionsService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
 
@@ -778,7 +791,7 @@ export function WrapTextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<
 
     return {
         id: SetTextWrapCommand.id,
-        tooltip: 'toolbar.textWrapMode.main',
+        tooltip: 'sheets-ui.toolbar.textWrapMode.main',
         icon: TEXT_WRAP_CHILDREN.find((child) => child.value === defaultValue)?.icon,
         type: MenuItemType.SELECTOR,
         selections: TEXT_WRAP_CHILDREN,
@@ -824,40 +837,74 @@ export function WrapTextMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<
     };
 }
 
+export function ShrinkToFitMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    const commandService = accessor.get(ICommandService);
+    const univerInstanceService = accessor.get(IUniverInstanceService);
+    const selectionManagerService = accessor.get(SheetsSelectionsService);
+
+    return {
+        id: SetShrinkToFitCommand.id,
+        type: MenuItemType.BUTTON,
+        icon: 'ShrinkToFitIcon',
+        title: 'sheets-ui.toolbar.shrinkToFit',
+        tooltip: 'sheets-ui.toolbar.shrinkToFit',
+        activated$: deriveStateFromActiveSheet$(univerInstanceService, false, ({ worksheet }) => new Observable<boolean>((subscriber) => {
+            const update = () => {
+                const primary = selectionManagerService.getCurrentLastSelection()?.primary;
+                subscriber.next(primary != null && worksheet.getComposedCellStyle(primary.startRow, primary.startColumn)?.stf === BooleanNumber.TRUE);
+            };
+            const disposable = commandService.onCommandExecuted((command) => {
+                if ([SetRangeValuesMutation.id, SetSelectionsOperation.id, SetWorksheetActiveOperation.id].includes(command.id)) {
+                    update();
+                }
+            });
+
+            update();
+            return disposable.dispose;
+        })),
+        disabled$: getCurrentRangeDisable$(accessor, {
+            workbookTypes: [WorkbookEditablePermission],
+            worksheetTypes: [WorksheetEditPermission, WorksheetSetCellStylePermission],
+            rangeTypes: [RangeProtectionPermissionEditPoint],
+        }),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+    };
+}
+
 export const TEXT_ROTATE_CHILDREN = [
     {
-        label: 'textRotate.none',
+        label: 'sheets-ui.textRotate.none',
         icon: 'NoRotationIcon',
         value: 0,
     },
     {
-        label: 'textRotate.angleUp',
+        label: 'sheets-ui.textRotate.angleUp',
         icon: 'LeftRotationFortyFiveDegreesIcon',
         value: -45,
     },
     {
-        label: 'textRotate.angleDown',
+        label: 'sheets-ui.textRotate.angleDown',
         icon: 'RightRotationFortyFiveDegreesIcon',
         value: 45,
     },
     {
-        label: 'textRotate.vertical',
+        label: 'sheets-ui.textRotate.vertical',
         icon: 'VerticalTextIcon',
         value: 'v',
     },
     {
-        label: 'textRotate.rotationUp',
+        label: 'sheets-ui.textRotate.rotationUp',
         icon: 'LeftRotationNinetyDegreesIcon',
         value: -90,
     },
     {
-        label: 'textRotate.rotationDown',
+        label: 'sheets-ui.textRotate.rotationDown',
         icon: 'RightRotationNinetyDegreesIcon',
         value: 90,
     },
 ];
 
-export function TextRotateMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<number | string> {
+export function TextRotateMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, number | string> {
     const selectionManagerService = accessor.get(SheetsSelectionsService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
 
@@ -865,7 +912,7 @@ export function TextRotateMenuItemFactory(accessor: IAccessor): IMenuSelectorIte
 
     return {
         id: SetTextRotationCommand.id,
-        tooltip: 'toolbar.textRotateMode.main',
+        tooltip: 'sheets-ui.toolbar.textRotateMode.main',
         icon: TEXT_ROTATE_CHILDREN[0].icon,
         type: MenuItemType.SELECTOR,
         selections: TEXT_ROTATE_CHILDREN,
@@ -936,12 +983,12 @@ export function menuClipboardDisabledObservable(injector: IAccessor): Observable
     });
 }
 
-export function CopyMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function CopyMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SheetCopyCommand.name,
         commandId: SheetCopyCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.copy',
+        title: 'sheets-ui.rightClick.copy',
         icon: 'CopyDoubleIcon',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookCopyPermission],
@@ -952,12 +999,12 @@ export function CopyMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function CutMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function CutMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SheetCutCommand.name,
         commandId: CutCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.cut',
+        title: 'sheets-ui.rightClick.cut',
         icon: 'CutIcon',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookCopyPermission, WorkbookEditablePermission],
@@ -968,12 +1015,12 @@ export function CutMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function PasteMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function PasteMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SheetPasteCommand.name,
         commandId: SheetPasteCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.paste',
+        title: 'sheets-ui.rightClick.paste',
         icon: 'PasteSpecialDoubleIcon',
         disabled$: menuClipboardDisabledObservable(accessor).pipe(
             combineLatestWith(getCurrentRangeDisable$(accessor, {
@@ -989,33 +1036,33 @@ export function PasteMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
 
 // Right click menu - Copy Special
 export const COPY_SPECIAL_MENU_ID = 'sheet.menu.copy-special';
-export function CopySpacialMenuItemFactory(accessor: IAccessor): IMenuSelectorItem {
+export function CopySpacialMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: COPY_SPECIAL_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'CopyDoubleIcon',
-        title: 'rightClick.copySpecial',
+        title: 'sheets-ui.rightClick.copySpecial',
         hidden$: getObservableWithExclusiveRange$(accessor, getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET)),
     };
 }
 
 // Right click menu - Paste Special
 export const PASTE_SPECIAL_MENU_ID = 'sheet.menu.paste-special';
-export function PasteSpacialMenuItemFactory(accessor: IAccessor): IMenuSelectorItem {
+export function PasteSpacialMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: PASTE_SPECIAL_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'PasteSpecialDoubleIcon',
-        title: 'rightClick.pasteSpecial',
+        title: 'sheets-ui.rightClick.pasteSpecial',
         hidden$: getObservableWithExclusiveRange$(accessor, getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET)),
     };
 }
 
-export function PasteValueMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function PasteValueMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey, string> {
     return {
         id: SheetPasteValueCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.pasteValue',
+        title: 'sheets-ui.rightClick.pasteValue',
         disabled$: menuClipboardDisabledObservable(accessor).pipe(
             combineLatestWith(getCurrentRangeDisable$(accessor, {
                 rangeTypes: [RangeProtectionPermissionEditPoint],
@@ -1028,11 +1075,11 @@ export function PasteValueMenuItemFactory(accessor: IAccessor): IMenuButtonItem<
     };
 }
 
-export function PasteFormatMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function PasteFormatMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey, string> {
     return {
         id: SheetPasteFormatCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.pasteFormat',
+        title: 'sheets-ui.rightClick.pasteFormat',
         disabled$: menuClipboardDisabledObservable(accessor).pipe(
             combineLatestWith(getCurrentRangeDisable$(accessor, {
                 rangeTypes: [RangeProtectionPermissionEditPoint],
@@ -1045,11 +1092,11 @@ export function PasteFormatMenuItemFactory(accessor: IAccessor): IMenuButtonItem
     };
 }
 
-export function PasteColWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function PasteColWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey, string> {
     return {
         id: SheetPasteColWidthCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.pasteColWidth',
+        title: 'sheets-ui.rightClick.pasteColWidth',
         disabled$: menuClipboardDisabledObservable(accessor).pipe(
             combineLatestWith(getCurrentRangeDisable$(accessor, {
                 rangeTypes: [RangeProtectionPermissionEditPoint],
@@ -1061,11 +1108,11 @@ export function PasteColWidthMenuItemFactory(accessor: IAccessor): IMenuButtonIt
     };
 }
 
-export function PasteBesidesBorderMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function PasteBesidesBorderMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey, string> {
     return {
         id: SheetPasteBesidesBorderCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.pasteBesidesBorder',
+        title: 'sheets-ui.rightClick.pasteBesidesBorder',
         disabled$: menuClipboardDisabledObservable(accessor).pipe(
             combineLatestWith(getCurrentRangeDisable$(accessor, {
                 rangeTypes: [RangeProtectionPermissionEditPoint],
@@ -1086,12 +1133,12 @@ export function PasteBesidesBorderMenuItemFactory(accessor: IAccessor): IMenuBut
 
 //#endregion
 
-export function FitContentMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FitContentMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetWorksheetRowIsAutoHeightCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'AutoHeightDoubleIcon',
-        title: 'rightClick.fitContent',
+        title: 'sheets-ui.rightClick.fitContent',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetSetRowStylePermission, WorksheetEditPermission],
@@ -1101,12 +1148,12 @@ export function FitContentMenuItemFactory(accessor: IAccessor): IMenuButtonItem 
     };
 }
 
-export function ColAutoWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ColAutoWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetWorksheetColAutoWidthCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'AutoWidthDoubleIcon',
-        title: 'rightClick.fitContent',
+        title: 'sheets-ui.rightClick.fitContent',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetSetRowStylePermission, WorksheetEditPermission],
@@ -1116,12 +1163,12 @@ export function ColAutoWidthMenuItemFactory(accessor: IAccessor): IMenuButtonIte
     };
 }
 
-export function HideRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function HideRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: HideRowConfirmCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'HideDoubleIcon',
-        title: 'rightClick.hideSelectedRow',
+        title: 'sheets-ui.rightClick.hideSelectedRow',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetSetRowStylePermission, WorksheetEditPermission],
@@ -1131,12 +1178,12 @@ export function HideRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function HideColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function HideColMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: HideColConfirmCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'HideDoubleIcon',
-        title: 'rightClick.hideSelectedColumn',
+        title: 'sheets-ui.rightClick.hideSelectedColumn',
         disabled$: getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetEditPermission, WorksheetSetColumnStylePermission],
@@ -1146,7 +1193,7 @@ export function HideColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function ShowRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ShowRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
 
@@ -1157,8 +1204,8 @@ export function ShowRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     return {
         id: SetSelectedRowsVisibleCommand.id,
         type: MenuItemType.BUTTON,
-        icon: 'EyeOutlineIcon',
-        title: 'rightClick.showHideRow',
+        icon: 'EyeIcon',
+        title: 'sheets-ui.rightClick.showHideRow',
         hidden$: deriveStateFromActiveSheet$(univerInstanceService, true, ({ worksheet }) => new Observable((subscriber) => {
             function hasHiddenRowsInSelections(): boolean {
                 const rowRanges = selectionManagerService.getCurrentSelections()?.map((s) => s.range).filter((r) => r.rangeType === RANGE_TYPE.ROW);
@@ -1187,7 +1234,7 @@ export function ShowRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function ShowColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ShowColMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
     const commandService = accessor.get(ICommandService);
@@ -1196,8 +1243,8 @@ export function ShowColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     return {
         id: SetSelectedColsVisibleCommand.id,
         type: MenuItemType.BUTTON,
-        icon: 'EyeOutlineIcon',
-        title: 'rightClick.showHideColumn',
+        icon: 'EyeIcon',
+        title: 'sheets-ui.rightClick.showHideColumn',
         hidden$: deriveStateFromActiveSheet$(univerInstanceService, true, ({ worksheet }) => new Observable((subscriber) => {
             function hasHiddenColsInSelections(): boolean {
                 const colRanges = selectionManagerService.getCurrentSelections()?.map((s) => s.range).filter((r) => r.rangeType === RANGE_TYPE.COLUMN);
@@ -1227,7 +1274,7 @@ export function ShowColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function SetRowHeightMenuItemFactory(accessor: IAccessor): IMenuButtonItem<number> {
+export function SetRowHeightMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey, number> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -1241,7 +1288,7 @@ export function SetRowHeightMenuItemFactory(accessor: IAccessor): IMenuButtonIte
         label: {
             name: MENU_ITEM_INPUT_COMPONENT,
             props: {
-                prefix: 'rightClick.rowHeight',
+                prefix: 'sheets-ui.rightClick.rowHeight',
                 suffix: 'px',
                 min,
                 max: 1000,
@@ -1272,7 +1319,7 @@ export function SetRowHeightMenuItemFactory(accessor: IAccessor): IMenuButtonIte
     };
 }
 
-export function SetColWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem<number> {
+export function SetColWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey, number> {
     const commandService = accessor.get(ICommandService);
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -1286,7 +1333,7 @@ export function SetColWidthMenuItemFactory(accessor: IAccessor): IMenuButtonItem
         label: {
             name: MENU_ITEM_INPUT_COMPONENT,
             props: {
-                prefix: 'rightClick.columnWidth',
+                prefix: 'sheets-ui.rightClick.columnWidth',
                 suffix: 'px',
                 min,
                 max: 1000,

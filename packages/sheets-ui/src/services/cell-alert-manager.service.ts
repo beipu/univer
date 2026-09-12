@@ -16,6 +16,7 @@
 
 import type { IDisposable } from '@univerjs/core';
 import type { ISheetLocationBase } from '@univerjs/sheets';
+import type { ReactNode } from 'react';
 import { Disposable, Inject } from '@univerjs/core';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { Subject } from 'rxjs';
@@ -28,14 +29,21 @@ export enum CellAlertType {
     ERROR,
 }
 
+export interface ICellAlertMenuItem {
+    label: ReactNode;
+    disabled?: boolean;
+    onSelect: () => void;
+}
+
 export interface ICellAlert {
     type: CellAlertType;
-    title: React.ReactNode;
-    message: React.ReactNode;
+    title: ReactNode;
+    message: ReactNode;
     location: ISheetLocationBase;
     width: number;
     height: number;
     key: string;
+    menu?: ICellAlertMenuItem[];
 }
 
 export class CellAlertManagerService extends Disposable {
@@ -81,7 +89,7 @@ export class CellAlertManagerService extends Disposable {
         const { location } = alert;
         const { row, col, unitId, subUnitId } = location;
 
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         if (!currentRender) {
             return;
         }
@@ -95,7 +103,9 @@ export class CellAlertManagerService extends Disposable {
             },
             {
                 componentKey: CELL_ALERT_KEY,
-                direction: 'horizontal',
+                direction: alert.menu?.length ? 'left-center' : 'horizontal',
+                autoRelayout: Boolean(alert.menu?.length),
+                showOnSelectionMoving: Boolean(alert.menu?.length),
                 extraProps: {
                     alert,
                 },

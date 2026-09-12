@@ -16,9 +16,10 @@
 
 import type { Editor } from '@univerjs/docs-ui';
 import type { IFunctionParam } from '@univerjs/engine-formula';
-import { LocaleService } from '@univerjs/core';
+import type { LocaleKey } from '../../../locale/types';
+import { LocaleService, noop } from '@univerjs/core';
 import { borderClassName, borderTopClassName, clsx, scrollbarClassName } from '@univerjs/design';
-import { CloseIcon, MoreIcon } from '@univerjs/icons';
+import { CloseIcon, MoreRightIcon } from '@univerjs/icons';
 import { IEditorBridgeService } from '@univerjs/sheets-ui';
 import { RectPopup, useDependency, useEvent, useObservable } from '@univerjs/ui';
 import { useState } from 'react';
@@ -27,39 +28,38 @@ import { useEditorPosition } from '../hooks/use-editor-position';
 import { useFormulaDescribe } from '../hooks/use-formula-describe';
 import { HelpHiddenTip } from './HelpHiddenTip';
 
-interface IParamsProps {
+function Params({ className, title, value }: {
     className?: string;
-    title?: string;
+    title: string;
     value?: string;
+}) {
+    return (
+        <div className="univer-my-2">
+            <div
+                className={clsx(`
+                  univer-mb-2 univer-text-sm univer-font-medium univer-text-gray-900
+                  dark:!univer-text-gray-0
+                `, className)}
+            >
+                {title}
+            </div>
+            <div
+                className="univer-whitespace-pre-wrap univer-break-words univer-text-xs univer-text-gray-500"
+            >
+                {value}
+            </div>
+        </div>
+    );
 }
 
-const Params = ({ className, title, value }: IParamsProps) => (
-    <div className="univer-my-2">
-        <div
-            className={clsx(`
-              univer-mb-2 univer-text-sm univer-font-medium univer-text-gray-900
-              dark:!univer-text-white
-            `, className)}
-        >
-            {title}
-        </div>
-        <div
-            className="univer-whitespace-pre-wrap univer-break-words univer-text-xs univer-text-gray-500"
-        >
-            {value}
-        </div>
-    </div>
-);
-
-interface IHelpProps {
+function Help(props: {
     prefix?: string;
     value?: IFunctionParam[];
     active: number;
     onClick: (paramIndex: number) => void;
-}
-
-const Help = (props: IHelpProps) => {
+}) {
     const { prefix, value, active, onClick } = props;
+
     return (
         <div>
             <span>
@@ -81,26 +81,23 @@ const Help = (props: IHelpProps) => {
             )
         </div>
     );
-};
+}
 
-interface IHelpFunctionProps {
+export function HelpFunction(props: {
     onParamsSwitch?: (index: number) => void;
     onClose?: () => void;
     editor: Editor;
     isFocus: boolean;
     formulaText: string;
-};
-
-const noop = () => { };
-export function HelpFunction(props: IHelpFunctionProps) {
+}) {
     const { onParamsSwitch = noop, onClose: propColose = noop, isFocus, editor, formulaText } = props;
     const { functionInfo, paramIndex, reset } = useFormulaDescribe(isFocus, formulaText, editor);
     const editorBridgeService = useDependency(IEditorBridgeService);
     const hidden = !useObservable(editorBridgeService.helpFunctionVisible$);
     const [contentVisible, setContentVisible] = useState(false);
     const localeService = useDependency(LocaleService);
-    const required = localeService.t('formula.prompt.required');
-    const optional = localeService.t('formula.prompt.optional');
+    const required = localeService.t<LocaleKey>('sheets-formula-ui.prompt.required');
+    const optional = localeService.t<LocaleKey>('sheets-formula-ui.prompt.optional');
     const editorId = editor.getEditorId();
     const [position$] = useEditorPosition(editorId, !!functionInfo, [functionInfo, paramIndex]);
     function handleSwitchActive(paramIndex: number) {
@@ -128,7 +125,7 @@ export function HelpFunction(props: IHelpFunctionProps) {
                     <div
                         className={clsx(`
                           univer-m-0 univer-box-border univer-w-[250px] univer-select-none univer-list-none
-                          univer-rounded-lg univer-bg-white univer-leading-5 univer-shadow-md univer-outline-none
+                          univer-rounded-lg univer-bg-gray-0 univer-leading-5 univer-shadow-md univer-outline-none
                           dark:!univer-bg-gray-900
                         `, borderClassName)}
                     >
@@ -136,7 +133,7 @@ export function HelpFunction(props: IHelpFunctionProps) {
                             className={clsx(`
                               univer-box-border univer-flex univer-items-center univer-justify-between univer-px-4
                               univer-py-3 univer-text-xs univer-font-medium univer-text-gray-900
-                              dark:!univer-text-white
+                              dark:!univer-text-gray-0
                             `, borderTopClassName)}
                             style={{
                                 overflowWrap: 'anywhere',
@@ -160,7 +157,7 @@ export function HelpFunction(props: IHelpFunctionProps) {
                                     style={{ transform: contentVisible ? 'rotateZ(-90deg)' : 'rotateZ(90deg)' }}
                                     onClick={() => setContentVisible(!contentVisible)}
                                 >
-                                    <MoreIcon />
+                                    <MoreRightIcon />
                                 </div>
                                 <div
                                     className={`
@@ -189,13 +186,13 @@ export function HelpFunction(props: IHelpFunctionProps) {
                         >
                             <div className="univer-mt-3">
                                 <Params
-                                    title={localeService.t('formula.prompt.helpExample')}
+                                    title={localeService.t<LocaleKey>('sheets-formula-ui.prompt.helpExample')}
                                     value={`${functionInfo.functionName}(${functionInfo.functionParameter
                                         .map((item) => item.example)
                                         .join(',')})`}
                                 />
                                 <Params
-                                    title={localeService.t('formula.prompt.helpAbstract')}
+                                    title={localeService.t<LocaleKey>('sheets-formula-ui.prompt.helpAbstract')}
                                     value={functionInfo.description}
                                 />
                                 {functionInfo &&

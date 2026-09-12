@@ -16,7 +16,7 @@
 
 import type { Editor } from '@univerjs/docs-ui';
 import type { FunctionType, ISequenceNode } from '@univerjs/engine-formula';
-import { CommandType, DisposableCollection, ICommandService } from '@univerjs/core';
+import { CommandType, DisposableCollection, ICommandService, noop } from '@univerjs/core';
 import { borderClassName, clsx, scrollbarClassName } from '@univerjs/design';
 import { DeviceInputEventType } from '@univerjs/engine-render';
 import { IShortcutService, KeyCode, RectPopup, useDependency } from '@univerjs/ui';
@@ -36,7 +36,6 @@ interface ISearchFunctionProps {
     editor: Editor;
     onClose?: () => void;
 };
-const noop = () => { };
 export const SearchFunction = forwardRef<HTMLElement, ISearchFunctionProps>(SearchFunctionFactory);
 function SearchFunctionFactory(props: ISearchFunctionProps, ref: any) {
     const { isFocus, sequenceNodes, onSelect, editor, onClose = noop } = props;
@@ -44,7 +43,7 @@ function SearchFunctionFactory(props: ISearchFunctionProps, ref: any) {
     const shortcutService = useDependency(IShortcutService);
     const commandService = useDependency(ICommandService);
     const { searchList, searchText, handlerFormulaReplace, reset: resetFormulaSearch } = useFormulaSearch(isFocus, sequenceNodes, editor);
-    const visible = useMemo(() => !!searchList.length, [searchList]);
+    const visible = searchList.length > 0;
     const ulRef = useRef<HTMLUListElement>(undefined);
     const [active, setActive] = useState(0);
     const isEnableMouseEnterOrOut = useRef(false);
@@ -77,7 +76,7 @@ function SearchFunctionFactory(props: ISearchFunctionProps, ref: any) {
         if (!searchList.length) {
             return;
         }
-        // 注册方向键事件
+        // Register arrow key events
         const operationId = `sheet.formula-embedding-editor.search_function.${editorId}`;
         const d = new DisposableCollection();
         const handleKeycode = (keycode: KeyCode) => {
@@ -197,12 +196,12 @@ function SearchFunctionFactory(props: ISearchFunctionProps, ref: any) {
                     }
                 }}
                 data-u-comp="sheets-formula-editor"
+                data-presentation="desktop"
                 className={clsx(`
-                  univer-m-0 univer-box-border univer-max-h-[400px] univer-w-[250px] univer-list-none
-                  univer-overflow-y-auto univer-rounded-lg univer-bg-white univer-p-2 univer-leading-5 univer-shadow-md
-                  univer-outline-none
+                  univer-m-0 univer-box-border univer-list-none univer-overflow-y-auto univer-rounded-lg
+                  univer-bg-gray-0 univer-p-2 univer-leading-5 univer-shadow-md univer-outline-none
                   dark:!univer-bg-gray-900
-                `, borderClassName, scrollbarClassName)}
+                `, 'univer-max-h-[400px] univer-w-[250px]', borderClassName, scrollbarClassName)}
             >
                 {searchList.map((item, index) => (
                     <li
@@ -210,7 +209,7 @@ function SearchFunctionFactory(props: ISearchFunctionProps, ref: any) {
                         className={clsx(`
                           univer-box-border univer-cursor-pointer univer-rounded univer-px-2 univer-py-1
                           univer-text-gray-900 univer-transition-colors
-                          dark:!univer-text-white
+                          dark:!univer-text-gray-0
                         `, {
                             'univer-bg-gray-200 dark:!univer-bg-gray-600': active === index,
                         })}

@@ -16,7 +16,9 @@
 
 import type { ICanvasPopup } from '../../services/canvas-pop-manager.service';
 import type { ICellAlert } from '../../services/cell-alert-manager.service';
-import { ErrorIcon, InfoIcon, WarningIcon } from '@univerjs/icons';
+import { DropdownMenu } from '@univerjs/design';
+import { ErrorIcon, InfoIcon, MoreDownIcon, WarningIcon } from '@univerjs/icons';
+import { useState } from 'react';
 import { CellAlertType } from '../../services/cell-alert-manager.service';
 
 /**
@@ -24,32 +26,100 @@ import { CellAlertType } from '../../services/cell-alert-manager.service';
  * @param root0
  * @param root0.popup
  */
-export function CellAlert({ popup }: { popup: ICanvasPopup }) {
+export interface ICellAlertProps {
+    popup: ICanvasPopup;
+    DropdownMenuComponent?: typeof DropdownMenu;
+}
+
+export function CellAlert({ popup, DropdownMenuComponent = DropdownMenu }: ICellAlertProps) {
+    const [visible, setVisible] = useState(false);
+    const [isHovered, setIsHovered] = useState(false);
     const alert = popup.extraProps?.alert;
 
     if (!alert) {
         return null;
     }
-    const { type, title, message } = alert as ICellAlert;
+    const { type, title, message, menu } = alert as ICellAlert;
+
+    if (menu?.length) {
+        const accessibleLabel = [title, message]
+            .filter((value): value is string => typeof value === 'string')
+            .join(': ');
+        const showMore = visible || isHovered;
+
+        return (
+            <div
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+            >
+                <DropdownMenuComponent
+                    align="start"
+                    open={visible}
+                    onOpenChange={setVisible}
+                    items={[
+                        {
+                            type: 'custom',
+                            className: `
+                              univer-px-2 univer-py-1.5 univer-font-medium univer-text-gray-900
+                              dark:!univer-text-gray-0
+                            `,
+                            children: message,
+                        },
+                        {
+                            type: 'separator',
+                        },
+                        ...menu.map((item) => ({
+                            type: 'item' as const,
+                            children: item.label,
+                            disabled: item.disabled,
+                            onSelect: item.onSelect,
+                        })),
+                    ]}
+                >
+                    <button
+                        type="button"
+                        aria-label={accessibleLabel || undefined}
+                        className={`
+                          univer-flex univer-items-center univer-gap-1 univer-rounded univer-border univer-border-solid
+                          univer-border-gray-200 univer-bg-gray-0 univer-p-1 univer-shadow
+                          hover:univer-bg-gray-100
+                          dark:!univer-border-gray-600 dark:!univer-bg-gray-900
+                          dark:hover:!univer-bg-gray-800
+                        `}
+                    >
+                        <WarningIcon className="univer-text-yellow-500" />
+                        {showMore && (
+                            <MoreDownIcon
+                                className={`
+                                  univer-text-gray-600
+                                  dark:!univer-text-gray-300
+                                `}
+                            />
+                        )}
+                    </button>
+                </DropdownMenuComponent>
+            </div>
+        );
+    }
 
     const iconMap = {
-        [CellAlertType.ERROR]: <ErrorIcon className="univer-mr-1.5 univer-text-red-500" />,
-        [CellAlertType.INFO]: <InfoIcon className="univer-mr-1.5 univer-text-blue-500" />,
-        [CellAlertType.WARNING]: <WarningIcon className="univer-mr-1.5 univer-text-yellow-500" />,
+        [CellAlertType.ERROR]: <ErrorIcon className="univer-text-red-500" />,
+        [CellAlertType.INFO]: <InfoIcon className="univer-text-blue-500" />,
+        [CellAlertType.WARNING]: <WarningIcon className="univer-text-yellow-500" />,
     };
 
     return (
         <div
             className={`
-              univer-z-[100] univer-box-border univer-w-[156px] univer-rounded-lg univer-bg-white univer-px-2
+              univer-z-[100] univer-box-border univer-w-[156px] univer-rounded-lg univer-bg-gray-0 univer-px-2
               univer-py-1 univer-text-gray-900 univer-shadow
-              dark:!univer-bg-black dark:!univer-text-white
+              dark:!univer-bg-gray-1000 dark:!univer-text-gray-0
             `}
         >
             <div
                 className={`
-                  univer-mb-1.5 univer-flex univer-h-5 univer-flex-row univer-items-center univer-text-sm
-                  univer-font-medium
+                  univer-mb-1.5 univer-flex univer-h-5 univer-flex-row univer-items-center univer-gap-x-1.5
+                  univer-text-sm univer-font-medium
                 `}
             >
                 {type ? iconMap[type] : null}

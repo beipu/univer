@@ -17,10 +17,31 @@
 import type { DocumentDataModel, ICommand, IMutationInfo, JSONXActions } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { ITextRangeWithStyle } from '@univerjs/engine-render';
-import { CommandType, ICommandService, IUniverInstanceService, JSONX, TextX, TextXActionType, UniverInstanceType } from '@univerjs/core';
+import {
+    CommandType,
+    getRichTextEditPath,
+    ICommandService,
+    IUniverInstanceService,
+    JSONX,
+    TextX,
+    TextXActionType,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
-import { getCommandSkeleton, getRichTextEditPath } from '../../util';
-import { getColumnWidths, getEmptyTableCell, getEmptyTableRow, getInsertColumnActionsParams, getInsertColumnBody, getInsertRowActionsParams, getInsertRowBody, getRangeInfoFromRanges, getTableColumn, INSERT_COLUMN_POSITION, INSERT_ROW_POSITION } from './table';
+import { getCommandSkeleton } from '../../util';
+import {
+    getColumnWidths,
+    getEmptyTableCell,
+    getEmptyTableRow,
+    getInsertColumnActionsParams,
+    getInsertColumnBody,
+    getInsertRowActionsParams,
+    getInsertRowBody,
+    getRangeInfoFromRanges,
+    getTableColumn,
+    INSERT_COLUMN_POSITION,
+    INSERT_ROW_POSITION,
+} from './table';
 
 // Insert rows and columns are in this file.
 
@@ -112,8 +133,8 @@ export const DocTableInsertRowCommand: ICommand<IDocTableInsertRowCommandParams>
 
         const { segmentId } = rangeInfo;
 
-        const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
-        const body = docDataModel?.getSelfOrHeaderFooterModel(segmentId).getBody();
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const body = docDataModel?.getSelfOrHeaderFooterModel(segmentId)?.getBody();
 
         if (docDataModel == null || body == null) {
             return false;
@@ -220,8 +241,8 @@ export const DocTableInsertColumnCommand: ICommand<IDocTableInsertColumnCommandP
 
         const { segmentId } = rangeInfo;
 
-        const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
-        const body = docDataModel?.getSelfOrHeaderFooterModel(segmentId).getBody();
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const body = docDataModel?.getSelfOrHeaderFooterModel(segmentId)?.getBody();
 
         if (docDataModel == null || body == null) {
             return false;
@@ -295,15 +316,16 @@ export const DocTableInsertColumnCommand: ICommand<IDocTableInsertColumnCommandP
 
         const { marginLeft = 0, marginRight = 0 } = documentStyle;
 
-        const pageWidth = (documentStyle.pageSize?.width ?? 800) - marginLeft - marginRight;
-
         const tableColumns = snapshot?.tableSource?.[tableId]?.tableColumns;
 
         if (!tableColumns) {
             return false;
         }
 
-        const { newColWidth, widths } = getColumnWidths(pageWidth, tableColumns, columnIndex);
+        const pageWidth = (documentStyle.pageSize?.width ?? 800) - marginLeft - marginRight;
+        const tableWidth = tableColumns.reduce((sum, column) => sum + column.size.width.v, 0);
+        const targetWidth = tableWidth > 0 ? tableWidth : pageWidth;
+        const { newColWidth, widths } = getColumnWidths(targetWidth, tableColumns, columnIndex);
 
         // Update pre columns width.
         for (let i = 0; i < widths.length; i++) {

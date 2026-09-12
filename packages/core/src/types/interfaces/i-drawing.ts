@@ -84,6 +84,10 @@ export enum DrawingTypeEnum {
      * Dom element, allows inserting HTML elements as floating objects into the document
      */
     DRAWING_DOM = 8,
+    /**
+     * Block element, allows host products to place embeddable unit-backed blocks as drawing objects.
+     */
+    DRAWING_BLOCK = 9,
 }
 
 export type DrawingType = DrawingTypeEnum | number;
@@ -115,6 +119,19 @@ export interface ITransformStateDisableOption {
 
 export interface ITransformState extends IAbsoluteTransform, IRotationSkewFlipTransform, ITransformStateDisableOption { }
 
+export interface IDrawingObjectLocks {
+    /**
+     * Prevent selecting the drawing directly from the canvas. Layer/object panels may still select it for management.
+     */
+    noSelect?: boolean;
+    noMove?: boolean;
+    noResize?: boolean;
+    noRotate?: boolean;
+    noTextEdit?: boolean;
+    noEditPoints?: boolean;
+    noChangeAspect?: boolean;
+}
+
 export interface IDrawingParam extends IDrawingSearch {
     drawingType: DrawingType;
     transform?: Nullable<ITransformState>;
@@ -133,6 +150,14 @@ export interface IDrawingParam extends IDrawingSearch {
      * The drawing element is hidden when render
      */
     hidden?: boolean;
+    name?: string;
+    description?: string;
+    /**
+     * Compatibility shortcut for whether the drawing can be selected from the canvas.
+     * Prefer locks.noSelect for fine-grained behavior when available.
+     */
+    selectable?: boolean;
+    locks?: IDrawingObjectLocks;
 }
 
 /**

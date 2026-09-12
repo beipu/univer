@@ -15,6 +15,7 @@
  */
 
 import type { IRange } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import { LocaleService } from '@univerjs/core';
 import { Button, Checkbox, CheckboxGroup, FormLayout, Select } from '@univerjs/design';
 import { useHighlightRange } from '@univerjs/sheets-ui';
@@ -23,7 +24,11 @@ import { useCallback, useMemo, useState } from 'react';
 import { FileNamePart, IBatchSaveImagesService } from '../../services/batch-save-images.service';
 import { BATCH_SAVE_IMAGES_DIALOG_ID } from './component-name';
 
-export function BatchSaveImagesDialog() {
+export interface IBatchSaveImagesDialogProps {
+    SelectComponent?: typeof Select;
+}
+
+export function BatchSaveImagesDialog({ SelectComponent = Select }: IBatchSaveImagesDialogProps = {}) {
     const localeService = useDependency(LocaleService);
     const dialogService = useDependency(IDialogService);
     const batchSaveService = useDependency(IBatchSaveImagesService);
@@ -102,7 +107,7 @@ export function BatchSaveImagesDialog() {
             dialogService.close(BATCH_SAVE_IMAGES_DIALOG_ID);
         } catch (err) {
             console.error('Failed to save images:', err);
-            setError(localeService.t('sheetImage.save.error'));
+            setError(localeService.t<LocaleKey>('sheets-drawing-ui.save.error'));
         } finally {
             setSaving(false);
         }
@@ -112,26 +117,26 @@ export function BatchSaveImagesDialog() {
 
     return (
         <div className="univer-flex univer-flex-col">
-            <FormLayout label={localeService.t('sheetImage.save.imageCount')}>
+            <FormLayout label={localeService.t<LocaleKey>('sheets-drawing-ui.save.imageCount')}>
                 <div className="univer-text-sm univer-text-gray-600">{images.length}</div>
             </FormLayout>
 
-            <FormLayout label={localeService.t('sheetImage.save.fileNameConfig')}>
+            <FormLayout label={localeService.t<LocaleKey>('sheets-drawing-ui.save.fileNameConfig')}>
                 <CheckboxGroup value={fileNameParts} onChange={handleFileNamePartsChange} direction="vertical">
                     <Checkbox value={FileNamePart.CELL_ADDRESS} disabled={!hasAvailableColumns}>
-                        {localeService.t('sheetImage.save.useRowCol')}
+                        {localeService.t<LocaleKey>('sheets-drawing-ui.save.useRowCol')}
                     </Checkbox>
                     {hasAvailableColumns && (
                         <Checkbox value={FileNamePart.COLUMN_VALUE}>
-                            {localeService.t('sheetImage.save.useColumnValue')}
+                            {localeService.t<LocaleKey>('sheets-drawing-ui.save.useColumnValue')}
                         </Checkbox>
                     )}
                 </CheckboxGroup>
             </FormLayout>
 
             {showColumnSelect && (
-                <FormLayout label={localeService.t('sheetImage.save.selectColumn')}>
-                    <Select
+                <FormLayout label={localeService.t<LocaleKey>('sheets-drawing-ui.save.selectColumn')}>
+                    <SelectComponent
                         value={selectedColumn}
                         options={columnOptions}
                         onChange={handleColumnChange}
@@ -149,14 +154,14 @@ export function BatchSaveImagesDialog() {
                 `}
             >
                 <Button onClick={handleCancel} disabled={saving}>
-                    {localeService.t('sheetImage.save.cancel')}
+                    {localeService.t<LocaleKey>('sheets-drawing-ui.save.cancel')}
                 </Button>
                 <Button
                     variant="primary"
                     onClick={handleConfirm}
                     disabled={saving || images.length === 0}
                 >
-                    {saving ? localeService.t('sheetImage.save.saving') : localeService.t('sheetImage.save.confirm')}
+                    {saving ? localeService.t<LocaleKey>('sheets-drawing-ui.save.saving') : localeService.t<LocaleKey>('sheets-drawing-ui.save.confirm')}
                 </Button>
             </div>
         </div>

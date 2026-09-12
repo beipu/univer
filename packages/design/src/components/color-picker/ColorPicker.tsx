@@ -39,9 +39,7 @@ export interface IColorPickerProps {
 }
 
 export function ColorPicker({ format = 'hex', value, onChange }: IColorPickerProps) {
-    if (!isBrowser) return null;
-
-    const { locale } = useContext(ConfigContext);
+    const { direction, locale } = useContext(ConfigContext);
 
     const [hsv, setHsv] = useState<[number, number, number]>([0, 100, 100]);
     const [alpha, setAlpha] = useState(1);
@@ -68,6 +66,10 @@ export function ColorPicker({ format = 'hex', value, onChange }: IColorPickerPro
             console.error('Invalid value:', error);
         }
     }, [value, format]);
+
+    if (!isBrowser) {
+        return null;
+    }
 
     function handleColorChange(h: number, s: number, v: number) {
         setHsv([h, s, v]);
@@ -103,6 +105,7 @@ export function ColorPicker({ format = 'hex', value, onChange }: IColorPickerPro
     return (
         <div
             data-u-comp="color-picker"
+            dir={direction}
             className="univer-cursor-default univer-space-y-2 univer-rounded-lg"
             onClick={(e) => e.stopPropagation()}
         >
@@ -116,20 +119,23 @@ export function ColorPicker({ format = 'hex', value, onChange }: IColorPickerPro
             />
 
             <div className="univer-flex univer-h-7 univer-items-center">
-                <a
-                    className={`
-                      univer-cursor-pointer univer-gap-2 univer-text-sm univer-text-gray-900 univer-transition-opacity
+                <button
+                    type="button"
+                    className="
+                      univer-cursor-pointer univer-border-0 univer-bg-transparent univer-p-0 univer-text-sm
+                      univer-text-gray-900 univer-transition-opacity
                       hover:univer-opacity-80
-                      dark:!univer-text-white
-                    `}
+                      dark:!univer-text-gray-0
+                    "
                     onClick={() => setVisible(true)}
                 >
                     {locale?.ColorPicker.more}
-                </a>
+                </button>
             </div>
 
             <Dialog
-                className="!univer-w-fit !univer-p-2.5"
+                className="!univer-z-[1090] !univer-w-fit !univer-p-2.5"
+                overlayClassName="!univer-z-[1090]"
                 closable={false}
                 maskClosable={false}
                 open={visible}
@@ -169,7 +175,9 @@ export function ColorPicker({ format = 'hex', value, onChange }: IColorPickerPro
                         format={format}
                         onChange={(h, s, v, a) => {
                             handleColorChange(h, s, v);
-                            if (a !== undefined) handleAlphaChange(a);
+                            if (a !== undefined) {
+                                handleAlphaChange(a);
+                            }
                         }}
                     />
 

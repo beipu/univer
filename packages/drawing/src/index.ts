@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-export { DRAWING_IMAGE_ALLOW_IMAGE_LIST, DRAWING_IMAGE_ALLOW_SIZE, DRAWING_IMAGE_COUNT_LIMIT, DRAWING_IMAGE_HEIGHT_LIMIT, DRAWING_IMAGE_WIDTH_LIMIT } from './basics/config';
+export { DRAWING_IMAGE_ALLOW_IMAGE_LIST, DRAWING_IMAGE_COUNT_LIMIT, DRAWING_IMAGE_HEIGHT_LIMIT, DRAWING_IMAGE_WIDTH_LIMIT, getDrawingImageAllowSize } from './basics/config';
 export { SetDrawingSelectedOperation } from './commands/operations/set-drawing-selected.operation';
 export type { IUniverDrawingConfig } from './config/config';
 export type { IDocFloatDomData, IDocFloatDomDataBase, IImageData } from './models/image-model-interface';
@@ -34,8 +34,11 @@ export type {
 } from './services/drawing-manager.service';
 export { IDrawingManagerService } from './services/drawing-manager.service';
 export { ImageIoService } from './services/image-io-impl.service';
-export { IImageIoService, ImageSourceType, ImageUploadStatusType } from './services/image-io.service';
-export type { IImageIoServiceParam } from './services/image-io.service';
 export { URLImageService } from './services/url-image.service';
+export { createDrawingCopyPlan, DRAWING_COPY_CONTEXT_KEY, getOrCreateDrawingCopyPlan } from './utils/drawing-copy-plan';
+export type { ICreateDrawingCopyPlanOptions, IDrawingCopyPlan } from './utils/drawing-copy-plan';
+export { DRAWING_GROUPABLE_TYPES, isGroupableDrawingType } from './utils/drawing-group';
 export { getDrawingShapeKeyByDrawingSearch } from './utils/get-image-shape-key';
 export { getImageSize } from './utils/get-image-size';
+export { resolveDrawingRotateEnabled } from './utils/rotate-enabled';
+export type { IDrawingRotateEnabledResolverOptions } from './utils/rotate-enabled';

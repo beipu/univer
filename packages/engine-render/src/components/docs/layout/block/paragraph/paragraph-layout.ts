@@ -19,7 +19,7 @@ import type { ISectionBreakConfig } from '../../../../../basics/interfaces';
 import type { DataStreamTreeNode } from '../../../view-model/data-stream-tree-node';
 import type { DocumentViewModel } from '../../../view-model/document-view-model';
 import type { ILayoutContext } from '../../tools';
-import { DataStreamTreeNodeType } from '@univerjs/core';
+import { BooleanNumber, DataStreamTreeNodeType } from '@univerjs/core';
 import { clearFontCreateConfigCache } from '../../tools';
 import { createTableSkeleton } from '../table';
 import { lineAdjustment } from './line-adjustment';
@@ -31,14 +31,19 @@ export function dealWidthParagraph(
     viewModel: DocumentViewModel,
     paragraphNode: DataStreamTreeNode,
     curPage: IDocumentSkeletonPage,
-    sectionBreakConfig: ISectionBreakConfig
+    sectionBreakConfig: ISectionBreakConfig,
+    nextParagraphNode?: DataStreamTreeNode
 ): IDocumentSkeletonPage[] {
     clearFontCreateConfigCache();
     const { content = '', children } = paragraphNode;
     let tableSkeleton = null;
+    let tablePageBreakBefore = false;
 
     // Need to create table before shaping....
     if (children.length === 1 && children[0].nodeType === DataStreamTreeNodeType.TABLE) {
+        const firstCellParagraph = children[0].children[0]?.children[0]?.children[0]?.children[0];
+        tablePageBreakBefore = firstCellParagraph != null &&
+            viewModel.getParagraph(firstCellParagraph.endIndex)?.paragraphStyle?.pageBreakBefore === BooleanNumber.TRUE;
         tableSkeleton = createTableSkeleton(
             ctx,
             curPage,
@@ -65,7 +70,9 @@ export function dealWidthParagraph(
         curPage,
         paragraphNode,
         sectionBreakConfig,
-        tableSkeleton
+        tableSkeleton,
+        tablePageBreakBefore,
+        nextParagraphNode
     );
 
     // Step 3: Line Adjustment.

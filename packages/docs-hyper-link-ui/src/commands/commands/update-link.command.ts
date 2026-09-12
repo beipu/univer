@@ -17,6 +17,7 @@
 import type { DocumentDataModel, ICommand } from '@univerjs/core';
 import { CommandType, CustomRangeType, getBodySlice, ICommandService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
 import { DocSelectionManagerService, replaceSelectionFactory } from '@univerjs/docs';
+import { DocHyperLinkCommandId } from '@univerjs/docs-hyper-link';
 
 export interface IUpdateDocHyperLinkCommandParams {
     unitId: string;
@@ -27,7 +28,7 @@ export interface IUpdateDocHyperLinkCommandParams {
 }
 
 export const UpdateDocHyperLinkCommand: ICommand<IUpdateDocHyperLinkCommandParams> = {
-    id: 'docs.command.update-hyper-link',
+    id: DocHyperLinkCommandId.Update,
     type: CommandType.COMMAND,
     handler(accessor, params) {
         if (!params) {
@@ -43,8 +44,12 @@ export const UpdateDocHyperLinkCommand: ICommand<IUpdateDocHyperLinkCommandParam
             return false;
         }
 
-        const oldBody = getBodySlice(doc.getSelfOrHeaderFooterModel(segmentId).getBody()!, currentSelection.startOffset!, currentSelection.endOffset!);
-        const textRun = oldBody.textRuns?.[0];
+        const oldBody = doc.getSelfOrHeaderFooterModel(segmentId)?.getBody();
+        if (!oldBody) {
+            return false;
+        }
+
+        const textRun = getBodySlice(oldBody, currentSelection.startOffset!, currentSelection.endOffset!).textRuns?.[0];
         if (textRun) {
             textRun.ed = params.label.length + 1;
         }

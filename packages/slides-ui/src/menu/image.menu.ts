@@ -16,26 +16,27 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { UniverInstanceType } from '@univerjs/core';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { InsertSlideFloatImageCommand } from '../commands/operations/insert-image.operation';
 
 export const SLIDES_IMAGE_MENU_ID = 'slide.menu.image';
 
-export function SlideImageMenuFactory(accessor: IAccessor): IMenuItem {
+export function SlideImageMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
     return {
         id: SLIDES_IMAGE_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: 'AddImageIcon',
-        tooltip: 'slide.image.insert.title',
+        tooltip: 'slides-ui.image.insert.title',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SLIDE),
     };
 }
 
-export function UploadSlideFloatImageMenuFactory(_accessor: IAccessor): IMenuItem {
+export function UploadSlideFloatImageMenuFactory(_accessor: IAccessor): IMenuItem<LocaleKey> {
     return {
         id: InsertSlideFloatImageCommand.id,
-        title: 'slide.image.insert.float',
+        title: 'slides-ui.image.insert.float',
         type: MenuItemType.BUTTON,
         hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_SLIDE),
     };

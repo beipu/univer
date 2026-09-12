@@ -17,11 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    threadCommentUI: {
+    'thread-comment-ui': {
+        mobile: { back: 'Quay lại' },
         panel: {
             title: 'Quản lý Bình luận',
             empty: 'Chưa có bình luận',
-            filterEmpty: 'Không có kết quả phù hợp',
             reset: 'Đặt lại',
             addComment: 'Thêm bình luận',
             solved: 'Đã giải quyết',
@@ -35,6 +35,7 @@ const locale: typeof enUS = {
         item: {
             edit: 'Chỉnh sửa',
             delete: 'Xóa',
+            more: 'Thêm',
         },
         filter: {
             sheet: {

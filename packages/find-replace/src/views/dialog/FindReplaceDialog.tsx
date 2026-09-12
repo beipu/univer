@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
-import type { IDisposable, Nullable } from '@univerjs/core';
-import type { ForwardedRef } from 'react';
+import type { LocaleKey } from '../../locale/types';
 import { ICommandService, IContextService, LocaleService } from '@univerjs/core';
 import { Button, Checkbox, FormDualColumnLayout, FormLayout, Input, MessageType, Select } from '@univerjs/design';
 import { ILayoutService, IMessageService, useDebounceFn, useDependency, useObservable } from '@univerjs/ui';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import { fromEvent } from 'rxjs';
 import { ReplaceAllMatchesCommand, ReplaceCurrentMatchCommand } from '../../commands/commands/replace.command';
 import { OpenReplaceDialogOperation } from '../../commands/operations/find-replace.operation';
@@ -32,10 +31,33 @@ interface ISubFormRef {
     selectHasFocus(): boolean;
 }
 
-function useFindInputFocus(findReplaceService: IFindReplaceService, ref: ForwardedRef<unknown>) {
+const FIND_SCOPE_OPTIONS: Array<{ label: LocaleKey; value: FindScope }> = [
+    { label: 'find-replace.dialog.find-scope.current-sheet', value: FindScope.SUBUNIT },
+    { label: 'find-replace.dialog.find-scope.workbook', value: FindScope.UNIT },
+];
+
+const FIND_DIRECTION_OPTIONS: Array<{ label: LocaleKey; value: FindDirection }> = [
+    { label: 'find-replace.dialog.find-direction.row', value: FindDirection.ROW },
+    { label: 'find-replace.dialog.find-direction.column', value: FindDirection.COLUMN },
+];
+
+const FIND_BY_OPTIONS: Array<{ label: LocaleKey; value: FindBy }> = [
+    { label: 'find-replace.dialog.find-by.value', value: FindBy.VALUE },
+    { label: 'find-replace.dialog.find-by.formula', value: FindBy.FORMULA },
+];
+
+function useFindInputFocus(findReplaceService: IFindReplaceService, ref: Parameters<typeof useImperativeHandle>[0]) {
+    const pendingFocusFrameRef = useRef<number | null>(null);
     const focus = useCallback(() => {
-        (document.querySelector('.univer-find-input input') as Nullable<HTMLInputElement>)?.focus();
+        (document.querySelector('.univer-find-input input') as HTMLInputElement | null)?.focus();
     }, []);
+    const focusAfterDialogClose = useCallback(() => {
+        focus();
+        pendingFocusFrameRef.current = requestAnimationFrame(() => {
+            pendingFocusFrameRef.current = null;
+            focus();
+        });
+    }, [focus]);
 
     const selectHasFocus = useCallback(() => {
         const allInputs = document.querySelectorAll('[data-u-comp=find-replace-dialog] [data-u-comp=search-input]');
@@ -46,10 +68,15 @@ function useFindInputFocus(findReplaceService: IFindReplaceService, ref: Forward
 
     useEffect(() => {
         const subscription = findReplaceService.focusSignal$.subscribe(() => focus());
-        return () => subscription.unsubscribe();
+        return () => {
+            subscription.unsubscribe();
+            if (pendingFocusFrameRef.current !== null) {
+                cancelAnimationFrame(pendingFocusFrameRef.current);
+            }
+        };
     }, [findReplaceService, focus]);
 
-    return { focus, selectHasFocus };
+    return { focus, focusAfterDialogClose, selectHasFocus };
 }
 
 export const FindDialog = forwardRef(function FindDialogImpl(_props, ref) {
@@ -77,7 +104,6 @@ export const FindDialog = forwardRef(function FindDialogImpl(_props, ref) {
                 matchesCount={matchesCount}
                 matchesPosition={matchesPosition}
                 findReplaceService={findReplaceService}
-                localeService={localeService}
                 initialFindString={findString}
                 onChange={onFindStringChange}
             />
@@ -89,7 +115,7 @@ export const FindDialog = forwardRef(function FindDialogImpl(_props, ref) {
                     `}
                     onClick={revealReplace}
                 >
-                    {localeService.t('find-replace.dialog.advanced-finding')}
+                    {localeService.t<LocaleKey>('find-replace.dialog.advanced-finding')}
                 </a>
             </div>
         </>
@@ -104,6 +130,7 @@ export const ReplaceDialog = forwardRef(function ReplaceDialogImpl(_props, ref) 
 
     const currentMatch = useObservable(findReplaceService.currentMatch$, undefined, true);
     const replaceables = useObservable(findReplaceService.replaceables$, undefined, true);
+    const capabilities = useObservable(findReplaceService.providerCapabilities$, null, true);
     const state = useObservable(findReplaceService.state$, undefined, true);
     const {
         matchesCount,
@@ -113,6 +140,7 @@ export const ReplaceDialog = forwardRef(function ReplaceDialogImpl(_props, ref) 
         replaceString,
         caseSensitive,
         matchesTheWholeCell,
+        matchesTheWholeWord,
         findDirection,
         findScope,
         findBy,
@@ -132,7 +160,7 @@ export const ReplaceDialog = forwardRef(function ReplaceDialogImpl(_props, ref) 
         [findReplaceService]
     );
 
-    const { focus } = useFindInputFocus(findReplaceService, ref);
+    const { focusAfterDialogClose } = useFindInputFocus(findReplaceService, ref);
 
     const onClickFindButton = useCallback(() => {
         if (findString === inputtingFindString) {
@@ -145,8 +173,8 @@ export const ReplaceDialog = forwardRef(function ReplaceDialogImpl(_props, ref) 
     const onClickReplaceButton = useCallback(() => commandService.executeCommand(ReplaceCurrentMatchCommand.id), [commandService]);
     const onClickReplaceAllButton = useCallback(async () => {
         await commandService.executeCommand(ReplaceAllMatchesCommand.id);
-        focus();
-    }, [commandService]);
+        focusAfterDialogClose();
+    }, [commandService, focusAfterDialogClose]);
 
     const onChangeFindDirection = useCallback((findDirection: string) => {
         findReplaceService.changeFindDirection(findDirection as FindDirection);
@@ -158,16 +186,16 @@ export const ReplaceDialog = forwardRef(function ReplaceDialogImpl(_props, ref) 
         findReplaceService.changeFindBy(findBy as FindBy);
     }, [findReplaceService]);
 
-    const findScopeOptions = useFindScopeOptions(localeService);
-    const findDirectionOptions = useFindDirectionOptions(localeService);
-    const findByOptions = useFindByOptions(localeService);
+    const findScopeOptions = FIND_SCOPE_OPTIONS.map((option) => ({ ...option, label: localeService.t(option.label) }));
+    const findDirectionOptions = FIND_DIRECTION_OPTIONS.map((option) => ({ ...option, label: localeService.t(option.label) }));
+    const findByOptions = FIND_BY_OPTIONS.map((option) => ({ ...option, label: localeService.t(option.label) }));
 
     useEffect(() => {
         const shouldDisplayNoMatchInfo = findCompleted && matchesCount === 0;
 
         if (shouldDisplayNoMatchInfo) {
             messageService.show({
-                content: localeService.t('find-replace.dialog.no-match'),
+                content: localeService.t<LocaleKey>('find-replace.dialog.no-match'),
                 type: MessageType.Warning,
                 duration: 5000,
             });
@@ -176,67 +204,93 @@ export const ReplaceDialog = forwardRef(function ReplaceDialogImpl(_props, ref) 
 
     return (
         <div>
-            <FormLayout label={localeService.t('find-replace.dialog.find')}>
+            <FormLayout label={localeService.t<LocaleKey>('find-replace.dialog.find')}>
                 <SearchInput
                     findCompleted={findCompleted}
                     className="univer-find-input"
                     matchesCount={matchesCount}
                     matchesPosition={matchesPosition}
                     findReplaceService={findReplaceService}
-                    localeService={localeService}
                     initialFindString={inputtingFindString}
                     onChange={onFindStringChange}
                 />
             </FormLayout>
-            <FormLayout label={localeService.t('find-replace.dialog.replace')}>
+            <FormLayout label={localeService.t<LocaleKey>('find-replace.dialog.replace')}>
                 <Input
-                    placeholder={localeService.t('find-replace.dialog.replace-placeholder')}
+                    placeholder={localeService.t<LocaleKey>('find-replace.dialog.replace-placeholder')}
                     value={replaceString}
                     onChange={(value) => onReplaceStringChange(value)}
                 />
             </FormLayout>
-            <FormLayout label={localeService.t('find-replace.dialog.find-direction.title')}>
-                <Select value={findDirection} options={findDirectionOptions} onChange={onChangeFindDirection} />
-            </FormLayout>
-            <FormDualColumnLayout>
-                <>
-                    <FormLayout label={localeService.t('find-replace.dialog.find-scope.title')}>
-                        <Select value={findScope} options={findScopeOptions} onChange={onChangeFindScope} />
-                    </FormLayout>
-                    <FormLayout label={localeService.t('find-replace.dialog.find-by.title')}>
-                        <Select value={findBy} options={findByOptions} onChange={onChangeFindBy} />
-                    </FormLayout>
-                </>
-            </FormDualColumnLayout>
-            <FormDualColumnLayout>
-                <>
-                    <FormLayout>
-                        <Checkbox
-                            checked={caseSensitive}
-                            onChange={(checked) => {
-                                findReplaceService.changeCaseSensitive(checked as boolean);
-                            }}
-                        >
-                            {localeService.t('find-replace.dialog.case-sensitive')}
-                        </Checkbox>
-                    </FormLayout>
-                    <FormLayout>
-                        <Checkbox
-                            checked={matchesTheWholeCell}
-                            onChange={(checked) => {
-                                findReplaceService.changeMatchesTheWholeCell(checked as boolean);
-                            }}
-                        >
-                            {localeService.t('find-replace.dialog.match-the-whole-cell')}
-                        </Checkbox>
-                    </FormLayout>
-                </>
-            </FormDualColumnLayout>
+            {capabilities?.findDirection && (
+                <FormLayout label={localeService.t<LocaleKey>('find-replace.dialog.find-direction.title')}>
+                    <Select value={findDirection} options={findDirectionOptions} onChange={onChangeFindDirection} />
+                </FormLayout>
+            )}
+            {(capabilities?.findScope || capabilities?.findBy) && (
+                <FormDualColumnLayout>
+                    <>
+                        {capabilities.findScope && (
+                            <FormLayout label={localeService.t<LocaleKey>('find-replace.dialog.find-scope.title')}>
+                                <Select value={findScope} options={findScopeOptions} onChange={onChangeFindScope} />
+                            </FormLayout>
+                        )}
+                        {capabilities.findBy && (
+                            <FormLayout label={localeService.t<LocaleKey>('find-replace.dialog.find-by.title')}>
+                                <Select value={findBy} options={findByOptions} onChange={onChangeFindBy} />
+                            </FormLayout>
+                        )}
+                    </>
+                </FormDualColumnLayout>
+            )}
+            {(capabilities?.caseSensitive || capabilities?.matchesTheWholeCell || capabilities?.matchesTheWholeWord) && (
+                <FormDualColumnLayout>
+                    <>
+                        {capabilities.caseSensitive && (
+                            <FormLayout>
+                                <Checkbox
+                                    checked={caseSensitive}
+                                    onChange={(checked) => {
+                                        findReplaceService.changeCaseSensitive(Boolean(checked));
+                                        if (findCompleted) {
+                                            findReplaceService.find();
+                                        }
+                                    }}
+                                >
+                                    {localeService.t<LocaleKey>('find-replace.dialog.case-sensitive')}
+                                </Checkbox>
+                            </FormLayout>
+                        )}
+                        {capabilities.matchesTheWholeCell && (
+                            <FormLayout>
+                                <Checkbox checked={matchesTheWholeCell} onChange={(checked) => findReplaceService.changeMatchesTheWholeCell(Boolean(checked))}>
+                                    {localeService.t<LocaleKey>('find-replace.dialog.match-the-whole-cell')}
+                                </Checkbox>
+                            </FormLayout>
+                        )}
+                        {capabilities.matchesTheWholeWord && (
+                            <FormLayout>
+                                <Checkbox
+                                    checked={matchesTheWholeWord}
+                                    onChange={(checked) => {
+                                        findReplaceService.changeMatchesTheWholeWord(Boolean(checked));
+                                        if (findCompleted) {
+                                            findReplaceService.find();
+                                        }
+                                    }}
+                                >
+                                    {localeService.t<LocaleKey>('find-replace.dialog.match-the-whole-word')}
+                                </Checkbox>
+                            </FormLayout>
+                        )}
+                    </>
+                </FormDualColumnLayout>
+            )}
             <div className="univer-mt-6 univer-flex univer-justify-between">
-                <Button variant="primary" onClick={onClickFindButton} disabled={findDisabled}>{localeService.t('find-replace.dialog.find')}</Button>
+                <Button variant="primary" onClick={onClickFindButton} disabled={findDisabled}>{localeService.t<LocaleKey>('find-replace.dialog.find')}</Button>
                 <span className="univer-inline-flex univer-gap-2">
-                    <Button disabled={replaceDisabled} onClick={onClickReplaceButton}>{localeService.t('find-replace.dialog.replace')}</Button>
-                    <Button disabled={replaceAllDisabled} onClick={onClickReplaceAllButton}>{localeService.t('find-replace.dialog.replace-all')}</Button>
+                    <Button disabled={replaceDisabled} onClick={onClickReplaceButton}>{localeService.t<LocaleKey>('find-replace.dialog.replace')}</Button>
+                    <Button disabled={replaceAllDisabled} onClick={onClickReplaceAllButton}>{localeService.t<LocaleKey>('find-replace.dialog.replace-all')}</Button>
                 </span>
             </div>
         </div>
@@ -252,12 +306,11 @@ export function FindReplaceDialog() {
 
     const dialogContainerRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
-        let disposable: IDisposable | undefined;
-        if (dialogContainerRef.current) {
-            disposable = layoutService.registerContainerElement(dialogContainerRef.current);
-        }
+        const container = dialogContainerRef.current;
+        if (!container) return;
 
-        return () => disposable?.dispose();
+        const disposable = layoutService.registerContainerElement(container);
+        return () => disposable.dispose();
     }, [layoutService]);
 
     const focusRef = useRef<ISubFormRef>(null);
@@ -302,40 +355,4 @@ export function FindReplaceDialog() {
             {!state.replaceRevealed ? <FindDialog ref={focusRef} /> : <ReplaceDialog ref={focusRef} />}
         </div>
     );
-}
-
-function useFindScopeOptions(localeService: LocaleService): Array<{ label: string; value: string }> {
-    const locale = localeService.getCurrentLocale();
-    const options = useMemo(() => {
-        return [
-            { label: localeService.t('find-replace.dialog.find-scope.current-sheet'), value: FindScope.SUBUNIT },
-            { label: localeService.t('find-replace.dialog.find-scope.workbook'), value: FindScope.UNIT },
-        ];
-    }, [locale]);
-
-    return options;
-}
-
-function useFindDirectionOptions(localeService: LocaleService): Array<{ label: string; value: string }> {
-    const locale = localeService.getCurrentLocale();
-    const options = useMemo(() => {
-        return [
-            { label: localeService.t('find-replace.dialog.find-direction.row'), value: FindDirection.ROW },
-            { label: localeService.t('find-replace.dialog.find-direction.column'), value: FindDirection.COLUMN },
-        ];
-    }, [locale]);
-
-    return options;
-}
-
-function useFindByOptions(localeService: LocaleService): Array<{ label: string; value: string }> {
-    const locale = localeService.getCurrentLocale();
-    const options = useMemo(() => {
-        return [
-            { label: localeService.t('find-replace.dialog.find-by.value'), value: FindBy.VALUE },
-            { label: localeService.t('find-replace.dialog.find-by.formula'), value: FindBy.FORMULA },
-        ];
-    }, [locale]);
-
-    return options;
 }

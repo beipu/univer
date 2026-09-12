@@ -18,18 +18,20 @@ import type { VariantProps } from 'class-variance-authority';
 import type { InputHTMLAttributes } from 'react';
 import { CloseIcon } from '@univerjs/icons';
 import { cva } from 'class-variance-authority';
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { borderClassName } from '../../helper/class-utilities';
 import { clsx } from '../../helper/clsx';
+import { ConfigContext } from '../config-provider/ConfigProvider';
 
 type InputProps = InputHTMLAttributes<HTMLInputElement>;
 
 export const inputVariants = cva(
     `
-      univer-box-border univer-w-full univer-rounded-md univer-bg-white univer-transition-colors univer-duration-200
+      univer-box-border univer-w-full univer-rounded-md univer-bg-gray-0 univer-text-gray-900 univer-transition-colors
+      univer-duration-200
       placeholder:univer-text-gray-400
       focus:univer-border-primary-600 focus:univer-outline-none focus:univer-ring-2 focus:univer-ring-primary-50
-      dark:!univer-bg-gray-700 dark:!univer-text-white
+      dark:!univer-bg-gray-700 dark:!univer-text-gray-0
       dark:focus:!univer-ring-primary-900
     `,
     {
@@ -47,7 +49,7 @@ export const inputVariants = cva(
     }
 );
 
-export interface IInputProps extends Pick<InputProps, 'onFocus' | 'onBlur'>,
+export interface IInputProps extends Pick<InputProps, 'dir' | 'onFocus' | 'onBlur'>,
     VariantProps<typeof inputVariants> {
     autoFocus?: boolean;
     className?: string;
@@ -86,6 +88,8 @@ export const Input = forwardRef<HTMLInputElement, IInputProps>(
         inputStyle,
         ...props
     }, ref) => {
+        const { direction } = useContext(ConfigContext);
+
         const handleClear = (e: React.MouseEvent) => {
             e.stopPropagation();
             onChange?.('');
@@ -112,7 +116,7 @@ export const Input = forwardRef<HTMLInputElement, IInputProps>(
                 });
 
                 observer.observe(slotRef.current, { childList: true, subtree: true });
-                // eslint-disable-next-line react-hooks-extra/no-direct-set-state-in-use-effect
+
                 setPaddingRight(slotRef.current.offsetWidth + 4 * 2);
             }
 
@@ -122,6 +126,13 @@ export const Input = forwardRef<HTMLInputElement, IInputProps>(
         useEffect(() => {
             if (allowClear && !(slot && slotRef.current)) setPaddingRight(26);
         }, []); // only enough for init, otherwise it works again when you click it
+
+        const shouldOmitDefaultPadding = direction === 'rtl' && paddingRight === 0;
+        const mergedInputStyle = shouldOmitDefaultPadding
+            ? inputStyle
+            : direction === 'rtl'
+                ? { ...inputStyle, paddingLeft: paddingRight }
+                : { ...inputStyle, paddingRight };
 
         return (
             <div
@@ -143,7 +154,7 @@ export const Input = forwardRef<HTMLInputElement, IInputProps>(
                           univer-cursor-not-allowed univer-bg-gray-50 univer-text-gray-400
                           dark:!univer-text-gray-500
                         `,
-                        (allowClear && !slot) && 'univer-pr-8',
+                        (allowClear && !slot) && (direction === 'rtl' ? 'univer-pl-8' : 'univer-pr-8'),
                         inputClass
                     )}
                     placeholder={placeholder}
@@ -155,15 +166,15 @@ export const Input = forwardRef<HTMLInputElement, IInputProps>(
                     onChange={handleChange}
                     onFocus={onFocus}
                     onBlur={onBlur}
-                    style={{ ...inputStyle, paddingRight }}
+                    style={mergedInputStyle}
                     {...props}
                 />
                 {hasSlotContent && (
                     <div
-                        className={`
-                          univer-absolute univer-right-2 univer-flex univer-items-center univer-gap-1
-                          univer-rounded-full
-                        `}
+                        className={clsx(
+                            'univer-absolute univer-flex univer-items-center univer-gap-1 univer-rounded-full',
+                            direction === 'rtl' ? 'univer-left-2' : 'univer-right-2'
+                        )}
                         ref={slotRef}
                     >
                         {slot}

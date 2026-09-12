@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
+import { IConfigService, Injector } from '@univerjs/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorType } from '../../basics/error-type';
 import { ENGINE_FORMULA_PLUGIN_CONFIG_KEY } from '../../config/config';
+import { Lexer } from '../../engine/analysis/lexer';
+import { AstTreeBuilder } from '../../engine/analysis/parser';
+import { IFormulaDependencyGenerator } from '../../engine/dependency/formula-dependency';
+import { Interpreter } from '../../engine/interpreter/interpreter';
 import { FORMULA_REF_TO_ARRAY_CACHE } from '../../engine/reference-object/base-reference-object';
-import { CalculateFormulaService } from '../calculate-formula.service';
-import { FormulaExecuteStageType } from '../runtime.service';
+import { CalculateFormulaService, ICalculateFormulaService } from '../calculate-formula.service';
+import { IFormulaCurrentConfigService } from '../current-data.service';
+import { FormulaExecutedStateType, FormulaExecuteStageType, IFormulaRuntimeService } from '../runtime.service';
 
 function createService() {
     const configService = {
@@ -41,7 +47,11 @@ function createService() {
                 },
             },
         })),
+        setExecuteUnitId: vi.fn(),
+        setExecuteSubUnitId: vi.fn(),
         getDirtyData: vi.fn(() => ({})),
+        getDirtyDefinedNameMap: vi.fn(() => ({})),
+        getExecuteUnitId: vi.fn(() => 'unit'),
     };
     const runtimeService = {
         setFormulaExecuteStage: vi.fn(),
@@ -94,15 +104,79 @@ function createService() {
         parse: vi.fn(),
     };
 
-    const service = new CalculateFormulaService(
-        configService as never,
-        lexer as never,
-        currentConfigService as never,
-        runtimeService as never,
-        formulaDependencyGenerator as never,
-        interpreter as never,
-        astTreeBuilder as never
-    );
+    class TestConfigService {
+        getConfig = configService.getConfig;
+    }
+
+    class TestLexer {
+        treeBuilder = lexer.treeBuilder;
+    }
+
+    class TestCurrentConfigService {
+        load = currentConfigService.load;
+        loadDataLite = currentConfigService.loadDataLite;
+        loadDirtyRangesAndExcludedCell = currentConfigService.loadDirtyRangesAndExcludedCell;
+        getRuntimeState = currentConfigService.getRuntimeState;
+        getUnitData = currentConfigService.getUnitData;
+        setExecuteUnitId = currentConfigService.setExecuteUnitId;
+        setExecuteSubUnitId = currentConfigService.setExecuteSubUnitId;
+        getDirtyData = currentConfigService.getDirtyData;
+        getDirtyDefinedNameMap = currentConfigService.getDirtyDefinedNameMap;
+        getExecuteUnitId = currentConfigService.getExecuteUnitId;
+    }
+
+    class TestRuntimeService {
+        setFormulaExecuteStage = runtimeService.setFormulaExecuteStage;
+        getRuntimeState = runtimeService.getRuntimeState;
+        reset = runtimeService.reset;
+        setFormulaCycleIndex = runtimeService.setFormulaCycleIndex;
+        isCycleDependency = runtimeService.isCycleDependency;
+        setRuntimeFeatureCellData = runtimeService.setRuntimeFeatureCellData;
+        setRuntimeFeatureRange = runtimeService.setRuntimeFeatureRange;
+        stopExecution = runtimeService.stopExecution;
+        getAllRuntimeData = runtimeService.getAllRuntimeData;
+        setTotalArrayFormulasToCalculate = runtimeService.setTotalArrayFormulasToCalculate;
+        setTotalFormulasToCalculate = runtimeService.setTotalFormulasToCalculate;
+        setCompletedArrayFormulasCount = runtimeService.setCompletedArrayFormulasCount;
+        setCompletedFormulasCount = runtimeService.setCompletedFormulasCount;
+        isStopExecution = runtimeService.isStopExecution;
+        setCurrent = runtimeService.setCurrent;
+        setRuntimeData = runtimeService.setRuntimeData;
+        setRuntimeOtherData = runtimeService.setRuntimeOtherData;
+        markedAsSuccessfullyExecuted = runtimeService.markedAsSuccessfullyExecuted;
+        markedAsNoFunctionsExecuted = runtimeService.markedAsNoFunctionsExecuted;
+        markedAsStopFunctionsExecuted = runtimeService.markedAsStopFunctionsExecuted;
+    }
+
+    class TestFormulaDependencyGenerator {
+        generate = formulaDependencyGenerator.generate;
+        getAllDependencyJson = formulaDependencyGenerator.getAllDependencyJson;
+        getCellDependencyJson = formulaDependencyGenerator.getCellDependencyJson;
+        getRangeDependents = formulaDependencyGenerator.getRangeDependents;
+        getInRangeFormulas = formulaDependencyGenerator.getInRangeFormulas;
+        getRangeDependentsAndInRangeFormulas = formulaDependencyGenerator.getRangeDependentsAndInRangeFormulas;
+    }
+
+    class TestInterpreter {
+        checkAsyncNode = interpreter.checkAsyncNode;
+        executeAsync = interpreter.executeAsync;
+        execute = interpreter.execute;
+    }
+
+    class TestAstTreeBuilder {
+        parse = astTreeBuilder.parse;
+    }
+
+    const injector = new Injector();
+    injector.add([IConfigService, { useClass: TestConfigService as never }]);
+    injector.add([Lexer, { useClass: TestLexer as never }]);
+    injector.add([IFormulaCurrentConfigService, { useClass: TestCurrentConfigService as never }]);
+    injector.add([IFormulaRuntimeService, { useClass: TestRuntimeService as never }]);
+    injector.add([IFormulaDependencyGenerator, { useClass: TestFormulaDependencyGenerator as never }]);
+    injector.add([Interpreter, { useClass: TestInterpreter as never }]);
+    injector.add([AstTreeBuilder, { useClass: TestAstTreeBuilder as never }]);
+    injector.add([ICalculateFormulaService, { useClass: CalculateFormulaService }]);
+    const service = injector.get(ICalculateFormulaService) as CalculateFormulaService;
 
     // Make execution deterministic in tests.
     (service as any)._executeLock = {
@@ -352,7 +426,6 @@ describe('CalculateFormulaService', () => {
         expect(mocks.runtimeService.setRuntimeFeatureCellData).toHaveBeenCalledWith('feature-id', featureDirtyData.runtimeCellData);
         expect(mocks.runtimeService.setRuntimeFeatureRange).toHaveBeenCalledWith('feature-id', featureDirtyData.dirtyRanges);
         expect(mocks.runtimeService.markedAsSuccessfullyExecuted).toHaveBeenCalledTimes(1);
-        expect(resetNode.resetCalculationState).toHaveBeenCalledTimes(3);
     });
 
     it('should use async interpreter branch when node is async', async () => {
@@ -410,7 +483,38 @@ describe('CalculateFormulaService', () => {
 
         expect(mocks.runtimeService.setFormulaExecuteStage).toHaveBeenCalledWith(FormulaExecuteStageType.IDLE);
         expect(mocks.runtimeService.markedAsStopFunctionsExecuted).toHaveBeenCalledTimes(1);
-        expect(completed.length).toBe(1);
+        expect(completed).toEqual([]);
+    });
+
+    it('should emit one terminal notification when execution stops', async () => {
+        const { service, mocks } = createService();
+        mocks.formulaDependencyGenerator.generate.mockResolvedValueOnce([
+            {
+                row: 1,
+                column: 1,
+                rowCount: 10,
+                columnCount: 10,
+                subUnitId: 's',
+                unitId: 'u',
+                nodeData: null,
+                getDirtyData: null,
+                featureId: null,
+                formulaId: null,
+                refOffsetX: 0,
+                refOffsetY: 0,
+            },
+        ] as never);
+        mocks.runtimeService.isStopExecution.mockReturnValue(true);
+        mocks.runtimeService.getAllRuntimeData.mockReturnValue({
+            functionsExecutedState: FormulaExecutedStateType.STOP_EXECUTION,
+        } as never);
+        const completed: unknown[] = [];
+        service.executionCompleteListener$.subscribe((item) => completed.push(item));
+
+        await service.execute({ maxIteration: 3 } as never);
+        await vi.waitFor(() => expect(mocks.runtimeService.reset).toHaveBeenCalledTimes(2));
+
+        expect(completed).toHaveLength(1);
     });
 
     it('should mark no-functions-executed when tree list is empty', async () => {

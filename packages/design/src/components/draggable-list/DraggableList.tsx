@@ -15,9 +15,10 @@
  */
 
 import type { CSSProperties, HTMLAttributes, PointerEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from '../../helper/clsx';
+import { ConfigContext } from '../config-provider/ConfigProvider';
 
 interface IDragPosition {
     y: number;
@@ -79,6 +80,8 @@ export function DraggableList<T = any>(props: IDraggableListProps<T>) {
     const pressedHandleIdRef = useRef<string | null>(null);
     const dragSourceIdRef = useRef<string | null>(null);
     const dragStartIndexRef = useRef(-1);
+
+    const { direction } = useContext(ConfigContext);
 
     useEffect(() => {
         if (!draggingId) {
@@ -269,9 +272,10 @@ export function DraggableList<T = any>(props: IDraggableListProps<T>) {
             </div>
             {canUsePortal && draggingItem && ghostPosition && createPortal((
                 <div
+                    dir={direction}
                     className={clsx(`
                       univer-pointer-events-none univer-fixed univer-rounded-md univer-border univer-border-gray-200
-                      univer-bg-white univer-shadow-lg
+                      univer-bg-gray-0 univer-shadow-lg
                       dark:!univer-border-gray-700 dark:!univer-bg-gray-800
                     `)}
                     style={{

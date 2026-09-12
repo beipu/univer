@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
+import type { ICellData, Nullable } from '@univerjs/core';
 import type { ISuperTable, IUnitSheetNameMap } from '../../basics/common';
 import { TableOptionType } from '../../basics/common';
+import { ErrorType } from '../../basics/error-type';
 import { matchToken } from '../../basics/token';
 import { BaseReferenceObject } from './base-reference-object';
 
@@ -60,6 +62,8 @@ export class TableReferenceObject extends BaseReferenceObject {
 
         const tableStartRow = range.startRow;
         const tableEndRow = range.endRow;
+        const dataStartRow = tableStartRow + (this._tableData.showHeader === false ? 0 : 1);
+        const dataEndRow = tableEndRow - (this._tableData.showFooter === true ? 1 : 0);
 
         let startRow = -1;
         let endRow = -1;
@@ -70,11 +74,15 @@ export class TableReferenceObject extends BaseReferenceObject {
                 endRow = tableEndRow;
                 break;
             case TableOptionType.DATA:
-                // Default: First row is header, data area = [startRow+1, endRow]
-                startRow = tableStartRow + 1;
-                endRow = tableEndRow;
+                startRow = dataStartRow;
+                endRow = dataEndRow;
                 break;
             case TableOptionType.HEADERS:
+                if (this._tableData.showHeader === false) {
+                    startRow = -1;
+                    endRow = -1;
+                    break;
+                }
                 startRow = tableStartRow;
                 endRow = tableStartRow;
                 break;
@@ -83,15 +91,14 @@ export class TableReferenceObject extends BaseReferenceObject {
                 endRow = tableEndRow;
                 break;
             case TableOptionType.THIS_ROW: {
-                const r = this._resolveThisRow(tableStartRow, tableEndRow);
+                const r = this._resolveThisRow(dataStartRow, dataEndRow);
                 startRow = r;
                 endRow = r;
                 break;
             }
             default:
-                // Defensive: Unknown type defaults to DATA
-                startRow = tableStartRow + 1;
-                endRow = tableEndRow;
+                startRow = dataStartRow;
+                endRow = dataEndRow;
                 break;
         }
 
@@ -116,6 +123,17 @@ export class TableReferenceObject extends BaseReferenceObject {
             };
         }
         return rangeData;
+    }
+
+    override getCellData(row: number, column: number): Nullable<ICellData> {
+        if (this._isCurrentRowForRange) {
+            const { startRow, endRow } = this._tableData.range;
+            const lastCurrentRow = endRow - (this._tableData.showFooter === true ? 1 : 0);
+            if (row < startRow || row > lastCurrentRow) {
+                return { v: ErrorType.NA };
+            }
+        }
+        return super.getCellData(row, column);
     }
 
     override getRefOffset() {
@@ -199,6 +217,10 @@ export class TableReferenceObject extends BaseReferenceObject {
         const columnsRaw = body.slice(commaAt + 1).trim(); // May be "[Col]" or "[[ColA]:[ColB]]" or "Col"
 
         const section = this._parseSectionMaybeBracketed(sectionRaw);
+        if (section === undefined) {
+            const { startColumn, endColumn } = this._parseColumnOrRange(body, titleMap, fullStartCol);
+            return { startColumn, endColumn, type: TableOptionType.DATA };
+        }
         const { startColumn, endColumn } = this._parseColumnOrRange(columnsRaw, titleMap, fullStartCol);
 
         return { startColumn, endColumn, type: section };
@@ -229,13 +251,12 @@ export class TableReferenceObject extends BaseReferenceObject {
 
     /**
      * Parse Section, compatible with both "[#Data]" and "#Data" inputs
-     * Returns TableOptionType if matched; returns DATA if not (could throw error instead)
+     * Returns TableOptionType if matched; returns undefined when the comma belongs to a column title.
      */
-    private _parseSectionMaybeBracketed(raw: string): TableOptionType {
+    private _parseSectionMaybeBracketed(raw: string): TableOptionType | undefined {
         const x = raw.trim();
         const inner = (x.startsWith('[') && x.endsWith(']')) ? this._stripOuterBracketOnce(x) : x;
-        const typeMaybe = this._mapSection(inner);
-        return typeMaybe ?? TableOptionType.DATA;
+        return this._mapSection(inner);
     }
 
     /**
@@ -274,6 +295,12 @@ export class TableReferenceObject extends BaseReferenceObject {
         fullStartCol: number
     ): { startColumn: number; endColumn: number } {
         const s = raw.trim();
+
+        const singleColumnIndex = this._titleToIndex(this._stripOuterBracketIfAny(s), titleMap);
+        if (singleColumnIndex !== -1) {
+            const column = fullStartCol + singleColumnIndex;
+            return { startColumn: column, endColumn: column };
+        }
 
         // Check if there's a range colon at top level
         const colonAt = this._findColonAtTopLevel(s);
@@ -328,12 +355,21 @@ export class TableReferenceObject extends BaseReferenceObject {
 
         // Defensive: Full-width space → half-width, then trim
         const keyNorm = key.replace(/\u3000/g, ' ').trim();
-        return titleMap.get(keyNorm) ?? -1;
+        const normalizedHit = titleMap.get(keyNorm);
+        if (normalizedHit !== undefined) return normalizedHit;
+
+        const lineBreakNorm = keyNorm.replace(/\r\n?/g, '\n');
+        for (const [title, index] of titleMap.entries()) {
+            if (title.replace(/\u3000/g, ' ').trim().replace(/\r\n?/g, '\n') === lineBreakNorm) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     /** Resolve #This Row's row number; takes first data row (tableStartRow+1) when no context available */
-    private _resolveThisRow(tableStartRow: number, tableEndRow: number): number {
+    private _resolveThisRow(dataStartRow: number, dataEndRow: number): number {
         this._isCurrentRowForRange = true;
-        return Math.min(tableStartRow + 1, tableEndRow);
+        return Math.min(dataStartRow, dataEndRow);
     }
 }

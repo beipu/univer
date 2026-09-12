@@ -15,8 +15,20 @@
  */
 
 import type { ICellWithCoord, ICustomRange, Injector, IParagraph, ITextRangeParam, Workbook } from '@univerjs/core';
-import type { DocumentSkeleton, IBoundRectNoAngle, IDocumentSkeletonGlyph, IFontCacheItem } from '@univerjs/engine-render';
-import { CustomRangeType, HorizontalAlign, IUniverInstanceService, PresetListType, UniverInstanceType, VerticalAlign } from '@univerjs/core';
+import type {
+    DocumentSkeleton,
+    IBoundRectNoAngle,
+    IDocumentSkeletonGlyph,
+    IFontCacheItem,
+} from '@univerjs/engine-render';
+import {
+    CustomRangeType,
+    HorizontalAlign,
+    IUniverInstanceService,
+    PresetListType,
+    UniverInstanceType,
+    VerticalAlign,
+} from '@univerjs/core';
 import { DocSkeletonManagerService } from '@univerjs/docs';
 import { DOC_VERTICAL_PADDING, getLineBounding, NodePositionConvertToCursor } from '@univerjs/docs-ui';
 import { IRenderManagerService } from '@univerjs/engine-render';
@@ -74,6 +86,9 @@ const calcDocGlyphPosition = (glyph: IDocumentSkeletonGlyph, skeleton: DocumentS
     const { borderBoxPointGroup } = convertor.getRangePointData(startPosition, startPosition);
     const bounds = getLineBounding(borderBoxPointGroup);
     const rect = bounds[0];
+    if (!rect) {
+        return;
+    }
 
     return {
         top: rect.top,
@@ -145,10 +160,10 @@ export const calculateDocSkeletonRects = (docSkeleton: DocumentSkeleton, padding
             ? Array.from(drawings.keys()).map((key) => ({
                 drawingId: key,
                 rect: {
-                    top: drawings!.get(key)!.aTop + paddingTop,
-                    bottom: drawings!.get(key)!.aTop + drawings!.get(key)!.height + paddingTop,
-                    left: drawings!.get(key)!.aLeft + paddingLeft,
-                    right: drawings!.get(key)!.aLeft + drawings!.get(key)!.width + paddingLeft,
+                    top: drawings.get(key)!.aTop,
+                    bottom: drawings.get(key)!.aTop + drawings.get(key)!.height,
+                    left: drawings.get(key)!.aLeft,
+                    right: drawings.get(key)!.aLeft + drawings.get(key)!.width,
                 },
                 drawing: drawings.get(key)!,
             }))
@@ -212,7 +227,7 @@ export const getCustomRangePosition = (injector: Injector, unitId: string, subUn
         return null;
     }
 
-    const currentRender = renderManagerService.getRenderById(workbook.getUnitId());
+    const currentRender = renderManagerService.getRenderUnitById(workbook.getUnitId());
     const skeletonParam = currentRender?.with(SheetSkeletonManagerService).getSkeletonParam(worksheet.getSheetId());
 
     const skeleton = skeletonParam?.skeleton;
@@ -276,8 +291,8 @@ export const getEditingCustomRangePosition = (injector: Injector, unitId: string
     }
 
     const renderManagerService = injector.get(IRenderManagerService);
-    const renderer = renderManagerService.getRenderById(editorUnitId);
-    const sheetRenderer = renderManagerService.getRenderById(unitId);
+    const renderer = renderManagerService.getRenderUnitById(editorUnitId);
+    const sheetRenderer = renderManagerService.getRenderUnitById(unitId);
     if (!renderer || !sheetRenderer) {
         return null;
     }

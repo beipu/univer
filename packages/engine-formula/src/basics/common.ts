@@ -25,6 +25,7 @@ import type {
     Nullable,
     ObjectMatrix,
     Styles,
+    UniverInstanceType,
 } from '@univerjs/core';
 import type { sequenceNodeType } from '../engine/utils/sequence';
 import type { IImageFormulaInfo } from '../engine/value-object/primitive-object';
@@ -92,6 +93,34 @@ export interface IUnitSheetNameMap {
     [unitId: string]: Nullable<{ [sheetName: string]: string }>;
 }
 
+export type FormulaUnitType = UniverInstanceType.UNIVER_SHEET | UniverInstanceType.UNIVER_BASE;
+
+export interface IFormulaUnitNameMapItem {
+    name: string;
+    unitType: FormulaUnitType;
+}
+
+/** Runtime Unit metadata keyed by stable unitId. */
+export interface IFormulaUnitNameMap {
+    [unitId: string]: IFormulaUnitNameMapItem;
+}
+
+export interface IFormulaExternalReferenceBinding {
+    qualifier: string;
+    sourceUnitId: string;
+    sourceUnitType: FormulaUnitType;
+}
+
+export interface IFormulaExternalReferenceResource {
+    schemaVersion: number;
+    references: Record<string, IFormulaExternalReferenceBinding>;
+}
+
+/** Host-scoped External Reference resources keyed by the Host unitId. */
+export interface IFormulaExternalReferences {
+    [hostUnitId: string]: IFormulaExternalReferenceResource;
+}
+
 export interface IUnitSheetIdToNameMap {
     [unitId: string]: Nullable<{ [sheetId: string]: string }>;
 }
@@ -100,8 +129,12 @@ export interface IDirtyUnitSheetNameMap {
     [unitId: string]: Nullable<{ [sheetId: string]: string }>;
 }
 
-export interface IDirtyUnitSheetDefinedNameMap {
-    [unitId: string]: Nullable<{ [name: string]: string }>;
+export interface IDirtyUnitDefinedNameMap {
+    [unitId: string]: Nullable<{ [definedName: string]: string }>;
+}
+
+export interface IDirtyUnitSuperTableMap {
+    [unitId: string]: Nullable<{ [tableName: string]: string }>;
 }
 
 export interface IDirtyUnitFeatureMap {
@@ -190,6 +223,13 @@ export interface ISuperTable {
     sheetId: string;
     titleMap: Map<string, number>;
     range: IRange;
+    /**
+     * Whether the projected range contains a physical header row.
+     * Sheet tables default to true; Base virtual tables store records from row 0.
+     */
+    showHeader?: boolean;
+    /** Whether the projected range contains a physical totals row. */
+    showFooter?: boolean;
 }
 
 export enum TableOptionType {
@@ -215,7 +255,8 @@ export interface IFormulaDatasetConfig {
     forceCalculate: boolean;
     dirtyRanges: IUnitRange[];
     dirtyNameMap: IDirtyUnitSheetNameMap;
-    dirtyDefinedNameMap: IDirtyUnitSheetNameMap;
+    dirtyDefinedNameMap: IDirtyUnitDefinedNameMap;
+    dirtySuperTableMap?: IDirtyUnitSuperTableMap;
     dirtyUnitFeatureMap: IDirtyUnitFeatureMap;
     dirtyUnitOtherFormulaMap: IDirtyUnitOtherFormulaMap;
     clearDependencyTreeCache?: IUnitSheetIdToNameMap;
@@ -223,6 +264,8 @@ export interface IFormulaDatasetConfig {
     allUnitData?: IUnitData;
     unitStylesData?: IUnitStylesData;
     unitSheetNameMap?: IUnitSheetNameMap;
+    unitNameMap?: IFormulaUnitNameMap;
+    externalReferences?: IFormulaExternalReferences;
     maxIteration?: number;
     isCalculateTreeModel?: boolean;
     rowData?: IUnitRowData; // Include rows hidden by filters

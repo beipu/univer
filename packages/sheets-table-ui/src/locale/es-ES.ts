@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Tabla',
         selectRange: 'Seleccionar rango de tabla',
         rename: 'Renombrar tabla',
+        renamePlaceholder: 'Introduce el nombre de la tabla',
         updateRange: 'Actualizar rango de tabla',
         tableRangeWithMergeError: 'El rango de la tabla no puede superponerse con celdas combinadas',
         tableRangeWithOtherTableError: 'El rango de la tabla no puede superponerse con otras tablas',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'Pie de página',
         firstLine: 'Primera línea',
         secondLine: 'Segunda línea',
-        columnPrefix: 'Columna',
-        tablePrefix: 'Tabla',
         tableNameError: 'El nombre de la tabla no puede contener espacios, no puede comenzar con un número y no puede ser idéntico a un nombre de tabla existente',
+        columnMenu: {
+            'insert-left': 'Insertar 1 columna a la izquierda',
+            'insert-right': 'Insertar 1 columna a la derecha',
+            delete: 'Eliminar columna de la tabla',
+        },
+
+        sort: {
+            'sort-asc': 'Ascendente',
+            'sort-desc': 'Descendente',
+        },
 
         insert: {
             main: 'Insertar tabla',
@@ -131,12 +140,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'Filtro',
             'by-values': 'Por valores',
+            'by-colors': 'Por colores',
             'by-conditions': 'Por condiciones',
+            back: 'Atrás',
+            resize: 'Cambiar tamaño',
+            'filter-by-cell-fill-color': 'Color de relleno de celda',
+            'filter-by-cell-text-color': 'Color del texto de celda',
+            'filter-by-color-none': 'Esta columna contiene un solo color',
             'clear-filter': 'Borrar filtro',
             cancel: 'Cancelar',
             confirm: 'Confirmar',
             'search-placeholder': 'Usa espacio para separar palabras clave',
+            'input-values-placeholder': 'Introducir valores',
             'select-all': 'Seleccionar todo',
         },
     },

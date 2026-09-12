@@ -53,6 +53,14 @@ function createCellInfo(overrides?: Partial<any>) {
     };
 }
 
+function createStylesCache(cellData?: unknown) {
+    return {
+        fontMatrix: {
+            getValue: vi.fn(() => cellData === undefined ? undefined : { cellData }),
+        },
+    };
+}
+
 describe('marker extension', () => {
     it('returns early in printing mode or missing worksheet', () => {
         const marker = new Marker();
@@ -72,6 +80,7 @@ describe('marker extension', () => {
         const ctx = createCtx();
 
         const worksheet = {
+            getMergeData: vi.fn(() => []),
             getRowVisible: vi.fn(() => true),
             getColVisible: vi.fn(() => true),
             getCell: vi.fn(() => ({
@@ -85,12 +94,20 @@ describe('marker extension', () => {
         };
         const skeleton = {
             worksheet,
+            stylesCache: createStylesCache(),
             rowColumnSegment: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
             getCellWithCoordByIndex: vi.fn(() => createCellInfo()),
         } as any;
 
         marker.draw(ctx, { scaleX: 1, scaleY: 1 } as any, skeleton, [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }]);
         expect(ctx.fill).toHaveBeenCalledTimes(4);
+        expect(ctx.save).not.toHaveBeenCalled();
+        expect(ctx.restore).not.toHaveBeenCalled();
+        expect(ctx.beginPath).toHaveBeenCalledTimes(4);
+        expect(ctx.moveTo).toHaveBeenCalledWith(10, 0);
+        expect(ctx.moveTo).toHaveBeenCalledWith(0, 0);
+        expect(ctx.moveTo).toHaveBeenCalledWith(10, 20);
+        expect(ctx.moveTo).toHaveBeenCalledWith(0, 20);
 
         worksheet.getRowVisible.mockReturnValue(false);
         marker.draw(ctx, { scaleX: 1, scaleY: 1 } as any, skeleton, [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }]);
@@ -113,6 +130,12 @@ describe('marker extension', () => {
         };
 
         const worksheet = {
+            getMergeData: vi.fn(() => [{
+                startRow: 0,
+                endRow: 0,
+                startColumn: 0,
+                endColumn: 1,
+            }]),
             getRowVisible: vi.fn(() => true),
             getColVisible: vi.fn(() => true),
             getCell: vi.fn(() => ({
@@ -123,6 +146,7 @@ describe('marker extension', () => {
         };
         const skeleton = {
             worksheet,
+            stylesCache: createStylesCache(),
             rowColumnSegment: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 },
             getCellWithCoordByIndex: vi.fn((row: number, col: number) => {
                 if (col === 0) {
@@ -137,5 +161,91 @@ describe('marker extension', () => {
 
         marker.draw(ctx, { scaleX: 1, scaleY: 1 } as any, skeleton, [{ startRow: 2, endRow: 2, startColumn: 2, endColumn: 2 }]);
         expect(ctx.fill).toHaveBeenCalledTimes(1);
+    });
+
+    it('only visits diff range cells while drawing incremental scroll markers', () => {
+        const marker = new Marker();
+        const ctx = createCtx();
+
+        const worksheet = {
+            getMergeData: vi.fn(() => []),
+            getRowVisible: vi.fn(() => true),
+            getColVisible: vi.fn(() => true),
+            getCell: vi.fn((row: number) => row === 5
+                ? {
+                    markers: {
+                        tr: { size: 2, color: '#f00' },
+                    },
+                }
+                : undefined),
+        };
+        const skeleton = {
+            worksheet,
+            stylesCache: createStylesCache(),
+            rowColumnSegment: { startRow: 0, endRow: 9, startColumn: 0, endColumn: 0 },
+            getCellWithCoordByIndex: vi.fn((row: number) => createCellInfo({
+                mergeInfo: {
+                    startRow: row,
+                    endRow: row,
+                    startColumn: 0,
+                    endColumn: 0,
+                    startX: 0,
+                    startY: row * 20,
+                    endX: 10,
+                    endY: row * 20 + 20,
+                },
+            })),
+        } as any;
+
+        marker.draw(ctx, { scaleX: 1, scaleY: 1 } as any, skeleton, [{ startRow: 5, endRow: 5, startColumn: 0, endColumn: 0 }]);
+
+        expect(worksheet.getCell).toHaveBeenCalledTimes(1);
+        expect(worksheet.getCell).toHaveBeenCalledWith(5, 0);
+        expect(ctx.fill).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips coordinate calculation for no-merge cells without markers', () => {
+        const marker = new Marker();
+        const ctx = createCtx();
+        const worksheet = {
+            getMergeData: vi.fn(() => []),
+            getRowVisible: vi.fn(() => true),
+            getColVisible: vi.fn(() => true),
+            getCell: vi.fn(() => ({ v: 'plain' })),
+        };
+        const skeleton = {
+            worksheet,
+            stylesCache: createStylesCache(),
+            rowColumnSegment: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
+            getCellWithCoordByIndex: vi.fn(() => createCellInfo()),
+        } as any;
+
+        marker.draw(ctx, { scaleX: 1, scaleY: 1 } as any, skeleton, [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }]);
+
+        expect(skeleton.getCellWithCoordByIndex).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+    });
+
+    it('reuses intercepted marker data from the style cache', () => {
+        const marker = new Marker();
+        const ctx = createCtx();
+        const cachedCell = { markers: { tr: { size: 2, color: '#f00' } } };
+        const worksheet = {
+            getMergeData: vi.fn(() => []),
+            getRowVisible: vi.fn(() => true),
+            getColVisible: vi.fn(() => true),
+            getCell: vi.fn(() => ({ v: 'raw' })),
+        };
+        const skeleton = {
+            worksheet,
+            stylesCache: createStylesCache(cachedCell),
+            rowColumnSegment: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
+            getCellWithCoordByIndex: vi.fn(() => createCellInfo()),
+        } as any;
+
+        marker.draw(ctx, { scaleX: 1, scaleY: 1 } as any, skeleton, [{ startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }]);
+
+        expect(worksheet.getCell).not.toHaveBeenCalled();
+        expect(ctx.fill).toHaveBeenCalledOnce();
     });
 });

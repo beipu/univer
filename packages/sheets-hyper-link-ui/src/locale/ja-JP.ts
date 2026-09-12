@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'リンクの編集',
             addTitle: 'リンクの挿入',
             label: '表示文字列',
             type: '種類',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'リンクの挿入',
         },
+        permission: {
+            hyperLinkErr: 'リンクを挿入する権限がありません。',
+        },
         message: {
             noSheet: '対象のワークシートが削除されました',
             refError: '無効な範囲です',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'リンクがクリップボードにコピーされました',
         },
         popup: {
+            title: 'ハイパーリンク',
+            open: 'リンクを開く',
             copy: 'リンクをコピー',
             edit: 'リンクの編集',
             cancel: 'リンク解除',

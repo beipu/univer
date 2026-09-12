@@ -35,9 +35,19 @@ import { CalculateFormulaService, ICalculateFormulaService } from '../../../serv
 import { FormulaCurrentConfigService, IFormulaCurrentConfigService } from '../../../services/current-data.service';
 import { DefinedNamesService, IDefinedNamesService } from '../../../services/defined-names.service';
 import { DependencyManagerService, IDependencyManagerService } from '../../../services/dependency-manager.service';
-import { FeatureCalculationManagerService, IFeatureCalculationManagerService } from '../../../services/feature-calculation-manager.service';
+import {
+    IFormulaExternalReferenceDataLoader,
+    NoopFormulaExternalReferenceDataLoader,
+} from '../../../services/external-reference-data-loader.service';
+import {
+    FeatureCalculationManagerService,
+    IFeatureCalculationManagerService,
+} from '../../../services/feature-calculation-manager.service';
 import { FunctionService, IFunctionService } from '../../../services/function.service';
-import { HyperlinkEngineFormulaService, IHyperlinkEngineFormulaService } from '../../../services/hyperlink-engine-formula.service';
+import {
+    HyperlinkEngineFormulaService,
+    IHyperlinkEngineFormulaService,
+} from '../../../services/hyperlink-engine-formula.service';
 import {
     IOtherFormulaManagerService,
     OtherFormulaManagerService,
@@ -45,6 +55,7 @@ import {
 import { FormulaRuntimeService, IFormulaRuntimeService } from '../../../services/runtime.service';
 import { ISheetRowFilteredService, SheetRowFilteredService } from '../../../services/sheet-row-filtered.service';
 import { ISuperTableService, SuperTableService } from '../../../services/super-table.service';
+import { FormulaUnitReferenceResolver, IFormulaUnitReferenceResolver } from '../../../services/unit-reference-resolver.service';
 import { AstRootNodeFactory } from '../../ast-node/ast-root-node';
 import { FunctionNodeFactory } from '../../ast-node/function-node';
 import { LambdaNodeFactory } from '../../ast-node/lambda-node';
@@ -294,6 +305,8 @@ function registerFormulaDependencies(injector: Injector) {
     injector.add([LexerTreeBuilder]);
 
     injector.add([IFormulaCurrentConfigService, { useClass: FormulaCurrentConfigService }]);
+    injector.add([IFormulaUnitReferenceResolver, { useClass: FormulaUnitReferenceResolver }]);
+    injector.add([IFormulaExternalReferenceDataLoader, { useClass: NoopFormulaExternalReferenceDataLoader }]);
     injector.add([IHyperlinkEngineFormulaService, { useClass: HyperlinkEngineFormulaService }]);
     injector.add([IFormulaRuntimeService, { useClass: FormulaRuntimeService }]);
     injector.add([IFunctionService, { useClass: FunctionService }]);

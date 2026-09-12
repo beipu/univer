@@ -14,14 +14,25 @@
  * limitations under the License.
  */
 
-import type { IRange, Nullable } from '@univerjs/core';
-
+import type { IDisposable, IRange, Nullable } from '@univerjs/core';
 import type { IOtherFormulaMarkDirtyParams } from '../commands/mutations/formula.mutation';
 import type { ISetFormulaCalculationResultMutation } from '../commands/mutations/set-formula-calculation.mutation';
-import type { IRemoveOtherFormulaMutationParams, ISetOtherFormulaMutationParams } from '../commands/mutations/set-other-formula.mutation';
+import type {
+    IRemoveOtherFormulaMutationParams,
+    ISetOtherFormulaMutationParams,
+} from '../commands/mutations/set-other-formula.mutation';
 import type { IOtherFormulaResult } from './formula-common';
-import { Disposable, generateRandomId, ICommandService, Inject, LifecycleService, ObjectMatrix } from '@univerjs/core';
-import { BehaviorSubject, bufferWhen, filter, Subject } from 'rxjs';
+import {
+    Disposable,
+    generateRandomId,
+    ICommandService,
+    Inject,
+    LifecycleService,
+    LifecycleStages,
+    ObjectMatrix,
+    toDisposable,
+} from '@univerjs/core';
+import { Subject } from 'rxjs';
 import { OtherFormulaMarkDirty } from '../commands/mutations/formula.mutation';
 import { SetFormulaCalculationResultMutation } from '../commands/mutations/set-formula-calculation.mutation';
 import { RemoveOtherFormulaMutation, SetOtherFormulaMutation } from '../commands/mutations/set-other-formula.mutation';
@@ -35,10 +46,13 @@ export enum OtherFormulaBizType {
     CONDITIONAL_FORMATTING = 'cf',
     DOC = 'doc',
     SLIDE = 'slide',
+    SHAPE = 'shape',
 }
 
 export class RegisterOtherFormulaService extends Disposable {
     private _formulaCacheMap: Map<string, Map<string, Map<string, IOtherFormulaResult>>> = new Map();
+
+    private _mutationSyncHandler?: (unitId: string) => () => Promise<void>;
 
     private _formulaChangeWithRange$ = new Subject<{ unitId: string; subUnitId: string; formulaText: string; formulaId: string; ranges: IRange[] }>();
     public formulaChangeWithRange$ = this._formulaChangeWithRange$.asObservable();
@@ -47,7 +61,8 @@ export class RegisterOtherFormulaService extends Disposable {
     private _formulaResult$ = new Subject<Record<string, Record<string, IOtherFormulaResult[]>>>();
     public formulaResult$ = this._formulaResult$.asObservable();
 
-    public calculateStarted$ = new BehaviorSubject(false);
+    private _otherFormulaResultApplied$ = new Subject<ISetFormulaCalculationResultMutation>();
+    public otherFormulaResultApplied$ = this._otherFormulaResultApplied$.asObservable();
 
     constructor(
         @ICommandService private readonly _commandService: ICommandService,
@@ -64,7 +79,7 @@ export class RegisterOtherFormulaService extends Disposable {
 
         this._formulaChangeWithRange$.complete();
         this._formulaResult$.complete();
-        this.calculateStarted$.complete();
+        this._otherFormulaResultApplied$.complete();
     }
 
     private _ensureCacheMap(unitId: string, subUnitId: string) {
@@ -121,8 +136,12 @@ export class RegisterOtherFormulaService extends Disposable {
                     },
                 },
             };
+            const waitForMutationSync = this._mutationSyncHandler?.(unitId);
 
-            this._commandService.executeCommand(SetOtherFormulaMutation.id, params, { onlyLocal: true }).then(() => {
+            this._commandService.executeCommand(SetOtherFormulaMutation.id, params, { onlyLocal: true }).then(async () => {
+                if (this._disposed) return;
+                await waitForMutationSync?.();
+                if (this._disposed) return;
                 this._commandService.executeCommand(
                     OtherFormulaMarkDirty.id,
                     { [unitId]: { [subUnitId]: { [formulaId]: true } } },
@@ -131,17 +150,28 @@ export class RegisterOtherFormulaService extends Disposable {
             });
         };
 
-        this.disposeWithMe(
-            this._formulaChangeWithRange$
-                .pipe(bufferWhen(() => this.calculateStarted$.pipe(filter((calculateStarted) => calculateStarted))))
-                .subscribe((options) => options.forEach(handleRegister))
-        );
+        this.disposeWithMe(this._formulaChangeWithRange$.subscribe((option) => {
+            if (
+                this._commandService.hasCommand(SetOtherFormulaMutation.id)
+                && this._commandService.hasCommand(OtherFormulaMarkDirty.id)
+            ) {
+                handleRegister(option);
+                return;
+            }
 
-        this.disposeWithMe(
-            this._formulaChangeWithRange$
-                .pipe(filter(() => this.calculateStarted$.getValue()))
-                .subscribe(handleRegister)
-        );
+            this._lifecycleService.onStage(LifecycleStages.Ready).then(() => {
+                if (!this._disposed) {
+                    handleRegister(option);
+                }
+            });
+        }));
+    }
+
+    setMutationSyncHandler(handler: (unitId: string) => () => Promise<void>): IDisposable {
+        this._mutationSyncHandler = handler;
+        return toDisposable(() => {
+            if (this._mutationSyncHandler === handler) this._mutationSyncHandler = undefined;
+        });
     }
 
     private _initFormulaCalculationResultChange() {
@@ -192,6 +222,7 @@ export class RegisterOtherFormulaService extends Disposable {
                     }
                 }
                 this._formulaResult$.next(results);
+                this._otherFormulaResultApplied$.next(params);
             }
         }));
     }
@@ -218,12 +249,27 @@ export class RegisterOtherFormulaService extends Disposable {
         return formulaId;
     }
 
+    getFormulaDirtyMap(unitId: string): Record<string, Record<string, boolean>> {
+        const unitMap = this._formulaCacheMap.get(unitId);
+        if (!unitMap) {
+            return {};
+        }
+
+        return Object.fromEntries(
+            Array.from(unitMap.entries(), ([subUnitId, formulas]) => [
+                subUnitId,
+                Object.fromEntries(Array.from(formulas.keys(), (formulaId) => [formulaId, true])),
+            ])
+        );
+    }
+
     deleteFormula(unitId: string, subUnitId: string, formulaIdList: string[]) {
         const params: IRemoveOtherFormulaMutationParams = {
             unitId,
             subUnitId,
             formulaIdList,
         };
+        this._mutationSyncHandler?.(unitId);
         this._commandService.executeCommand(RemoveOtherFormulaMutation.id, params, { onlyLocal: true });
         const cacheMap = this._ensureCacheMap(unitId, subUnitId);
         formulaIdList.forEach((id) => cacheMap.delete(id));

@@ -14,10 +14,19 @@
  * limitations under the License.
  */
 
-import type { CommandListener, CustomData, ICommandInfo, IDisposable, IRange, IStyleData, IWorkbookData, IWorksheetData, LocaleType, Workbook } from '@univerjs/core';
+import type {
+    CommandListener,
+    CustomData,
+    ICommandInfo,
+    IDisposable,
+    IRange,
+    IStyleData,
+    IWorkbookData,
+    IWorksheetData,
+    Workbook,
+} from '@univerjs/core';
 import type { ISetDefinedNameMutationParam } from '@univerjs/engine-formula';
 import type { IRangeThemeStyleJSON, ISetSelectionsOperationParams, ISheetCommandSharedParams } from '@univerjs/sheets';
-import type { FontLine as _FontLine } from './f-range';
 import {
     ICommandService,
     ILogService,
@@ -26,7 +35,6 @@ import {
     IPermissionService,
     IResourceLoaderService,
     IUniverInstanceService,
-    LocaleService,
     mergeWorksheetSnapshotWithDefault,
     RANGE_TYPE,
     RedoCommand,
@@ -54,6 +62,7 @@ import {
     UnregisterWorksheetRangeThemeStyleCommand,
     WorkbookEditablePermission,
 } from '@univerjs/sheets';
+import { SHEETS_CUSTOM_FIELD_WARNING_MESSAGE } from './const';
 import { FDefinedName, FDefinedNameBuilder } from './f-defined-name';
 import { FRange } from './f-range';
 import { FWorksheet } from './f-worksheet';
@@ -75,7 +84,6 @@ export class FWorkbook extends FBaseInitialable {
         @ICommandService protected readonly _commandService: ICommandService,
         @IPermissionService protected readonly _permissionService: IPermissionService,
         @ILogService protected readonly _logService: ILogService,
-        @Inject(LocaleService) protected readonly _localeService: LocaleService,
         @IDefinedNamesService protected readonly _definedNamesService: IDefinedNamesService
     ) {
         super(_injector);
@@ -98,6 +106,7 @@ export class FWorkbook extends FBaseInitialable {
         return this._workbook;
     }
 
+    /** Releases this facade's resources. Use `univerAPI.disposeUnit()` to unload the owning unit. */
     override dispose(): void {
         super.dispose();
         //@ts-ignore
@@ -137,6 +146,7 @@ export class FWorkbook extends FBaseInitialable {
     /**
      * Set the name of the workbook.
      * @param {string} name The new name of the workbook.
+     * @returns {FWorkbook} The current FWorkbook instance for chaining.
      * @example
      * ```ts
      * // The code below sets the name of the workbook
@@ -170,22 +180,6 @@ export class FWorkbook extends FBaseInitialable {
     }
 
     /**
-     * @deprecated use 'save' instead.
-     * @returns {IWorkbookData} Workbook snapshot data
-     * @memberof FWorkbook
-     * @example
-     * ```ts
-     * // The code below saves the workbook snapshot data
-     * const activeSpreadsheet = univerAPI.getActiveWorkbook();
-     * const snapshot = activeSpreadsheet.getSnapshot();
-     * ```
-     */
-    getSnapshot(): IWorkbookData {
-        this._logService.warn('use \'save\' instead of \'getSnapshot\'');
-        return this.save();
-    }
-
-    /**
      * Get the active sheet of the workbook.
      * @returns {FWorksheet} The active sheet of the workbook
      * @example
@@ -193,6 +187,7 @@ export class FWorkbook extends FBaseInitialable {
      * // The code below gets the active sheet of the workbook
      * const fWorkbook = univerAPI.getActiveWorkbook();
      * const fWorksheet = fWorkbook.getActiveSheet();
+     * if (!fWorksheet) return;
      * console.log(fWorksheet);
      * ```
      */
@@ -256,7 +251,7 @@ export class FWorkbook extends FBaseInitialable {
      */
     create(name: string, rows: number, columns: number, options?: { index?: number; sheet?: Partial<IWorksheetData> }): FWorksheet {
         const newSheet: Partial<IWorksheetData> = mergeWorksheetSnapshotWithDefault(Tools.deepClone(options?.sheet ?? {}));
-        newSheet.name = this._workbook.uniqueSheetName(name);
+        newSheet.name = name;
         newSheet.rowCount = rows;
         newSheet.columnCount = columns;
         newSheet.id = options?.sheet?.id;
@@ -386,7 +381,11 @@ export class FWorkbook extends FBaseInitialable {
      */
     insertSheet(sheetName?: string, options?: { index?: number; sheet?: Partial<IWorksheetData> }): FWorksheet {
         const newSheet: Partial<IWorksheetData> = mergeWorksheetSnapshotWithDefault(Tools.deepClone(options?.sheet ?? {}));
-        newSheet.name = this._workbook.uniqueSheetName(sheetName);
+        if (sheetName !== undefined) {
+            newSheet.name = sheetName;
+        } else {
+            delete (newSheet as Partial<IWorksheetData>).name;
+        }
         newSheet.id = options?.sheet?.id;
 
         const newSheetIndex = options?.index ?? this._workbook.getSheets().length;
@@ -437,7 +436,7 @@ export class FWorkbook extends FBaseInitialable {
     // #region editing
     /**
      * Undo the last action.
-     * @returns {FWorkbook} A promise that resolves to true if the undo was successful, false otherwise.
+     * @returns {FWorkbook} This workbook, for chaining.
      * @example
      * ```ts
      * // The code below undoes the last action
@@ -453,7 +452,7 @@ export class FWorkbook extends FBaseInitialable {
 
     /**
      * Redo the last undone action.
-     * @returns {FWorkbook} A promise that resolves to true if the redo was successful, false otherwise.
+     * @returns {FWorkbook} This workbook, for chaining.
      * @example
      * ```ts
      * // The code below redoes the last undone action
@@ -472,7 +471,6 @@ export class FWorkbook extends FBaseInitialable {
      * @callback onBeforeCommandExecuteCallback
      * @param {ICommandInfo<ISheetCommandSharedParams>} command The command that was executed.
      */
-
     /**
      * Register a callback that will be triggered before invoking a command targeting the Univer sheet.
      * @param {onBeforeCommandExecuteCallback} callback the callback.
@@ -501,7 +499,6 @@ export class FWorkbook extends FBaseInitialable {
      * @callback onCommandExecutedCallback
      * @param {ICommandInfo<ISheetCommandSharedParams>} command The command that was executed
      */
-
     /**
      * Register a callback that will be triggered when a command is invoked targeting the Univer sheet.
      * @param {onCommandExecutedCallback} callback the callback.
@@ -530,7 +527,6 @@ export class FWorkbook extends FBaseInitialable {
      * @callback onSelectionChangeCallback
      * @param {IRange[]} selections The new selection.
      */
-
     /**
      * Register a callback that will be triggered when the selection changes.
      * @param {onSelectionChangeCallback} callback The callback.
@@ -547,7 +543,7 @@ export class FWorkbook extends FBaseInitialable {
     onSelectionChange(callback: (selections: IRange[]) => void): IDisposable {
         return toDisposable(
             this._selectionManagerService.selectionMoveEnd$.subscribe((selections) => {
-                if (this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getUnitId() !== this.id) {
+                if (this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getUnitId() !== this.id) {
                     return;
                 }
 
@@ -590,7 +586,9 @@ export class FWorkbook extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const range = fWorkbook.getActiveSheet().getRange('A10:B10');
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
+     * const range = fWorksheet.getRange('A10:B10');
      * fWorkbook.setActiveRange(range);
      * ```
      */
@@ -690,7 +688,8 @@ export class FWorkbook extends FBaseInitialable {
      * ```ts
      * // The code below duplicates the given worksheet
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const activeSheet = fWorkbook.getActiveSheet();
+     * const activeSheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!activeSheet) return;
      * const duplicatedSheet = fWorkbook.duplicateSheet(activeSheet);
      * console.log(duplicatedSheet);
      * ```
@@ -734,45 +733,6 @@ export class FWorkbook extends FBaseInitialable {
     }
 
     /**
-     * Get the locale of the workbook.
-     * @returns {LocaleType} The locale of the workbook
-     * @example
-     * ```ts
-     * // The code below gets the locale of the workbook
-     * const fWorkbook = univerAPI.getActiveWorkbook();
-     * console.log(fWorkbook.getLocale());
-     * ```
-     */
-    getLocale(): LocaleType {
-        return this._localeService.getCurrentLocale();
-    }
-
-    /**
-     * @deprecated use `setSpreadsheetLocale` instead.
-     * @param {LocaleType} locale - The locale to set
-     */
-    setLocale(locale: LocaleType): void {
-        this._localeService.setLocale(locale);
-    }
-
-    /**
-     * Set the locale of the workbook.
-     * @param {LocaleType} locale The locale to set
-     * @returns {FWorkbook} This workbook, for chaining
-     * @example
-     * ```ts
-     * // The code below sets the locale of the workbook
-     * const fWorkbook = univerAPI.getActiveWorkbook();
-     * fWorkbook.setSpreadsheetLocale(univerAPI.Enum.LocaleType.EN_US);
-     * console.log(fWorkbook.getLocale());
-     * ```
-     */
-    setSpreadsheetLocale(locale: LocaleType): FWorkbook {
-        this._localeService.setLocale(locale);
-        return this;
-    }
-
-    /**
      * Get the URL of the workbook.
      * @returns {string} The URL of the workbook
      * @example
@@ -796,7 +756,8 @@ export class FWorkbook extends FBaseInitialable {
      * ```ts
      * // The code below moves the sheet to the specified index
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const sheet = fWorkbook.getActiveSheet();
+     * const sheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!sheet) return;
      * fWorkbook.moveSheet(sheet, 1);
      * ```
      */
@@ -911,7 +872,7 @@ export class FWorkbook extends FBaseInitialable {
      * const definedNameParam = fWorkbook.newDefinedNameBuilder()
      *   .setRef('Sheet1!$A$1')
      *   .setName('MyDefinedName')
-     *   .setComment('This is a comment');
+     *   .setComment('This is a comment')
      *   .build();
      * console.log(definedNameParam);
      * fWorkbook.insertDefinedNameBuilder(definedNameParam);
@@ -924,7 +885,6 @@ export class FWorkbook extends FBaseInitialable {
     /**
      * Insert a defined name by builder param.
      * @param {ISetDefinedNameMutationParam} param The param to insert the defined name
-     * @returns {void}
      * @example
      * ```ts
      * // The code below inserts a defined name by builder param
@@ -944,7 +904,6 @@ export class FWorkbook extends FBaseInitialable {
     /**
      * Update the defined name with the given name.
      * @param {ISetDefinedNameMutationParam} param The param to insert the defined name
-     * @returns {void}
      * @example
      * ```ts
      * // The code below updates the defined name with the given name
@@ -1027,7 +986,6 @@ export class FWorkbook extends FBaseInitialable {
     /**
      * Register a custom range theme style.
      * @param {RangeThemeStyle} rangeThemeStyle The range theme style to register
-     * @returns {void}
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
@@ -1051,7 +1009,6 @@ export class FWorkbook extends FBaseInitialable {
     /**
      * Unregister a custom range theme style.
      * @param {string} themeName The name of the theme to unregister
-     * @returns {void}
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
@@ -1068,7 +1025,7 @@ export class FWorkbook extends FBaseInitialable {
     /**
      * Create a range theme style.
      * @param {string} themeName - The name of the theme to register
-     * @param {Omit<IRangeThemeStyleJSON, 'name'>} themeStyleJson - The theme style json to register
+     * @param {Omit<IRangeThemeStyleJSON, 'name'>} [themeStyleJson] - The theme style json to register
      * @returns {RangeThemeStyle} - The created range theme style
      * @example
      * ```ts
@@ -1098,6 +1055,8 @@ export class FWorkbook extends FBaseInitialable {
      * ```
      */
     setCustomMetadata(custom: CustomData | undefined): FWorkbook {
+        this._logService.warn(SHEETS_CUSTOM_FIELD_WARNING_MESSAGE);
+
         this._workbook.setCustomMetadata(custom);
         return this;
     }
@@ -1113,6 +1072,8 @@ export class FWorkbook extends FBaseInitialable {
      * ```
      */
     getCustomMetadata(): CustomData | undefined {
+        this._logService.warn(SHEETS_CUSTOM_FIELD_WARNING_MESSAGE);
+
         return this._workbook.getCustomMetadata();
     }
 
@@ -1140,7 +1101,8 @@ export class FWorkbook extends FBaseInitialable {
      * fWorkbook.addStyles(styles);
      *
      * // Set values with the new styles
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValues([
      *   [{ v: 'Hello', s: 'custom-style-1' }, { v: 'Univer', s: 'custom-style-1' }],
@@ -1176,7 +1138,8 @@ export class FWorkbook extends FBaseInitialable {
      * fWorkbook.addStyles(styles);
      *
      * // Set values with the new styles
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValues([
      *   [{ v: 'Hello', s: 'custom-style-1' }, { v: 'Univer', s: 'custom-style-1' }],
@@ -1193,14 +1156,4 @@ export class FWorkbook extends FBaseInitialable {
     removeStyles(styleKeys: string[]): void {
         this._workbook.removeStyles(styleKeys);
     }
-}
-
-/**
- * @ignore
- */
-// eslint-disable-next-line ts/no-namespace
-export namespace FWorkbook {
-    export type FontLine = _FontLine;
-    export type FontStyle = _FontLine;
-    export type FontWeight = _FontLine;
 }

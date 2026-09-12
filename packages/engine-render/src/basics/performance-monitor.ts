@@ -24,6 +24,8 @@ export const DEFAULT_FRAME_LIST_SIZE = 60 * 60; // 1min
 const DEFAULT_ONE_SEC_MS = 1000;
 
 const DEFAULT_FRAME_TIME = 16.67; // 60FPS
+const MIN_ANIMATION_FRAME_INTERVAL = 1000 / 240;
+const ANIMATION_FRAME_INTERVAL_PERCENTILE = 0.25;
 export interface IBasicFrameInfo {
     FPS: number;
     frameTime: number; // frame time in milliseconds
@@ -101,6 +103,14 @@ export class PerformanceMonitor extends Disposable {
      */
     get instantaneousFrameTime(): number {
         return this._rollingFrameTime.history(0);
+    }
+
+    /**
+     * Estimates the browser animation-frame cadence while ignoring isolated long frames.
+     */
+    get estimatedFrameInterval(): number {
+        const frameInterval = this._rollingFrameTime.percentile(ANIMATION_FRAME_INTERVAL_PERCENTILE);
+        return frameInterval > 0 ? Math.max(frameInterval, MIN_ANIMATION_FRAME_INTERVAL) : DEFAULT_FRAME_TIME;
     }
 
     /**
@@ -265,11 +275,17 @@ export class RollingAverage {
             this._sampleCount++;
         }
 
-        // Remove one maximum and one minimum to ensure the accuracy of the average value.
-        const min = Math.min(...this._samples);
-        const max = Math.min(...this._samples);
-        const filteredData = this._samples.filter((v) => v !== max && v !== min);
-        this.averageFrameTime = filteredData.reduce((sum, value) => sum + value, 0) / filteredData.length;
+        // Once the window is full, exclude one minimum and maximum to reduce outlier bias.
+        const shouldTrimExtremes = this.isSaturated() && this._sampleCount > 2;
+        const sampleSum = this._samples.reduce((sum, value) => sum + value, 0);
+
+        if (shouldTrimExtremes) {
+            const min = Math.min(...this._samples);
+            const max = Math.max(...this._samples);
+            this.averageFrameTime = (sampleSum - min - max) / (this._sampleCount - 2);
+        } else {
+            this.averageFrameTime = sampleSum / this._sampleCount;
+        }
 
         // add new value to mean
         delta = frameDuration - this.averageFrameTime;
@@ -301,6 +317,23 @@ export class RollingAverage {
 
         const i0 = this._wrapPosition(this._pos - 1.0);
         return this._samples[this._wrapPosition(i0 - i)];
+    }
+
+    percentile(percentile: number): number {
+        if (this._sampleCount === 0) {
+            return 0;
+        }
+
+        const sampleCount = Math.min(this._sampleCount, this._samples.length);
+        const samples = new Array<number>(sampleCount);
+        for (let i = 0; i < sampleCount; i++) {
+            samples[i] = this.history(i);
+        }
+        samples.sort((a, b) => a - b);
+
+        const normalizedPercentile = Math.min(1, Math.max(0, percentile));
+        const index = Math.min(sampleCount - 1, Math.floor(sampleCount * normalizedPercentile));
+        return samples[index];
     }
 
     /**

@@ -15,17 +15,24 @@
  */
 
 import type { ICustomRangeForInterceptor, ITextStyle, Nullable } from '@univerjs/core';
-import { BooleanNumber, CustomRangeType } from '@univerjs/core';
+import { BaselineOffset, BooleanNumber, CustomRangeType } from '@univerjs/core';
+
+const CUSTOM_RANGE_COLOR_TOKEN = 'blue.600';
 
 export function getCustomRangeStyle(customRange: ICustomRangeForInterceptor): Nullable<ITextStyle> {
+    if ((customRange.rangeType === CustomRangeType.FOOTNOTE || customRange.rangeType === CustomRangeType.ENDNOTE)) {
+        return { va: BaselineOffset.SUPERSCRIPT };
+    }
     if (
         customRange.rangeType === CustomRangeType.HYPERLINK ||
         customRange.rangeType === CustomRangeType.MENTION ||
         customRange.rangeType === CustomRangeType.CUSTOM
     ) {
+        const preserveTextColor = customRange.properties?.textColorMode === 'text';
+        const showUnderline = customRange.rangeType === CustomRangeType.HYPERLINK || (customRange.active ?? true);
         return {
-            ...(customRange.active ?? true) ? { ul: { s: BooleanNumber.TRUE } } : null,
-            cl: { rgb: '#274fee' },
+            ...showUnderline ? { ul: { s: BooleanNumber.TRUE } } : null,
+            ...preserveTextColor ? null : { cl: { rgb: CUSTOM_RANGE_COLOR_TOKEN } },
         };
     }
 

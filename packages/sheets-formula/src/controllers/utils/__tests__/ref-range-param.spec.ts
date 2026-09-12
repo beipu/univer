@@ -195,7 +195,7 @@ describe('getReferenceMoveParams', () => {
         });
         expect(getReferenceMoveParams(workbook, {
             id: RemoveRowCommand.id,
-            params: { range },
+            params: { range, unitId: 'test', subUnitId: 'sheet1' },
         })).toEqual({
             type: FormulaReferenceMoveType.RemoveRow,
             unitId: 'test',
@@ -205,7 +205,7 @@ describe('getReferenceMoveParams', () => {
         });
         expect(getReferenceMoveParams(workbook, {
             id: RemoveColCommand.id,
-            params: { range },
+            params: { range, unitId: 'test', subUnitId: 'sheet1' },
         })).toEqual({
             type: FormulaReferenceMoveType.RemoveColumn,
             unitId: 'test',
@@ -289,6 +289,52 @@ describe('getReferenceMoveParams', () => {
             sheetId: 'sheet1',
             definedName: 'Revenue',
             definedNameId: 'defined-name-id',
+        });
+        expect(getReferenceMoveParams(workbook, {
+            id: 'sheet.command.set-table-config',
+            params: {
+                unitId: 'test',
+                tableId: 'table-id',
+                name: 'Sales',
+                oldTableName: 'Orders',
+            },
+        })).toEqual({
+            type: FormulaReferenceMoveType.SetSuperTableName,
+            unitId: 'test',
+            sheetId: 'sheet1',
+            tableName: 'Sales',
+            oldTableName: 'Orders',
+        });
+        expect(getReferenceMoveParams(workbook, {
+            id: 'sheet.command.delete-table',
+            params: {
+                unitId: 'test',
+                tableId: 'table-id',
+                tableName: 'Orders',
+            },
+        })).toEqual({
+            type: FormulaReferenceMoveType.RemoveSuperTableName,
+            unitId: 'test',
+            sheetId: 'sheet1',
+            oldTableName: 'Orders',
+        });
+        expect(getReferenceMoveParams(workbook, {
+            id: 'sheet.command.table-remove-column-at',
+            params: {
+                unitId: 'test',
+                subUnitId: 'sheet1',
+                tableId: 'table-id',
+                range: { startRow: 0, endRow: 11, startColumn: 1, endColumn: 1 },
+                tableName: 'Orders',
+                removedColumnNames: ['1'],
+            },
+        })).toEqual({
+            type: FormulaReferenceMoveType.RemoveSuperTableColumn,
+            unitId: 'test',
+            sheetId: 'sheet1',
+            range: { startRow: 0, endRow: 11, startColumn: 1, endColumn: 1 },
+            oldTableName: 'Orders',
+            tableColumnNames: ['1'],
         });
 
         testBed.univer.dispose();

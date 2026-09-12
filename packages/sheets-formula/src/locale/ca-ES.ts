@@ -17,12 +17,12 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    formula: {
+    'sheets-formula': {
         progress: {
-            analyzing: 'Analitzant',
-            calculating: 'Calculant',
-            'array-analysis': 'Anàlisi de matriu',
-            'array-calculation': 'Càlcul de matriu',
+            analyzing: 'Analitzant fórmules...',
+            calculating: 'Calculant fórmules...',
+            'array-analysis': 'Analitzant fórmules de matriu...',
+            'array-calculation': 'Calculant fórmules de matriu...',
             done: 'Fet',
         },
     },

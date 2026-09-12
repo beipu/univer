@@ -14,15 +14,27 @@
  * limitations under the License.
  */
 
-import type { CellValue, ICellRenderContext, IRange, Nullable } from '@univerjs/core';
-import { DataValidationStatus, DataValidationType, ICommandService, Inject, InterceptorEffectEnum, IUniverInstanceService, Optional, RxDisposable, sequenceExecute } from '@univerjs/core';
+import type { CellValue, ICellRenderContext, IRange, Nullable, Workbook } from '@univerjs/core';
+import type { IRuleChange } from '@univerjs/data-validation';
+import {
+    DataValidationStatus,
+    DataValidationType,
+    ICommandService,
+    Inject,
+    InterceptorEffectEnum,
+    IUniverInstanceService,
+    Optional,
+    RxDisposable,
+    sequenceExecute,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DataValidatorRegistryService } from '@univerjs/data-validation';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { InterceptCellContentPriority, INTERCEPTOR_POINT, SheetInterceptorService } from '@univerjs/sheets';
 import { DataValidationCacheService, getCellValueOrigin, SheetDataValidationModel } from '@univerjs/sheets-data-validation';
 import { AutoHeightController, IEditorBridgeService, SheetSkeletonManagerService } from '@univerjs/sheets-ui';
 import { IMenuManagerService } from '@univerjs/ui';
-import { bufferTime, filter } from 'rxjs';
+import { bufferTime, filter, takeUntil } from 'rxjs';
 import { menuSchema } from '../menu/schema';
 import { DataValidationDropdownManagerService } from '../services/dropdown-manager.service';
 
@@ -75,7 +87,7 @@ export class SheetsDataValidationRenderController extends RxDisposable {
             const state = this._editorBridgeService!.getEditCellState();
             if (state) {
                 const { unitId, sheetId, row, column } = state;
-                const workbook = this._univerInstanceService.getUniverSheetInstance(unitId);
+                const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
                 if (!workbook) {
                     return;
                 }
@@ -190,7 +202,7 @@ export class SheetsDataValidationRenderController extends RxDisposable {
                         };
 
                         cell.interceptorAutoHeight = () => {
-                            const skeleton = this._renderManagerService.getRenderById(unitId)
+                            const skeleton = this._renderManagerService.getRenderUnitById(unitId)
                                 ?.with(SheetSkeletonManagerService)
                                 .getSkeletonParam(subUnitId)
                                 ?.skeleton;
@@ -201,7 +213,7 @@ export class SheetsDataValidationRenderController extends RxDisposable {
 
                             const info: ICellRenderContext = {
                                 data: cell,
-                                style: skeleton.getStyles().getStyleByCell(cell),
+                                style: workbook.getStyles().getStyleByCell(cell),
                                 primaryWithCoord: skeleton.getCellWithCoordByIndex(mergeCell?.startRow ?? row, mergeCell?.startColumn ?? col),
                                 unitId,
                                 subUnitId,
@@ -213,7 +225,7 @@ export class SheetsDataValidationRenderController extends RxDisposable {
                             return validator?.canvasRender?.calcCellAutoHeight?.(info);
                         };
                         cell.interceptorAutoWidth = () => {
-                            const skeleton = this._renderManagerService.getRenderById(unitId)
+                            const skeleton = this._renderManagerService.getRenderUnitById(unitId)
                                 ?.with(SheetSkeletonManagerService)
                                 .getSkeletonParam(subUnitId)
                                 ?.skeleton;
@@ -224,7 +236,7 @@ export class SheetsDataValidationRenderController extends RxDisposable {
 
                             const info: ICellRenderContext = {
                                 data: cell,
-                                style: skeleton.getStyles().getStyleByCell(cell),
+                                style: workbook.getStyles().getStyleByCell(cell),
                                 primaryWithCoord: skeleton.getCellWithCoordByIndex(mergeCell?.startRow ?? row, mergeCell?.startColumn ?? col),
                                 unitId,
                                 subUnitId,
@@ -250,174 +262,41 @@ export class SheetsDataValidationRenderController extends RxDisposable {
                 // patched data-validation change don't need to re-calc row height
                 // re-calc of row height will be triggered precisely by the origin command
                 filter((change) => change.source === 'command'),
-                bufferTime(100)
+                bufferTime(100),
+                takeUntil(this.dispose$)
             )
             .subscribe((infos) => {
-                if (infos.length === 0) {
-                    return;
-                }
-
-                const ranges: IRange[] = [];
-                infos.forEach((info) => {
-                    if (info.rule.type === DataValidationType.LIST_MULTIPLE || info.rule.type === DataValidationType.LIST) {
-                        if (info.rule?.ranges) {
-                            ranges.push(...info.rule.ranges);
-                        }
-                    }
-                });
-
-                if (ranges.length) {
-                    const mutations = this._autoHeightController.getUndoRedoParamsOfAutoHeight(ranges);
-                    sequenceExecute(mutations.redos, this._commandService);
-                }
+                recalculateAutoHeight(infos, this._autoHeightController, this._commandService);
             });
     }
 }
-
-// The mobile version does not provide the ability to change data validation model.
-export class SheetsDataValidationMobileRenderController extends RxDisposable {
-    constructor(
-        @ICommandService private readonly _commandService: ICommandService,
-        @IRenderManagerService private readonly _renderManagerService: IRenderManagerService,
-        @Inject(AutoHeightController) private readonly _autoHeightController: AutoHeightController,
-        @Inject(DataValidatorRegistryService) private readonly _dataValidatorRegistryService: DataValidatorRegistryService,
-        @Inject(SheetInterceptorService) private readonly _sheetInterceptorService: SheetInterceptorService,
-        @Inject(SheetDataValidationModel) private readonly _sheetDataValidationModel: SheetDataValidationModel,
-        @Inject(DataValidationCacheService) private readonly _dataValidationCacheService: DataValidationCacheService
-    ) {
-        super();
-
-        this._initViewModelIntercept();
-        this._initAutoHeight();
+export function recalculateAutoHeight(
+    infos: IRuleChange[],
+    autoHeightController: AutoHeightController,
+    commandService: ICommandService
+) {
+    const rangesByUnit = new Map<string, Map<string, IRange[]>>();
+    for (const { unitId, subUnitId, rule } of infos) {
+        if (rule.type !== DataValidationType.LIST && rule.type !== DataValidationType.LIST_MULTIPLE) {
+            continue;
+        }
+        if (!rule.ranges?.length) {
+            continue;
+        }
+        let rangesBySheet = rangesByUnit.get(unitId);
+        if (!rangesBySheet) {
+            rangesBySheet = new Map();
+            rangesByUnit.set(unitId, rangesBySheet);
+        }
+        const ranges = rangesBySheet.get(subUnitId) ?? [];
+        ranges.push(...rule.ranges);
+        rangesBySheet.set(subUnitId, ranges);
     }
 
-    // eslint-disable-next-line max-lines-per-function
-    private _initViewModelIntercept() {
-        this.disposeWithMe(
-            this._sheetInterceptorService.intercept(
-                INTERCEPTOR_POINT.CELL_CONTENT,
-                {
-                    effect: InterceptorEffectEnum.Style,
-                    // must be after numfmt
-                    priority: InterceptCellContentPriority.DATA_VALIDATION,
-                    // eslint-disable-next-line complexity, max-lines-per-function
-                    handler: (cell, pos, next) => {
-                        const { row, col, unitId, subUnitId, workbook, worksheet } = pos;
-
-                        const ruleId = this._sheetDataValidationModel.getRuleIdByLocation(unitId, subUnitId, row, col);
-                        if (!ruleId) {
-                            return next(cell);
-                        }
-                        const rule = this._sheetDataValidationModel.getRuleById(unitId, subUnitId, ruleId);
-                        if (!rule) {
-                            return next(cell);
-                        }
-                        const validStatus = this._dataValidationCacheService.getValue(unitId, subUnitId, row, col) ?? DataValidationStatus.VALID;
-                        const validator = this._dataValidatorRegistryService.getValidatorItem(rule.type);
-                        const cellOrigin = worksheet.getCellRaw(row, col);
-                        const cellValue = getCellValueOrigin(cellOrigin);
-                        const valueStr = `${cellValue ?? ''}`;
-
-                        if (!cell || cell === pos.rawData) {
-                            cell = { ...pos.rawData };
-                        }
-
-                        cell.markers = {
-                            ...cell?.markers,
-                            ...validStatus === DataValidationStatus.INVALID ? INVALID_MARK : null,
-                        };
-                        cell.customRender = [
-                            ...(cell?.customRender ?? []),
-                            ...(validator?.canvasRender ? [validator.canvasRender] : []),
-                        ];
-                        cell.fontRenderExtension = {
-                            ...cell?.fontRenderExtension,
-                            isSkip: cell?.fontRenderExtension?.isSkip || validator?.skipDefaultFontRender?.(rule, cellValue, pos),
-                        };
-                        cell.interceptorStyle = {
-                            ...cell?.interceptorStyle,
-                            ...validator?.getExtraStyle(rule, valueStr, {
-                                get style() {
-                                    const styleMap = workbook.getStyles();
-                                    return (typeof cell?.s === 'string' ? styleMap.get(cell?.s) : cell?.s) || {};
-                                },
-                            }, row, col),
-                        };
-                        cell.interceptorAutoHeight = () => {
-                            const skeleton = this._renderManagerService.getRenderById(unitId)
-                                ?.with(SheetSkeletonManagerService)
-                                .getSkeletonParam(subUnitId)
-                                ?.skeleton;
-                            if (!skeleton) {
-                                return undefined;
-                            }
-                            const mergeCell = skeleton.worksheet.getMergedCell(row, col);
-
-                            const info: ICellRenderContext = {
-                                data: cell,
-                                style: skeleton.getStyles().getStyleByCell(cell),
-                                primaryWithCoord: skeleton.getCellWithCoordByIndex(mergeCell?.startRow ?? row, mergeCell?.startColumn ?? col),
-                                unitId,
-                                subUnitId,
-                                row,
-                                col,
-                                workbook,
-                                worksheet,
-                            };
-                            return validator?.canvasRender?.calcCellAutoHeight?.(info);
-                        };
-                        cell.interceptorAutoWidth = () => {
-                            const skeleton = this._renderManagerService.getRenderById(unitId)
-                                ?.with(SheetSkeletonManagerService)
-                                .getSkeletonParam(subUnitId)
-                                ?.skeleton;
-                            if (!skeleton) {
-                                return undefined;
-                            }
-                            const mergeCell = skeleton.worksheet.getMergedCell(row, col);
-
-                            const info: ICellRenderContext = {
-                                data: cell,
-                                style: skeleton.getStyles().getStyleByCell(cell),
-                                primaryWithCoord: skeleton.getCellWithCoordByIndex(mergeCell?.startRow ?? row, mergeCell?.startColumn ?? col),
-                                unitId,
-                                subUnitId,
-                                row,
-                                col,
-                                workbook,
-                                worksheet,
-                            };
-                            return validator?.canvasRender?.calcCellAutoWidth?.(info);
-                        };
-                        cell.coverable = (cell?.coverable ?? true) && !(rule.type === DataValidationType.LIST || rule.type === DataValidationType.LIST_MULTIPLE);
-
-                        return next(cell);
-                    },
-                }
-            )
-        );
-    }
-
-    private _initAutoHeight() {
-        this._sheetDataValidationModel.ruleChange$
-            .pipe(
-                filter((change) => change.source === 'command'),
-                bufferTime(16)
-            )
-            .subscribe((infos) => {
-                const ranges: IRange[] = [];
-                infos.forEach((info) => {
-                    if (info.rule.type === DataValidationType.LIST_MULTIPLE || info.rule.type === DataValidationType.LIST) {
-                        if (info.rule?.ranges) {
-                            ranges.push(...info.rule.ranges);
-                        }
-                    }
-                });
-
-                if (ranges.length) {
-                    const mutations = this._autoHeightController.getUndoRedoParamsOfAutoHeight(ranges);
-                    sequenceExecute(mutations.redos, this._commandService);
-                }
-            });
+    for (const [unitId, rangesBySheet] of rangesByUnit) {
+        for (const [subUnitId, ranges] of rangesBySheet) {
+            const mutations = autoHeightController.getUndoRedoParamsOfAutoHeight(ranges, subUnitId, undefined, unitId);
+            sequenceExecute(mutations.redos, commandService);
+        }
     }
 }

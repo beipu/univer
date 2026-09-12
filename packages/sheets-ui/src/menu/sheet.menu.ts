@@ -17,6 +17,7 @@
 import type { IAccessor, Workbook } from '@univerjs/core';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
 import type { Subscriber } from 'rxjs';
+import type { LocaleKey } from '../locale/types';
 import { BooleanNumber, ICommandService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
 import {
     CopySheetCommand,
@@ -34,13 +35,12 @@ import {
 } from '@univerjs/sheets';
 import { COLOR_PICKER_COMPONENT, getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { combineLatest, combineLatestWith, map, Observable } from 'rxjs';
-
 import { RemoveSheetConfirmCommand } from '../commands/commands/remove-sheet-confirm.command';
 import { ShowMenuListCommand } from '../commands/commands/unhide.command';
 import { RenameSheetOperation } from '../commands/operations/rename-sheet.operation';
 import { getWorkbookPermissionDisable$ } from './menu-util';
 
-export function DeleteSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function DeleteSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const commandService = accessor.get(ICommandService);
     const defaultDisable$ = new Observable<boolean>((subscriber) => {
@@ -60,12 +60,15 @@ export function DeleteSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem
 
         return disposable.dispose;
     });
-    const permissionDisable$ = getWorkbookPermissionDisable$(accessor, [WorkbookEditablePermission, WorkbookDeleteSheetPermission]);
+    const permissionDisable$ = getWorkbookPermissionDisable$(accessor, [
+        WorkbookEditablePermission,
+        WorkbookDeleteSheetPermission,
+    ]);
 
     return {
         id: RemoveSheetConfirmCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'sheetConfig.delete',
+        title: 'sheets-ui.sheetConfig.delete',
         disabled$: combineLatest([defaultDisable$, permissionDisable$]).pipe(
             map(([defaultDisabled, permissionDisabled]) => {
                 return defaultDisabled || permissionDisabled;
@@ -75,30 +78,30 @@ export function DeleteSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem
     };
 }
 
-export function CopySheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function CopySheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: CopySheetCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'sheetConfig.copy',
+        title: 'sheets-ui.sheetConfig.copy',
         disabled$: getWorkbookPermissionDisable$(accessor, [WorkbookEditablePermission, WorkbookCreateSheetPermission]),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function RenameSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function RenameSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: RenameSheetOperation.id,
         type: MenuItemType.BUTTON,
-        title: 'sheetConfig.rename',
+        title: 'sheets-ui.sheetConfig.rename',
         disabled$: getWorkbookPermissionDisable$(accessor, [WorkbookEditablePermission, WorkbookRenameSheetPermission]),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function ChangeColorSheetMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function ChangeColorSheetMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: SetTabColorCommand.id,
-        title: 'sheetConfig.changeColor',
+        title: 'sheets-ui.sheetConfig.changeColor',
         type: MenuItemType.SELECTOR,
         selections: [
             {
@@ -113,14 +116,14 @@ export function ChangeColorSheetMenuItemFactory(accessor: IAccessor): IMenuSelec
     };
 }
 
-export function HideSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function HideSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetWorksheetHideCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'sheetConfig.hide',
+        title: 'sheets-ui.sheetConfig.hide',
         disabled$: new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
@@ -138,18 +141,21 @@ export function HideSheetMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
 
             return disposable.dispose;
         }).pipe(
-            combineLatestWith(getWorkbookPermissionDisable$(accessor, [WorkbookEditablePermission, WorkbookHideSheetPermission])),
+            combineLatestWith(getWorkbookPermissionDisable$(accessor, [
+                WorkbookEditablePermission,
+                WorkbookHideSheetPermission,
+            ])),
             map(([defaultDisabled, permissionDisabled]) => defaultDisabled || permissionDisabled)
         ),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function UnHideSheetMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<any> {
+export function UnHideSheetMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const commandService = accessor.get(ICommandService);
 
-    const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+    const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
     const hiddenList = workbook.getHiddenWorksheets().map((s) => ({
         label: workbook.getSheetBySheetId(s)?.getName() || '',
         value: s,
@@ -170,9 +176,12 @@ export function UnHideSheetMenuItemFactory(accessor: IAccessor): IMenuSelectorIt
     return {
         id: SetWorksheetShowCommand.id,
         type: MenuItemType.SELECTOR,
-        title: 'sheetConfig.unhide',
+        title: 'sheets-ui.sheetConfig.unhide',
         disabled$: defaultDisable$.pipe(
-            combineLatestWith(getWorkbookPermissionDisable$(accessor, [WorkbookEditablePermission, WorkbookHideSheetPermission])),
+            combineLatestWith(getWorkbookPermissionDisable$(accessor, [
+                WorkbookEditablePermission,
+                WorkbookHideSheetPermission,
+            ])),
             map(([defaultDisabled, permissionDisabled]) => defaultDisabled || permissionDisabled)
         ),
         selections: new Observable((subscriber) => {
@@ -193,17 +202,17 @@ export function UnHideSheetMenuItemFactory(accessor: IAccessor): IMenuSelectorIt
     };
 }
 
-export function ShowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ShowMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
     const commandService = accessor.get(ICommandService);
 
     return {
         id: ShowMenuListCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'sheetConfig.unhide',
+        title: 'sheets-ui.sheetConfig.unhide',
         disabled$: new Observable<boolean>((subscriber) => {
             function disableFunction() {
-                const worksheets = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getWorksheets();
+                const worksheets = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getWorksheets();
                     // loop through all worksheets Map to see if there is more than one sheet
                 const visibleSheets = Array.from(worksheets.values());
 
@@ -224,7 +233,10 @@ export function ShowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
 
             return disposable.dispose;
         }).pipe(
-            combineLatestWith(getWorkbookPermissionDisable$(accessor, [WorkbookEditablePermission, WorkbookHideSheetPermission])),
+            combineLatestWith(getWorkbookPermissionDisable$(accessor, [
+                WorkbookEditablePermission,
+                WorkbookHideSheetPermission,
+            ])),
             map(([defaultDisabled, permissionDisabled]) => defaultDisabled || permissionDisabled)
         ),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
@@ -232,7 +244,7 @@ export function ShowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
 }
 
 function disableFunction(univerInstanceService: IUniverInstanceService, subscriber: Subscriber<boolean>) {
-    const worksheets = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getWorksheets();
+    const worksheets = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!.getWorksheets();
         // loop through all worksheets Map to see if there is more than one visible sheet
     const visibleSheets = Array.from(worksheets.values()).filter(
         (sheet) => sheet.getConfig().hidden === BooleanNumber.FALSE

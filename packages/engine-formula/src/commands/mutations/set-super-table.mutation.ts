@@ -16,7 +16,6 @@
 
 import type { IMutation } from '@univerjs/core';
 import type { ISuperTable } from '../../basics/common';
-
 import type { ISuperTableOptionParam } from '../../services/super-table.service';
 import { CommandType } from '@univerjs/core';
 import { ISuperTableService } from '../../services/super-table.service';
@@ -26,7 +25,12 @@ export interface ISetSuperTableMutationSearchParam {
     tableName: string;
 }
 
+export interface IRemoveSuperTableMutationParam extends ISetSuperTableMutationSearchParam {
+    reference?: Pick<ISuperTable, 'sheetId' | 'range'>;
+}
+
 export interface ISetSuperTableMutationParam extends ISetSuperTableMutationSearchParam {
+    oldTableName?: string;
     reference: ISuperTable;
 }
 /**
@@ -44,7 +48,7 @@ export const SetSuperTableMutation: IMutation<ISetSuperTableMutationParam> = {
     },
 };
 
-export const RemoveSuperTableMutation: IMutation<ISetSuperTableMutationSearchParam> = {
+export const RemoveSuperTableMutation: IMutation<IRemoveSuperTableMutationParam> = {
     id: 'formula.mutation.remove-super-table',
     type: CommandType.MUTATION,
     handler: (accessor, params) => {

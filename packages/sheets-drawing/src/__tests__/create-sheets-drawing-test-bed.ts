@@ -27,26 +27,16 @@ import {
     LogLevel,
     Plugin,
     Tools,
-    touchDependencies,
     Univer,
     UniverInstanceType,
 } from '@univerjs/core';
-import { DrawingManagerService, IDrawingManagerService } from '@univerjs/drawing';
+import { UniverDrawingPlugin } from '@univerjs/drawing';
+import { IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
 import {
-    CopySheetCommand,
-    CopyWorksheetEndMutation,
-    InsertSheetMutation,
-    RemoveSheetCommand,
-    RemoveSheetMutation,
-    SetRangeValuesMutation,
-    SetWorksheetActivateCommand,
-    SetWorksheetActiveOperation,
-    SheetInterceptorService,
-    SheetLazyExecuteScheduleService,
+    UniverSheetsPlugin,
 } from '@univerjs/sheets';
 import enUS from '@univerjs/sheets/locale/en-US';
-import { SheetsDrawingLoadController } from '../controllers/sheet-drawing.controller';
-import { ISheetDrawingService, SheetDrawingService } from '../services/sheet-drawing.service';
+import { UniverSheetsDrawingPlugin } from '../plugin';
 
 const TEST_WORKBOOK_DATA: IWorkbookData = {
     id: 'test',
@@ -101,22 +91,17 @@ export function createSheetsDrawingTestBed(workbookData?: IWorkbookData, depende
             this._injector.get(IUndoRedoService);
 
             ([
-                [SheetInterceptorService],
-                [SheetLazyExecuteScheduleService],
-                [IDrawingManagerService, { useClass: DrawingManagerService }],
-                [ISheetDrawingService, { useClass: SheetDrawingService }],
-                [SheetsDrawingLoadController],
+                [IRenderManagerService, { useClass: RenderManagerService }],
             ] as Dependency[]).forEach((dependency) => this._injector.add(dependency));
 
             dependencies?.forEach((dependency) => this._injector.add(dependency));
-
-            touchDependencies(this._injector, [
-                [SheetsDrawingLoadController],
-            ]);
         }
     }
 
     univer.registerPlugin(TestPlugin);
+    univer.registerPlugin(UniverSheetsPlugin);
+    univer.registerPlugin(UniverDrawingPlugin);
+    univer.registerPlugin(UniverSheetsDrawingPlugin);
 
     const workbook = univer.createUnit<IWorkbookData, Workbook>(
         UniverInstanceType.UNIVER_SHEET,
@@ -130,23 +115,11 @@ export function createSheetsDrawingTestBed(workbookData?: IWorkbookData, depende
     localeService.load({ enUS });
     localeService.setLocale(LocaleType.EN_US);
 
-    const commandService = get(ICommandService);
-    [
-        CopySheetCommand,
-        CopyWorksheetEndMutation,
-        InsertSheetMutation,
-        RemoveSheetCommand,
-        RemoveSheetMutation,
-        SetRangeValuesMutation,
-        SetWorksheetActivateCommand,
-        SetWorksheetActiveOperation,
-    ].forEach((command) => commandService.registerCommand(command));
-
     return {
         univer,
         get,
         injector,
         workbook,
-        commandService,
+        commandService: get(ICommandService),
     };
 }

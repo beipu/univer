@@ -43,6 +43,11 @@ function createContext() {
         lineDashOffset: 0,
         lineJoin: 'round',
         miterLimit: 0,
+        shadowColor: '',
+        shadowBlur: 0,
+        shadowOffsetX: 0,
+        shadowOffsetY: 0,
+        filter: 'none',
     } as any;
 }
 
@@ -125,6 +130,16 @@ describe('drawing group', () => {
         });
         const childRenderSpy = vi.spyOn(child, 'render').mockImplementation(() => child);
         drawingGroup.addObject(child);
+        drawingGroup.setOuterShadow({
+            shadowColor: 'rgba(0, 0, 0, 0.5)',
+            shadowBlur: 12,
+            shadowOffsetX: 4,
+            shadowOffsetY: 0,
+        });
+        drawingGroup.setGlow({
+            color: '#5b9bd5',
+            radius: 4,
+        });
 
         const ctx = createContext();
         drawingGroup.render(ctx, {
@@ -133,6 +148,86 @@ describe('drawing group', () => {
 
         expect(ctx.transform).toHaveBeenCalled();
         expect(childRenderSpy).toHaveBeenCalled();
+        expect(ctx.filter).toContain('drop-shadow(0px 0px 2px #5b9bd5)');
+        expect(ctx.shadowColor).toBe('rgba(0, 0, 0, 0.5)');
+        expect(ctx.shadowBlur).toBe(12);
+        expect(ctx.shadowOffsetX).toBe(4);
+    });
+
+    it('maps children of nested drawing groups through the parent rendered bound', () => {
+        const outerGroup = new DrawingGroupObject('outer-group');
+        outerGroup.transformByState({
+            left: 0,
+            top: 0,
+            width: 500,
+            height: 500,
+        });
+        outerGroup.setBaseBound({
+            left: 0,
+            top: 0,
+            width: 10,
+            height: 10,
+        });
+
+        const innerGroup = new DrawingGroupObject('inner-group');
+        innerGroup.transformByState({
+            left: 1,
+            top: 1,
+            width: 2,
+            height: 2,
+        });
+        innerGroup.setBaseBound({
+            left: 100,
+            top: 100,
+            width: 50,
+            height: 50,
+        });
+
+        const child = new Rect('nested-child', {
+            left: 100,
+            top: 100,
+            width: 50,
+            height: 50,
+            fill: '#333333',
+        });
+
+        innerGroup.addObject(child);
+        outerGroup.addObject(innerGroup);
+
+        expect(innerGroup.getRealBound().width).toBe(100);
+        expect(child.getRealBound().width).toBe(100);
+    });
+
+    it('maps a rotated child through an anisotropically resized drawing group', () => {
+        const drawingGroup = new DrawingGroupObject('rotated-child-group');
+        drawingGroup.transformByState({
+            left: 10,
+            top: 20,
+            width: 200,
+            height: 100,
+        });
+        drawingGroup.setBaseBound({
+            left: 0,
+            top: 0,
+            width: 100,
+            height: 200,
+        });
+
+        const child = new Rect('rotated-child', {
+            left: -50,
+            top: 50,
+            width: 200,
+            height: 100,
+            angle: 90,
+            fill: '#333333',
+        });
+        drawingGroup.addObject(child);
+
+        const bound = child.getRealBound();
+        expect(bound.left).toBeCloseTo(-50, 6);
+        expect(bound.top).toBeCloseTo(-100, 6);
+        expect(bound.width).toBeCloseTo(100, 6);
+        expect(bound.height).toBeCloseTo(200, 6);
     });
 
     it('covers group object management, transform recalculation and dispose flow', () => {

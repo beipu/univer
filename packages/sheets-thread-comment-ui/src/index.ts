@@ -16,23 +16,12 @@
 
 import './global.css';
 
-export { ShowAddSheetCommentModalOperation, ToggleSheetCommentPanelOperation } from './commands/operations/comment.operation';
+export {
+    ShowAddSheetCommentModalOperation,
+    ToggleSheetCommentPanelOperation,
+} from './commands/operations/comment.operation';
 export type { IUniverSheetsThreadCommentUIConfig } from './config/config';
+export { menuSchema as SheetsThreadCommentUIMenuSchema } from './menu/schema';
+export { UniverSheetsThreadCommentMobileUIPlugin } from './mobile-plugin';
 export { UniverSheetsThreadCommentUIPlugin } from './plugin';
 export { SheetsThreadCommentPopupService } from './services/sheets-thread-comment-popup.service';
-export { IThreadCommentDataSourceService } from '@univerjs/thread-comment';
-export {
-    AddCommentCommand,
-    DeleteCommentCommand,
-    DeleteCommentTreeCommand,
-    ResolveCommentCommand,
-    UpdateCommentCommand,
-} from '@univerjs/thread-comment';
-export type {
-    IAddCommentCommandParams,
-    IDeleteCommentCommandParams,
-    IDeleteCommentTreeCommandParams,
-    IResolveCommentCommandParams,
-    IUpdateCommentCommandParams,
-} from '@univerjs/thread-comment';
-export { UniverThreadCommentUIPlugin } from '@univerjs/thread-comment-ui';

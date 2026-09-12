@@ -15,13 +15,30 @@
  */
 
 import type { IUniverUIConfig } from './config/config';
-import { DependentOn, generateRandomId, IConfigService, IConfirmService, IContextService, ILocalStorageService, Inject, Injector, merge, mergeOverrideWithDependencies, Plugin, registerDependencies, touchDependencies } from '@univerjs/core';
+import {
+    DependentOn,
+    generateRandomId,
+    IConfigService,
+    IConfirmService,
+    IContextService,
+    ILocalStorageService,
+    Inject,
+    Injector,
+    merge,
+    mergeOverrideWithDependencies,
+    Plugin,
+    registerDependencies,
+    touchDependencies,
+} from '@univerjs/core';
 import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
 import pkg from '../package.json';
 import { ComponentManager } from './common/component-manager';
+import { IconManager } from './common/icon-manager';
 import { ZIndexManager } from './common/z-index-manager';
 import { defaultPluginConfig, UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { ErrorController } from './controllers/error/error.controller';
+import { FeatureSearchController } from './controllers/feature-search/feature-search.controller';
 import { SharedController } from './controllers/shared-shortcut.controller';
 import { ShortcutPanelController } from './controllers/shortcut-display/shortcut-panel.controller';
 import { DesktopUIController } from './controllers/ui/ui-desktop.controller';
@@ -33,12 +50,10 @@ import { ContextMenuHostService, IContextMenuHostService } from './services/cont
 import { ContextMenuService, IContextMenuService } from './services/contextmenu/contextmenu.service';
 import { DesktopDialogService } from './services/dialog/desktop-dialog.service';
 import { IDialogService } from './services/dialog/dialog.service';
-import { CanvasFloatDomService } from './services/dom/canvas-dom-layer.service';
+import { CanvasFloatDomPreviewService, CanvasFloatDomService } from './services/dom/canvas-dom-layer.service';
 import { FontService, IFontService } from './services/font.service';
 import { DesktopGalleryService } from './services/gallery/desktop-gallery.service';
 import { IGalleryService } from './services/gallery/gallery.service';
-import { DesktopGlobalZoneService } from './services/global-zone/desktop-global-zone.service';
-import { IGlobalZoneService } from './services/global-zone/global-zone.service';
 import { DesktopLayoutService, ILayoutService } from './services/layout/layout.service';
 import { DesktopLocalFileService } from './services/local-file/desktop-local-file.service';
 import { ILocalFileService } from './services/local-file/local-file.service';
@@ -51,14 +66,20 @@ import { INotificationService } from './services/notification/notification.servi
 import { IUIPartsService, UIPartsService } from './services/parts/parts.service';
 import { IPlatformService, PlatformService } from './services/platform/platform.service';
 import { CanvasPopupService, ICanvasPopupService } from './services/popup/canvas-popup.service';
+import {
+    IUnitPresenceUIAdapterRegistry,
+    UnitPresenceUIAdapterRegistry,
+} from './services/presence/unit-presence-ui-adapter.service';
+import { IRibbonOverrideService, RibbonOverrideService } from './services/ribbon/ribbon-override.service';
 import { DesktopRibbonService, IRibbonService } from './services/ribbon/ribbon.service';
+import { IUIRuntimeScopeService, UIRuntimeScopeService } from './services/runtime-scope/ui-runtime-scope.service';
 import { ShortcutPanelService } from './services/shortcut/shortcut-panel.service';
 import { IShortcutService, ShortcutService } from './services/shortcut/shortcut.service';
 import { DesktopSidebarService } from './services/sidebar/desktop-sidebar.service';
 import { ISidebarService } from './services/sidebar/sidebar.service';
 import { ThemeSwitcherService } from './services/theme-switcher/theme-switcher.service';
-import { DesktopZenZoneService } from './services/zen-zone/desktop-zen-zone.service';
-import { IZenZoneService } from './services/zen-zone/zen-zone.service';
+import { UndoRedoGroupService } from './services/undo-redo/undo-redo-group.service';
+import { IWorkbenchService, WorkbenchService } from './services/workbench/workbench.service';
 
 export const DISABLE_AUTO_FOCUS_KEY = 'DISABLE_AUTO_FOCUS';
 
@@ -100,42 +121,51 @@ export class UniverUIPlugin extends Plugin {
     override onStarting(): void {
         registerDependencies(this._injector, mergeOverrideWithDependencies([
             [ComponentManager],
+            [IconManager],
+            [ComponentsController],
             [ThemeSwitcherService],
+            [UndoRedoGroupService],
             [ZIndexManager],
             [ShortcutPanelService],
             [IUIPartsService, { useClass: UIPartsService }],
+            [IWorkbenchService, { useClass: WorkbenchService }],
             [ILayoutService, { useClass: DesktopLayoutService }],
             [IRibbonService, { useClass: DesktopRibbonService }],
+            [IRibbonOverrideService, { useClass: RibbonOverrideService }],
             [IShortcutService, { useClass: ShortcutService }],
             [IPlatformService, { useClass: PlatformService }],
+            [IUnitPresenceUIAdapterRegistry, { useClass: UnitPresenceUIAdapterRegistry }],
             [IMenuManagerService, { useClass: MenuManagerService }],
             [IContextMenuHostService, { useClass: ContextMenuHostService }],
             [IContextMenuService, { useClass: ContextMenuService }],
+            [IUIRuntimeScopeService, { useClass: UIRuntimeScopeService }],
             [IClipboardInterfaceService, { useClass: BrowserClipboardService, lazy: true }],
             [INotificationService, { useClass: DesktopNotificationService, lazy: true }],
             [IGalleryService, { useClass: DesktopGalleryService, lazy: true }],
             [IDialogService, { useClass: DesktopDialogService, lazy: true }],
             [IConfirmService, { useClass: DesktopConfirmService, lazy: true }],
             [ISidebarService, { useClass: DesktopSidebarService, lazy: true }],
-            [IZenZoneService, { useClass: DesktopZenZoneService, lazy: true }],
-            [IGlobalZoneService, { useClass: DesktopGlobalZoneService, lazy: true }],
-            [IMessageService, { useClass: DesktopMessageService, lazy: true }],
+            // Mount the message host before a command can publish its first error.
+            [IMessageService, { useClass: DesktopMessageService }],
             [ILocalStorageService, { useClass: DesktopLocalStorageService, lazy: true }],
             [IBeforeCloseService, { useClass: DesktopBeforeCloseService }],
             [ILocalFileService, { useClass: DesktopLocalFileService }],
             [ICanvasPopupService, { useClass: CanvasPopupService }],
             [IFontService, { useClass: FontService }],
             [CanvasFloatDomService],
+            [CanvasFloatDomPreviewService],
             [IUIController, {
                 useFactory: (injector: Injector) => injector.createInstance(DesktopUIController, this._config),
                 deps: [Injector],
             }],
             [SharedController],
             [ErrorController],
+            [FeatureSearchController],
             [ShortcutPanelController],
         ], this._config.override));
 
         touchDependencies(this._injector, [
+            [ComponentsController],
             [IUIController],
             [ErrorController],
         ]);
@@ -144,6 +174,7 @@ export class UniverUIPlugin extends Plugin {
     override onReady(): void {
         touchDependencies(this._injector, [
             [SharedController],
+            [FeatureSearchController],
         ]);
     }
 

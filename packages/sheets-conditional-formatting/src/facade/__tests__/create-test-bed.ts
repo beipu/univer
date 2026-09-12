@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-/* eslint-disable max-lines-per-function */
-
 import type { Dependency, IWorkbookData, UnitModel } from '@univerjs/core';
 import type { IRender } from '@univerjs/engine-render';
 import {
@@ -33,18 +31,45 @@ import {
     UniverInstanceType,
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
-import { ActiveDirtyManagerService, DefinedNamesService, FormulaDataModel, IActiveDirtyManagerService, IDefinedNamesService, ISheetRowFilteredService, LexerTreeBuilder, RegisterOtherFormulaService, SheetRowFilteredService } from '@univerjs/engine-formula';
-import { Engine, IRenderingEngine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
+import {
+    ActiveDirtyManagerService,
+    DefinedNamesService,
+    DescriptionService,
+    FormulaCalculationSessionController,
+    FormulaCalculationSessionService,
+    FormulaDataModel,
+    FunctionService,
+    IActiveDirtyManagerService,
+    IDefinedNamesService,
+    IDescriptionService,
+    IFunctionService,
+    IRegisterFunctionService,
+    ISheetRowFilteredService,
+    ISuperTableService,
+    LexerTreeBuilder,
+    RegisterFunctionService,
+    RegisterOtherFormulaService,
+    SheetRowFilteredService,
+    SuperTableService,
+} from '@univerjs/engine-formula';
+import { Engine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
 import {
     RefRangeService,
     SheetInterceptorService,
     SheetSkeletonService,
     SheetsSelectionsService,
 } from '@univerjs/sheets';
-import { ConditionalFormattingFormulaService, ConditionalFormattingRuleModel, ConditionalFormattingService, ConditionalFormattingViewModel } from '@univerjs/sheets-conditional-formatting';
+import {
+    ConditionalFormattingFormulaService,
+    ConditionalFormattingRangeIndexModel,
+    ConditionalFormattingRangeTransformService,
+    ConditionalFormattingRuleModel,
+    ConditionalFormattingService,
+    ConditionalFormattingStyleComposer,
+    ConditionalFormattingViewModel,
+} from '@univerjs/sheets-conditional-formatting';
 import enUS from '@univerjs/sheets/locale/en-US';
 import zhCN from '@univerjs/sheets/locale/zh-CN';
-
 import '@univerjs/sheets/facade';
 import '@univerjs/sheets-conditional-formatting/facade';
 
@@ -135,20 +160,28 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
             const injector = this._injector;
             injector.add([SheetsSelectionsService]);
             injector.add([SheetInterceptorService]);
-            injector.add([IRenderingEngine, { useFactory: () => new Engine() }]);
             injector.add([IRenderManagerService, { useClass: RenderManagerServiceTestBed }]);
             injector.add([SheetSkeletonService]);
             injector.add([FormulaDataModel]);
             injector.add([LexerTreeBuilder]);
             injector.add([RefRangeService]);
+            injector.add([IFunctionService, { useClass: FunctionService }]);
             injector.add([IDefinedNamesService, { useClass: DefinedNamesService }]);
+            injector.add([ISuperTableService, { useClass: SuperTableService }]);
+            injector.add([IDescriptionService, { useClass: DescriptionService }]);
+            injector.add([IRegisterFunctionService, { useClass: RegisterFunctionService }]);
+            injector.add([FormulaCalculationSessionService]);
+            injector.add([FormulaCalculationSessionController]);
 
             // register feature modules
             ([
                 // conditional formatting
                 [ConditionalFormattingService],
                 [ConditionalFormattingFormulaService],
+                [ConditionalFormattingRangeTransformService],
+                [ConditionalFormattingStyleComposer],
                 [ConditionalFormattingRuleModel],
+                [ConditionalFormattingRangeIndexModel],
                 [ConditionalFormattingViewModel],
                 [RegisterOtherFormulaService],
                 [IActiveDirtyManagerService, { useClass: ActiveDirtyManagerService }],
@@ -160,6 +193,7 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
             dependencies?.forEach((d) => injector.add(d));
 
             this._injector.get(SheetInterceptorService);
+            this._injector.get(FormulaCalculationSessionController);
             this._injector.get(ConditionalFormattingService);
             this._injector.get(ConditionalFormattingViewModel);
         }
@@ -175,7 +209,7 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
     // load theme service
     const themeService = injector.get(ThemeService);
     const theme = themeService.getCurrentTheme();
-    const newTheme = set(theme, 'black', '#35322b');
+    const newTheme = set(theme, 'gray.1000', '#35322b');
     themeService.setTheme(newTheme);
 
     // register builtin plugins

@@ -15,12 +15,12 @@
  */
 
 const locale = {
-    formula: {
+    'sheets-formula': {
         progress: {
-            analyzing: 'Analyzing',
-            calculating: 'Calculating',
-            'array-analysis': 'Array Analysis',
-            'array-calculation': 'Array Calculation',
+            analyzing: 'Analyzing formulas...',
+            calculating: 'Calculating formulas...',
+            'array-analysis': 'Analyzing array formulas...',
+            'array-calculation': 'Calculating array formulas...',
             done: 'Done',
         },
     },

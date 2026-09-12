@@ -16,12 +16,15 @@
 
 import type { Injector } from '@univerjs/core';
 import type { FormulaDependencyTreeVirtual } from '../../dependency/dependency-tree';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ErrorType } from '../../../basics/error-type';
 import { IFormulaCurrentConfigService } from '../../../services/current-data.service';
 import { IOtherFormulaManagerService } from '../../../services/other-formula-manager.service';
 import { IFormulaRuntimeService } from '../../../services/runtime.service';
 import { FormulaDependencyTree } from '../../dependency/dependency-tree';
 import { IFormulaDependencyGenerator } from '../../dependency/formula-dependency';
+import { Interpreter } from '../../interpreter/interpreter';
+import { ErrorValueObject } from '../../value-object/base-value-object';
 import { createCommandTestBed } from './create-command-test-bed';
 
 describe('Test dependency', () => {
@@ -187,6 +190,140 @@ describe('Test dependency', () => {
             const tree2 = treeList[1] as FormulaDependencyTreeVirtual;
             expect(tree2.refOffsetX).toEqual(0);
             expect(tree2.refOffsetY).toEqual(2);
+        });
+
+        it('limits other formulas without sheet dimensions to one result slot', async () => {
+            const formulaId = 'formula.shape-unit_shape_shape_shape-1_test';
+            formulaCurrentConfigService.load({
+                formulaData: {},
+                arrayFormulaCellData: {},
+                arrayFormulaRange: {},
+                forceCalculate: false,
+                dirtyRanges: [],
+                dirtyNameMap: {},
+                dirtyDefinedNameMap: {},
+                dirtyUnitFeatureMap: {},
+                dirtyUnitOtherFormulaMap: {
+                    'shape-unit': {
+                        shape: {
+                            [formulaId]: true,
+                        },
+                    },
+                },
+                excludedCell: {},
+                allUnitData: {
+                    [testUnitId]: testSheetData,
+                },
+            });
+
+            otherFormulaManagerService.batchRegister({
+                'shape-unit': {
+                    shape: {
+                        [formulaId]: {
+                            f: '=1',
+                            ranges: [{
+                                startRow: 0,
+                                endRow: 2,
+                                startColumn: 0,
+                                endColumn: 2,
+                            }],
+                        },
+                    },
+                },
+            });
+
+            const treeList = await formulaDependencyGenerator.generate();
+            const shapeTrees = treeList.filter((tree) => tree.formulaId === formulaId);
+
+            expect(shapeTrees).toHaveLength(1);
+            expect(shapeTrees[0]).toBeInstanceOf(FormulaDependencyTree);
+        });
+
+        it('should generate virtual dependency trees for shared formulas with offsets', async () => {
+            formulaCurrentConfigService.load({
+                formulaData: {
+                    [testUnitId]: {
+                        [testSheetId]: {
+                            0: {
+                                1: {
+                                    f: '=A1',
+                                    si: 'shared-formula-1',
+                                },
+                            },
+                            1: {
+                                1: {
+                                    f: '=A1',
+                                    si: 'shared-formula-1',
+                                    x: 0,
+                                    y: 1,
+                                },
+                            },
+                            2: {
+                                1: {
+                                    f: '=A1',
+                                    si: 'shared-formula-1',
+                                    x: 0,
+                                    y: 2,
+                                },
+                            },
+                        },
+                    },
+                },
+                arrayFormulaCellData: {},
+                arrayFormulaRange: {},
+                forceCalculate: true,
+                dirtyRanges: [],
+                dirtyNameMap: {},
+                dirtyDefinedNameMap: {},
+                dirtyUnitFeatureMap: {},
+                dirtyUnitOtherFormulaMap: {},
+                excludedCell: {},
+                allUnitData: {
+                    [testUnitId]: testSheetData,
+                },
+            });
+
+            const treeList = await formulaDependencyGenerator.generate();
+            const realTree = treeList.find((tree): tree is FormulaDependencyTree => tree instanceof FormulaDependencyTree && tree.row === 0 && tree.column === 1);
+            const virtualTrees = treeList.filter((tree): tree is FormulaDependencyTreeVirtual => !(tree instanceof FormulaDependencyTree));
+
+            expect(realTree?.formula).toBe('=A1');
+            expect(virtualTrees).toHaveLength(2);
+            expect(virtualTrees
+                .map((tree) => [tree.refTree, tree.refOffsetX, tree.refOffsetY])
+                .sort((a, b) => Number(a[2]) - Number(b[2]))).toEqual([
+                [realTree, 0, 1],
+                [realTree, 0, 2],
+            ]);
+        });
+
+        it('ignores a non-reference result while collecting dependency ranges', async () => {
+            formulaCurrentConfigService.load({
+                formulaData: {
+                    [testUnitId]: {
+                        [testSheetId]: {
+                            0: {
+                                0: { f: '=A1' },
+                            },
+                        },
+                    },
+                },
+                arrayFormulaCellData: {},
+                arrayFormulaRange: {},
+                forceCalculate: true,
+                dirtyRanges: [],
+                dirtyNameMap: {},
+                dirtyDefinedNameMap: {},
+                dirtyUnitFeatureMap: {},
+                dirtyUnitOtherFormulaMap: {},
+                excludedCell: {},
+                allUnitData: {
+                    [testUnitId]: testSheetData,
+                },
+            });
+            vi.spyOn(get(Interpreter), 'execute').mockReturnValue(ErrorValueObject.create(ErrorType.REF));
+
+            await expect(formulaDependencyGenerator.generate()).resolves.toHaveLength(1);
         });
     });
 });

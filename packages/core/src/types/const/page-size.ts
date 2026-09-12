@@ -63,3 +63,20 @@ export const PAGE_SIZE: Record<PaperType, Required<ISize>> = {
         height: 1632,
     },
 };
+
+export enum ModernDocumentWidthMode {
+    NARROW = 'narrow',
+    MEDIUM = 'medium',
+    WIDE = 'wide',
+}
+
+export const MODERN_DOCUMENT_WIDTH: Record<ModernDocumentWidthMode, number> = {
+    [ModernDocumentWidthMode.NARROW]: PAGE_SIZE[PaperType.A4].width,
+    [ModernDocumentWidthMode.MEDIUM]: 960,
+    [ModernDocumentWidthMode.WIDE]: PAGE_SIZE[PaperType.A3].width,
+};
+
+export const MODERN_DOCUMENT_DEFAULT_MARGIN = 50 / 0.75;
+
+/** Default margin for a paginated Traditional document, in 96-DPI layout pixels. */
+export const TRADITIONAL_DOCUMENT_DEFAULT_MARGIN = 72;

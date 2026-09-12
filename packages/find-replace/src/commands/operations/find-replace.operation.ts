@@ -16,7 +16,6 @@
 
 import type { IOperation } from '@univerjs/core';
 import { CommandType } from '@univerjs/core';
-
 import { IFindReplaceService } from '../../services/find-replace.service';
 
 export const OpenFindDialogOperation: IOperation = {
@@ -47,6 +46,15 @@ export const OpenReplaceDialogOperation: IOperation = {
             findReplaceService.focusFindInput();
         }
 
+        return true;
+    },
+};
+
+export const CloseFindDialogOperation: IOperation = {
+    id: 'ui.operation.close-find-dialog',
+    type: CommandType.OPERATION,
+    handler: (accessor) => {
+        accessor.get(IFindReplaceService).terminate();
         return true;
     },
 };

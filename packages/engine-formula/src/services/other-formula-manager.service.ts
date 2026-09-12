@@ -16,7 +16,6 @@
 
 import type { Nullable } from '@univerjs/core';
 import type { IDirtyUnitOtherFormulaMap, IOtherFormulaData, IOtherFormulaDataItem } from '../basics/common';
-
 import { createIdentifier, Disposable } from '@univerjs/core';
 
 export interface IOtherFormulaManagerSearchParam {
@@ -144,6 +143,6 @@ export class OtherFormulaManagerService extends Disposable implements IOtherForm
     }
 }
 
-export const IOtherFormulaManagerService = createIdentifier<OtherFormulaManagerService>(
+export const IOtherFormulaManagerService = createIdentifier<IOtherFormulaManagerService>(
     'univer.formula.other-formula-manager.service'
 );

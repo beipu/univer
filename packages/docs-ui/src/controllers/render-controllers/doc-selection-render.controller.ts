@@ -15,20 +15,49 @@
  */
 
 import type { DocumentDataModel, ICommandInfo } from '@univerjs/core';
-import type { IMouseEvent, IPointerEvent, IRenderContext, IRenderModule, RenderComponentType } from '@univerjs/engine-render';
+import type {
+    IMouseEvent,
+    IPointerEvent,
+    IRenderContext,
+    IRenderModule,
+    RenderComponentType,
+} from '@univerjs/engine-render';
 import type { ISetDocZoomRatioOperationParams } from '../../commands/operations/set-doc-zoom-ratio.operation';
-
-import { Disposable, ICommandService, Inject, isInternalEditorID, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import {
+    Disposable,
+    DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
+    DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
+    ICommandService,
+    Inject,
+    isInternalEditorID,
+    IUniverInstanceService,
+    Optional,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSelectionManagerService, DocSkeletonManagerService } from '@univerjs/docs';
-import { CURSOR_TYPE, DocumentEditArea, PageLayoutType, Vector2 } from '@univerjs/engine-render';
+import {
+    CURSOR_TYPE,
+    DocumentEditArea,
+    NORMAL_TEXT_SELECTION_PLUGIN_STYLE,
+    PageLayoutType,
+    Vector2,
+} from '@univerjs/engine-render';
+import { filter, take } from 'rxjs';
 import { neoGetDocObject } from '../../basics/component-tools';
 import { findFirstCursorOffset } from '../../basics/selection';
 import { SetDocZoomRatioOperation } from '../../commands/operations/set-doc-zoom-ratio.operation';
+import {
+    IDocEmbedInteractionBoundaryService,
+    IDocEmbedRuntimeFocusCoordinator,
+} from '../../services/doc-embed-integration.service';
 import { IEditorService } from '../../services/editor/editor-manager.service';
 import { DocSelectionRenderService } from '../../services/selection/doc-selection-render.service';
+import { isEmbedInteractionEvent } from './doc-selection-render.util';
 
 export class DocSelectionRenderController extends Disposable implements IRenderModule {
     private _loadedMap = new WeakSet<RenderComponentType>();
+    private _deferredEditorFocusTimer: ReturnType<typeof setTimeout> | null = null;
+    private _initialSelectionReady = false;
 
     constructor(
         private readonly _context: IRenderContext<DocumentDataModel>,
@@ -37,7 +66,9 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
         @IUniverInstanceService private readonly _instanceSrv: IUniverInstanceService,
         @Inject(DocSelectionRenderService) private readonly _docSelectionRenderService: DocSelectionRenderService,
         @Inject(DocSkeletonManagerService) private readonly _docSkeletonManagerService: DocSkeletonManagerService,
-        @Inject(DocSelectionManagerService) private readonly _docSelectionManagerService: DocSelectionManagerService
+        @Inject(DocSelectionManagerService) private readonly _docSelectionManagerService: DocSelectionManagerService,
+        @Optional(IDocEmbedInteractionBoundaryService) _embedInteractionBoundaryService?: IDocEmbedInteractionBoundaryService,
+        @Optional(IDocEmbedRuntimeFocusCoordinator) private readonly _embedRuntimeFocusCoordinator?: IDocEmbedRuntimeFocusCoordinator
     ) {
         super();
 
@@ -46,10 +77,10 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
 
     private _initialize() {
         this._init();
-        this._skeletonListener();
-        this._commandExecutedListener();
         this._refreshListener();
         this._syncSelection();
+        this._skeletonListener();
+        this._commandExecutedListener();
     }
 
     private _init() {
@@ -77,8 +108,7 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
                 if (unitId !== this._context.unitId) {
                     return;
                 }
-                this._docSelectionRenderService.removeAllRanges();
-                this._docSelectionRenderService.addDocRanges(docRanges, isEditing, options);
+                this._docSelectionRenderService.replaceDocRanges(docRanges, isEditing, options);
             })
         );
     }
@@ -88,6 +118,10 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
             this._docSelectionRenderService.textSelectionInner$
                 .subscribe((params) => {
                     if (params == null) {
+                        return;
+                    }
+
+                    if (!isInternalEditorID(this._context.unitId) && this._isEmbedChildInteractionActive(this._context.unitId)) {
                         return;
                     }
 
@@ -119,39 +153,25 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
             if (this._isEditorReadOnly(unitId)) {
                 return;
             }
+            if (this._isEmbedInteractionEvent(evt, unitId)) {
+                return;
+            }
 
             // FIXME:@Jocs: editor status should not be coupled with the instance service.
-            const docDataModel = this._instanceSrv.getCurrentUnitForType(UniverInstanceType.UNIVER_DOC);
+            const docDataModel = this._instanceSrv.getCurrentUnitOfType(UniverInstanceType.UNIVER_DOC);
             if (docDataModel?.getUnitId() !== unitId) {
                 this._instanceSrv.setCurrentUnitForType(unitId);
             }
-
-            const skeleton = this._docSkeletonManagerService.getSkeleton();
-            const { offsetX, offsetY } = evt;
-            const coord = this._getTransformCoordForDocumentOffset(offsetX, offsetY);
-
-            if (coord != null) {
-                const {
-                    pageLayoutType = PageLayoutType.VERTICAL,
-                    pageMarginLeft,
-                    pageMarginTop,
-                } = document.getOffsetConfig();
-                const { editArea } = skeleton.findEditAreaByCoord(
-                    coord,
-                    pageLayoutType,
-                    pageMarginLeft,
-                    pageMarginTop
-                );
-
-                const viewModel = this._docSkeletonManagerService.getViewModel();
-                const preEditArea = viewModel.getEditArea();
-
-                if (preEditArea !== DocumentEditArea.BODY && editArea !== DocumentEditArea.BODY && editArea !== preEditArea) {
-                    viewModel.setEditArea(editArea);
-                }
+            // Host-owned editors need the current Doc unit for editing commands without replacing the host's global focus.
+            const isSheetEditor = unitId === DOCS_NORMAL_EDITOR_UNIT_ID_KEY || unitId === DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY;
+            if (!isSheetEditor && !this._editorService.getEditorRenderConfig(unitId)?.preserveHostFocus) {
+                this._instanceSrv.focusUnit(unitId);
             }
 
-            this._docSelectionRenderService.__onPointDown(evt);
+            const { offsetX, offsetY } = evt;
+            this._syncEditArea(offsetX, offsetY);
+
+            this._docSelectionRenderService.__onPointDown(evt, true);
 
             if (this._editorService.getEditor(unitId)) {
                 /**
@@ -165,7 +185,11 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
                 this._setEditorFocus(unitId);
                 const { offsetX, offsetY } = evt;
 
-                setTimeout(() => {
+                if (this._deferredEditorFocusTimer != null) {
+                    clearTimeout(this._deferredEditorFocusTimer);
+                }
+                this._deferredEditorFocusTimer = setTimeout(() => {
+                    this._deferredEditorFocusTimer = null;
                     if (unitId === this._editorService.getFocusId() || this._docSelectionRenderService.isOnPointerEvent) {
                         return;
                     }
@@ -183,7 +207,13 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
             if (this._isEditorReadOnly(unitId)) {
                 return;
             }
+            if (this._isEmbedInteractionEvent(evt, unitId)) {
+                return;
+            }
 
+            if (this._editorService.getEditor(unitId)) {
+                this._setEditorFocus(unitId);
+            }
             this._docSelectionRenderService.__handleDblClick(evt);
         }));
 
@@ -191,9 +221,47 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
             if (this._isEditorReadOnly(unitId)) {
                 return;
             }
+            if (this._isEmbedInteractionEvent(evt, unitId)) {
+                return;
+            }
 
             this._docSelectionRenderService.__handleTripleClick(evt);
         }));
+    }
+
+    override dispose(): void {
+        if (this._deferredEditorFocusTimer != null) {
+            clearTimeout(this._deferredEditorFocusTimer);
+            this._deferredEditorFocusTimer = null;
+        }
+        super.dispose();
+    }
+
+    private _syncEditArea(offsetX: number, offsetY: number): void {
+        const coord = this._getTransformCoordForDocumentOffset(offsetX, offsetY);
+        if (coord == null) {
+            return;
+        }
+
+        const { document } = neoGetDocObject(this._context);
+        const {
+            pageLayoutType = PageLayoutType.VERTICAL,
+            pageMarginLeft,
+            pageMarginTop,
+        } = document.getOffsetConfig();
+        const skeleton = this._docSkeletonManagerService.getSkeleton();
+        const { editArea } = skeleton.findEditAreaByCoord(
+            coord,
+            pageLayoutType,
+            pageMarginLeft,
+            pageMarginTop
+        );
+        const viewModel = this._docSkeletonManagerService.getViewModel();
+        const preEditArea = viewModel.getEditArea();
+
+        if (preEditArea !== DocumentEditArea.BODY && editArea !== DocumentEditArea.BODY && editArea !== preEditArea) {
+            viewModel.setEditArea(editArea);
+        }
     }
 
     private _getTransformCoordForDocumentOffset(evtOffsetX: number, evtOffsetY: number) {
@@ -224,6 +292,31 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
         this._editorService.focus(unitId);
     }
 
+    private _isEmbedInteractionEvent(evt: IPointerEvent | IMouseEvent, unitId: string): boolean {
+        if (isInternalEditorID(unitId)) {
+            return false;
+        }
+
+        const target = (evt as Event).target;
+        if (this._embedRuntimeFocusCoordinator?.isChildUnitRuntimeEvent(unitId, target, evt as Event)) {
+            return false;
+        }
+
+        if (this._embedRuntimeFocusCoordinator?.isChildUnitInActiveSession(unitId)) {
+            return false;
+        }
+
+        if (this._embedRuntimeFocusCoordinator?.shouldSuppressHostInteraction(unitId, target, evt as Event)) {
+            return true;
+        }
+
+        return isEmbedInteractionEvent(evt);
+    }
+
+    private _isEmbedChildInteractionActive(unitId: string): boolean {
+        return this._embedRuntimeFocusCoordinator?.shouldSuppressHostInteraction(unitId) === true;
+    }
+
     private _commandExecutedListener() {
         const updateCommandList = [SetDocZoomRatioOperation.id];
 
@@ -238,6 +331,10 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
                     return;
                 }
 
+                if (this._isEmbedChildInteractionActive(documentId)) {
+                    return;
+                }
+
                 this._docSelectionManagerService.refreshSelection();
             }
         })
@@ -247,7 +344,7 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
     private _skeletonListener() {
         // Change text selection runtime(skeleton, scene) and update text selection manager current selection.
         this.disposeWithMe(this._docSkeletonManagerService.currentSkeleton$.subscribe((skeleton) => {
-            if (!skeleton) return;
+            if (!skeleton || this._initialSelectionReady) return;
 
             const { unitId } = this._context;
             const isInternalEditor = isInternalEditorID(unitId);
@@ -256,21 +353,42 @@ export class DocSelectionRenderController extends Disposable implements IRenderM
             // and can be set to the previous cursor position in the future.
             // The skeleton of the editor has not been calculated at this moment, and it is determined whether it is an editor by its ID.
             if (!isInternalEditor) {
+                if (this._isEmbedChildInteractionActive(unitId)) {
+                    return;
+                }
+                this._initialSelectionReady = true;
+
                 //TODO: @JOCS Only for docs. move to docs in the future.
                 this._docSelectionRenderService.focus();
                 const docDataModel = this._context.unit;
                 const snapshot = docDataModel.getSnapshot();
                 const offset = findFirstCursorOffset(snapshot);
-
-                this._docSelectionManagerService.replaceDocRanges([
-                    {
-                        startOffset: offset,
-                        endOffset: offset,
-                    },
-                ], {
+                const selectionTarget = {
                     unitId,
                     subUnitId: unitId,
-                }, false);
+                };
+                this._docSelectionManagerService.replaceSelectionInfoWithoutRefresh({
+                    textRanges: [{
+                        startOffset: offset,
+                        endOffset: offset,
+                        collapsed: true,
+                        isActive: true,
+                    }],
+                    rectRanges: [],
+                    segmentId: '',
+                    segmentPage: -1,
+                    isEditing: false,
+                    style: NORMAL_TEXT_SELECTION_PLUGIN_STYLE,
+                }, selectionTarget);
+                this._docSelectionManagerService.refreshSelection(selectionTarget, false);
+                if (this._docSelectionRenderService.getActiveTextRange() == null) {
+                    this.disposeWithMe(skeleton.layoutProgress$
+                        .pipe(
+                            filter((progress) => progress?.anchorReady === true || progress?.complete === true),
+                            take(1)
+                        )
+                        .subscribe(() => this._docSelectionManagerService.refreshSelection(selectionTarget, false)));
+                }
             }
         }));
     }

@@ -31,7 +31,8 @@ export interface IFRangeSheetsNumfmtMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set the number format of the A1 cell to '#,##0.00'.
      * const fRange = fWorksheet.getRange('A1');
@@ -48,7 +49,8 @@ export interface IFRangeSheetsNumfmtMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set the number formats of the A1:B2 range.
      * const fRange = fWorksheet.getRange('A1:B2');
@@ -59,18 +61,19 @@ export interface IFRangeSheetsNumfmtMixin {
      *   ['#,##0.00', '0.00%'],
      *   ['yyyy-MM-DD', '']
      * ]);
-     * console.log(fRange.getDisplayValues()); // [['1,234.57', '12.34%'], ['2025-01-01', 0.9876]]
+     * console.log(fRange.getDisplayValues()); // [['1,234.57', '12.34%'], ['2025-01-01', '0.9876']]
      * ```
      */
     setNumberFormats(patterns: string[][]): FRange;
 
     /**
-     * Get the number formatting of the top-left cell of the given range. Empty cells return an empty string.
+     * Get the number formatting of the top-left cell of the given range. Returns an empty string when no number format is set, even if the cell contains a value.
      * @returns {string} The number format of the top-left cell of the range.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Get the number format of the top-left cell of the A1:B2 range.
      * const fRange = fWorksheet.getRange('A1:B2');
@@ -85,7 +88,8 @@ export interface IFRangeSheetsNumfmtMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Get the number formats of the A1:B2 range.
      * const fRange = fWorksheet.getRange('A1:B2');
@@ -151,6 +155,5 @@ export class FRangeSheetsNumfmtMixin extends FRange implements IFRangeSheetsNumf
 
 FRange.extend(FRangeSheetsNumfmtMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FRange extends IFRangeSheetsNumfmtMixin { }
 }

@@ -20,20 +20,48 @@ import type { IMenuItem } from './menu';
 import { createIdentifier, Disposable, IConfigService, Inject, Injector, merge } from '@univerjs/core';
 import { Subject } from 'rxjs';
 import { mergeMenuConfigs } from '../../common/menu-merge-configs';
-import { ContextMenuGroup, ContextMenuPosition, MenuManagerPosition, RibbonDataGroup, RibbonFormulasGroup, RibbonInsertGroup, RibbonOthersGroup, RibbonPosition, RibbonStartGroup, RibbonViewGroup } from './types';
+import {
+    ContextMenuGroup,
+    ContextMenuPosition,
+    FloatingObjectToolbarPosition,
+    MenuManagerPosition,
+    RibbonDataGroup,
+    RibbonFormulasGroup,
+    RibbonInsertGroup,
+    RibbonOthersGroup,
+    RibbonPosition,
+    RibbonStartGroup,
+    RibbonViewGroup,
+} from './types';
 
 export const IMenuManagerService = createIdentifier<IMenuManagerService>('univer.menu-manager-service');
 
 export type ContextMenuQuickLayout = 'icon' | 'tile';
+export type ContextMenuQuickLayoutVariant = 'default' | 'compact';
+
+export interface IRibbonGridLayout {
+    row: number;
+    column: number;
+    rowSpan?: number;
+    columnSpan?: number;
+    showLabel?: boolean;
+    width?: number;
+    iconSize?: number;
+}
 
 export interface IMenuSchema {
     key: string;
     order: number;
     title?: string;
+    contextual?: boolean;
     item?: IMenuItem;
+    headerActionItem?: IMenuItem;
     children?: IMenuSchema[];
     quickLayout?: ContextMenuQuickLayout;
+    quickColumns?: number;
+    quickLayoutVariant?: ContextMenuQuickLayoutVariant;
     tiny?: boolean;
+    gridLayout?: IRibbonGridLayout;
 }
 
 export interface IMenuManagerService {
@@ -50,9 +78,16 @@ export interface IMenuManagerService {
 
 export type MenuSchemaType = {
     order?: number;
+    replace?: boolean;
     menuItemFactory?: (accessor: IAccessor) => IMenuItem;
+    headerActionMenuItemFactory?: (accessor: IAccessor) => IMenuItem;
     title?: string;
+    contextual?: boolean;
     quickLayout?: ContextMenuQuickLayout;
+    quickColumns?: number;
+    quickLayoutVariant?: ContextMenuQuickLayoutVariant;
+    tiny?: boolean;
+    gridLayout?: IRibbonGridLayout;
 } | {
     [key: string]: MenuSchemaType;
 };
@@ -64,6 +99,7 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
         [MenuManagerPosition.RIBBON]: {
             [RibbonPosition.START]: {
                 order: 0,
+                title: 'ui.ribbon.start',
                 [RibbonStartGroup.HISTORY]: {
                     order: 0,
                 },
@@ -73,24 +109,32 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
                 [RibbonStartGroup.LAYOUT]: {
                     order: 2,
                 },
-                [RibbonStartGroup.OTHERS]: {
+                [RibbonStartGroup.NUMBER]: {
                     order: 3,
+                },
+                [RibbonStartGroup.OTHERS]: {
+                    order: 4,
                 },
             },
             [RibbonPosition.INSERT]: {
                 order: 1,
+                title: 'ui.ribbon.insert',
                 [RibbonInsertGroup.EDIT]: {
                     order: 0,
                 },
                 [RibbonInsertGroup.MEDIA]: {
                     order: 1,
                 },
-                [RibbonInsertGroup.OTHERS]: {
+                [RibbonInsertGroup.CELL]: {
                     order: 2,
+                },
+                [RibbonInsertGroup.OTHERS]: {
+                    order: 3,
                 },
             },
             [RibbonPosition.FORMULAS]: {
                 order: 2,
+                title: 'ui.ribbon.formulas',
                 [RibbonFormulasGroup.BASIC]: {
                     order: 0,
                 },
@@ -100,6 +144,7 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
             },
             [RibbonPosition.DATA]: {
                 order: 3,
+                title: 'ui.ribbon.data',
                 [RibbonDataGroup.FORMULAS]: {
                     order: 0,
                 },
@@ -115,6 +160,7 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
             },
             [RibbonPosition.VIEW]: {
                 order: 4,
+                title: 'ui.ribbon.view',
                 [RibbonViewGroup.DISPLAY]: {
                     order: 0,
                 },
@@ -127,6 +173,7 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
             },
             [RibbonPosition.OTHERS]: {
                 order: 5,
+                title: 'ui.ribbon.others',
                 [RibbonOthersGroup.OTHERS]: {
                     order: 0,
                 },
@@ -237,6 +284,10 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
                 },
             },
         },
+        [FloatingObjectToolbarPosition.SHEET]: {},
+        [FloatingObjectToolbarPosition.DOC]: {},
+        [FloatingObjectToolbarPosition.SLIDE]: {},
+        [FloatingObjectToolbarPosition.BOARD]: {},
     };
 
     constructor(
@@ -260,12 +311,13 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
 
         for (const [key, value] of Object.entries(_target)) {
             if (key in source) {
-                const _key = key as keyof MenuSchemaType;
-                _target[_key] = merge({}, _target[_key], source[_key]);
+                const targetRecord = _target as Record<string, unknown>;
+                const sourceRecord = source as Record<string, unknown>;
+                targetRecord[key] = mergeMenuSchemaNode(targetRecord[key], sourceRecord[key]);
 
                 this.menuChanged$.next();
-            } else if (typeof value === 'object') {
-                this.mergeMenu(source, value);
+            } else if (isMenuSchemaRecord(value)) {
+                this.mergeMenu(source, value as MenuSchemaType);
             }
         }
     }
@@ -275,15 +327,41 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
         this.menuChanged$.next();
     }
 
+    createScoped(injector: Injector): IMenuManagerService {
+        const root = this;
+        const createScopedBuilder = () => {
+            const service = new MenuManagerService(injector, root._configService);
+            service._menu = root._menu;
+            return service;
+        };
+
+        return {
+            menuChanged$: root.menuChanged$,
+            mergeMenu: (source: MenuSchemaType, target?: MenuSchemaType) => root.mergeMenu(source, target),
+            appendRootMenu: (source: MenuSchemaType) => root.appendRootMenu(source),
+            getMenuByPositionKey: (position: string) => createScopedBuilder().getMenuByPositionKey(position),
+            getFlatMenuByPositionKey: (position: string) => createScopedBuilder().getFlatMenuByPositionKey(position),
+        };
+    }
+
     private _buildMenuSchema(data: MenuSchemaType): IMenuSchema[] {
         const result: IMenuSchema[] = [];
 
         for (const [key, value] of Object.entries(data)) {
+            if (key === 'replace') {
+                continue;
+            }
+
             const menuItem: Partial<IMenuSchema> = {
                 key,
                 order: value.order,
                 title: value.title,
+                contextual: value.contextual,
                 quickLayout: value.quickLayout,
+                quickColumns: value.quickColumns,
+                quickLayoutVariant: value.quickLayoutVariant,
+                tiny: value.tiny,
+                gridLayout: value.gridLayout,
             };
 
             if (value.menuItemFactory) {
@@ -300,6 +378,9 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
                     }
                 }
             }
+            if (value.headerActionMenuItemFactory) {
+                menuItem.headerActionItem = this._injector.invoke(value.headerActionMenuItemFactory);
+            }
             if (typeof value === 'object') {
                 const children = this._buildMenuSchema(value);
                 if (children.length > 0) {
@@ -312,7 +393,7 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
             }
         }
 
-        return result;
+        return result.sort((a, b) => normalizeMenuOrder(a.order) - normalizeMenuOrder(b.order));
     }
 
     /**
@@ -339,7 +420,7 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
             }
         };
 
-        return findKey(this._menu);
+        return findKey(this._menu) ?? [];
     }
 
     /**
@@ -361,4 +442,56 @@ export class MenuManagerService extends Disposable implements IMenuManagerServic
 
         return flatMenuItems(menu);
     }
+}
+
+function normalizeMenuOrder(order: number | undefined): number {
+    return order ?? 0;
+}
+
+function isMenuSchemaRecord(value: unknown): value is Record<string, unknown> {
+    return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneMenuSchemaNode<T>(source: T, preserveReplace = false): T {
+    if (!isMenuSchemaRecord(source)) {
+        return source;
+    }
+
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source)) {
+        if (key === 'replace' && !preserveReplace) {
+            continue;
+        }
+
+        result[key] = cloneMenuSchemaNode(value, preserveReplace);
+    }
+
+    return result as T;
+}
+
+function mergeMenuSchemaNode(target: unknown, source: unknown): unknown {
+    if (!isMenuSchemaRecord(source) || !isMenuSchemaRecord(target)) {
+        return cloneMenuSchemaNode(source);
+    }
+
+    if (source.replace === true) {
+        return cloneMenuSchemaNode(source, true);
+    }
+
+    if (target.replace === true) {
+        return cloneMenuSchemaNode(target, true);
+    }
+
+    const result = merge({}, target) as Record<string, unknown>;
+    for (const [key, value] of Object.entries(source)) {
+        if (key === 'replace') {
+            continue;
+        }
+
+        result[key] = key in result
+            ? mergeMenuSchemaNode(result[key], value)
+            : cloneMenuSchemaNode(value, true);
+    }
+
+    return result;
 }

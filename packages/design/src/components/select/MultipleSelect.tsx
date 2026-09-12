@@ -92,7 +92,7 @@ export function MultipleSelect(props: IMultipleSelectProps) {
                 },
             };
         });
-    }, [options]);
+    }, [onChange, options, value]);
 
     function handleClose(item: string) {
         const newValue = value.filter((v) => v !== item);
@@ -141,7 +141,7 @@ export function MultipleSelect(props: IMultipleSelectProps) {
                 <MoreDownIcon
                     className={`
                       univer-flex-shrink-0
-                      dark:!univer-text-white
+                      dark:!univer-text-gray-0
                     `}
                 />
             </div>

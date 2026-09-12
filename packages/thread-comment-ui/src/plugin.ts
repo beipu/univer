@@ -16,15 +16,27 @@
 
 import type { Dependency } from '@univerjs/core';
 import type { IUniverThreadCommentUIConfig } from './config/config';
-import { DependentOn, ICommandService, IConfigService, Inject, Injector, merge, mergeOverrideWithDependencies, Plugin, UniverInstanceType } from '@univerjs/core';
+import {
+    DependentOn,
+    ICommandService,
+    IConfigService,
+    Inject,
+    Injector,
+    merge,
+    mergeOverrideWithDependencies,
+    Plugin,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { UniverDocsUIPlugin } from '@univerjs/docs-ui';
 import { UniverThreadCommentPlugin } from '@univerjs/thread-comment';
 import pkg from '../package.json';
 import { SetActiveCommentOperation } from './commands/operations/comment.operations';
 import { defaultPluginConfig, THREAD_COMMENT_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { ThreadCommentDraftService } from './services/thread-comment-draft.service';
 import { ThreadCommentPanelService } from './services/thread-comment-panel.service';
 import { PLUGIN_NAME } from './types/const';
 
-@DependentOn(UniverThreadCommentPlugin)
+@DependentOn(UniverThreadCommentPlugin, UniverDocsUIPlugin)
 export class UniverThreadCommentUIPlugin extends Plugin {
     static override pluginName = PLUGIN_NAME;
     static override packageName = pkg.name;
@@ -53,6 +65,7 @@ export class UniverThreadCommentUIPlugin extends Plugin {
 
     override onStarting(): void {
         (mergeOverrideWithDependencies([
+            [ThreadCommentDraftService],
             [ThreadCommentPanelService],
         ], this._config?.overrides) as Dependency[]).forEach((dep) => {
             this._injector.add(dep);

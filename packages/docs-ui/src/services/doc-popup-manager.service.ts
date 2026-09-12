@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { INeedCheckDisposable, ITextRangeParam } from '@univerjs/core';
+import type { IDisposable, INeedCheckDisposable, Injector, ITextRangeParam } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { BaseObject, Documents, IBoundRectNoAngle, IRender, Scene } from '@univerjs/engine-render';
 import type { IPopup } from '@univerjs/ui';
@@ -85,9 +85,13 @@ export function transformOffset2Bound(offsetX: number, offsetY: number, scene: S
 }
 
 export interface IDocCanvasPopup extends Omit<IPopup, 'anchorRect$' | 'children' | 'unitId' | 'subUnitId' | 'canvasElement'> {
+    /** Defaults to true. Passive hover affordances can track layout without holding it. */
+    requiresStableLayout?: boolean;
     mask?: boolean;
-    extraProps?: Record<string, any>;
+    extraProps?: Record<string, unknown>;
     multipleDirection?: IPopup['direction'];
+    /** Anchor at the focus end while retaining the entire selection for outside-click exclusion. */
+    rangeAnchor?: 'selection-end';
 }
 
 export const calcDocRangePositions = (range: ITextRangeParam, currentRender: IRender): IBoundRectNoAngle[] | undefined => {
@@ -95,7 +99,8 @@ export const calcDocRangePositions = (range: ITextRangeParam, currentRender: IRe
     const skeleton = currentRender.with(DocSkeletonManagerService).getSkeleton();
     const startPosition = skeleton.findNodePositionByCharIndex(range.startOffset, true, range.segmentId, range.segmentPage);
     const endIndex = range.collapsed ? range.startOffset : range.endOffset - 1;
-    const endPosition = skeleton.findNodePositionByCharIndex(endIndex, true, range.segmentId, range.segmentPage);
+    // Include the last glyph in the anchor and its outside-click exclusion.
+    const endPosition = skeleton.findNodePositionByCharIndex(endIndex, range.collapsed === true, range.segmentId, range.segmentPage);
     const document = mainComponent as Documents;
 
     if (!endPosition || !startPosition) {
@@ -105,6 +110,10 @@ export const calcDocRangePositions = (range: ITextRangeParam, currentRender: IRe
     const documentOffsetConfig = document.getOffsetConfig();
     const { docsLeft, docsTop } = documentOffsetConfig;
     const canvasElement = engine.getCanvasElement();
+    if (canvasElement == null) {
+        return;
+    }
+
     const canvasClientRect = canvasElement.getBoundingClientRect();
     const widthOfCanvas = pxToNum(canvasElement.style.width); // declared width
     const { top, left, width } = canvasClientRect; // real width affected by scale
@@ -125,6 +134,10 @@ export const calcDocRangePositions = (range: ITextRangeParam, currentRender: IRe
 };
 
 export class DocCanvasPopManagerService extends Disposable {
+    private readonly _popupCountByUnit = new Map<string, number>();
+    private readonly _popupUnits$ = new BehaviorSubject<ReadonlySet<string>>(new Set());
+    readonly popupUnits$ = this._popupUnits$.asObservable();
+
     constructor(
         @Inject(ICanvasPopupService) private readonly _globalPopupManagerService: ICanvasPopupService,
         @IRenderManagerService private readonly _renderManagerService: IRenderManagerService,
@@ -134,11 +147,63 @@ export class DocCanvasPopManagerService extends Disposable {
         super();
     }
 
+    override dispose(): void {
+        this._popupCountByUnit.clear();
+        this._popupUnits$.next(new Set());
+        this._popupUnits$.complete();
+        super.dispose();
+    }
+
+    private _beginPopupActivity(unitId: string): IDisposable {
+        this._popupCountByUnit.set(unitId, (this._popupCountByUnit.get(unitId) ?? 0) + 1);
+        this._publishPopupUnits();
+
+        let disposed = false;
+        return {
+            dispose: () => {
+                if (disposed) {
+                    return;
+                }
+                disposed = true;
+
+                const count = this._popupCountByUnit.get(unitId) ?? 0;
+                if (count <= 1) {
+                    this._popupCountByUnit.delete(unitId);
+                } else {
+                    this._popupCountByUnit.set(unitId, count - 1);
+                }
+                this._publishPopupUnits();
+            },
+        };
+    }
+
+    private _publishPopupUnits(): void {
+        this._popupUnits$.next(new Set(this._popupCountByUnit.keys()));
+    }
+
+    getRangeBounds(range: ITextRangeParam, unitId: string): IBoundRectNoAngle[] | undefined {
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
+        return currentRender ? calcDocRangePositions(range, currentRender) : undefined;
+    }
+
+    private _shouldUpdateForCommand(commandInfo: { id: string; params?: unknown }, unitId: string): boolean {
+        if (commandInfo.id !== SetDocZoomRatioOperation.id && commandInfo.id !== RichTextEditingMutation.id) {
+            return false;
+        }
+
+        const params = commandInfo.params as IRichTextEditingMutationParams | undefined;
+        return params?.unitId == null || params.unitId === unitId;
+    }
+
     private _createRectPositionObserver(rect: IBoundRectNoAngle | (() => IBoundRectNoAngle), currentRender: IRender) {
         const calc = () => {
             const { scene, engine } = currentRender;
             const bound: IBoundRectNoAngle = typeof rect === 'function' ? rect() : rect;
             const canvasElement = engine.getCanvasElement();
+            if (canvasElement == null) {
+                return;
+            }
+
             const canvasClientRect = canvasElement.getBoundingClientRect();
             const widthOfCanvas = pxToNum(canvasElement.style.width); // declared width
 
@@ -156,29 +221,46 @@ export class DocCanvasPopManagerService extends Disposable {
         };
 
         const position = calc();
-        const position$ = new BehaviorSubject(position);
-        const disposable = new DisposableCollection();
+        if (position == null) {
+            throw new Error(`Current render canvas not found, unitId: ${currentRender.unitId}`);
+        }
 
-        disposable.add(this._commandService.onCommandExecuted((commandInfo) => {
-            if (commandInfo.id === SetDocZoomRatioOperation.id || commandInfo.id === RichTextEditingMutation.id) {
+        const position$ = new BehaviorSubject<IBoundRectNoAngle>(position);
+        const disposable = new DisposableCollection();
+        const updatePosition = () => {
+            try {
                 const newPosition = calc();
                 if (newPosition) {
                     position$.next(newPosition);
                 }
+            } catch {
+                // The popup may outlive an embedded render while its host switches tabs.
+                // Keep the last anchor until the popup is disposed.
+            }
+        };
+
+        disposable.add(this._commandService.onCommandExecuted((commandInfo) => {
+            if (this._shouldUpdateForCommand(commandInfo, currentRender.unitId)) {
+                updatePosition();
             }
         }));
 
         const viewMain = currentRender.scene.getViewport(VIEWPORT_KEY.VIEW_MAIN);
         if (viewMain) {
             disposable.add(viewMain.onScrollAfter$.subscribeEvent(() => {
-                position$.next(calc());
+                updatePosition();
             }));
         }
+
+        disposable.add(currentRender.scene.onTransformChange$.subscribeEvent(() => {
+            updatePosition();
+        }));
 
         return {
             position,
             position$,
             disposable,
+            updatePosition,
         };
     }
 
@@ -197,35 +279,43 @@ export class DocCanvasPopManagerService extends Disposable {
             return bound;
         };
 
-        return this._createRectPositionObserver(getBound, currentRender);
+        const observer = this._createRectPositionObserver(getBound, currentRender);
+        observer.disposable.add(targetObject.onTransformChange$.subscribeEvent(observer.updatePosition));
+        return observer;
     }
 
     private _createRangePositionObserver(range: ITextRangeParam, currentRender: IRender) {
         const positions = calcDocRangePositions(range, currentRender) ?? [];
         const positions$ = new BehaviorSubject(positions);
         const disposable = new DisposableCollection();
+        const updatePositions = () => {
+            try {
+                const position = calcDocRangePositions(range, currentRender);
+                if (position) {
+                    positions$.next(position);
+                }
+            } catch {
+                // The popup may outlive an embedded render while its host switches tabs.
+                // Keep the last anchor until the popup is disposed.
+            }
+        };
 
         disposable.add(this._commandService.onCommandExecuted((commandInfo) => {
-            if (commandInfo.id === SetDocZoomRatioOperation.id || commandInfo.id === RichTextEditingMutation.id) {
-                const params = commandInfo.params as IRichTextEditingMutationParams;
-                if (params.unitId === currentRender.unitId) {
-                    const position = calcDocRangePositions(range, currentRender);
-                    if (position) {
-                        positions$.next(position);
-                    }
-                }
+            if (this._shouldUpdateForCommand(commandInfo, currentRender.unitId)) {
+                updatePositions();
             }
         }));
 
         const viewMain = currentRender.scene.getViewport(VIEWPORT_KEY.VIEW_MAIN);
         if (viewMain) {
             disposable.add(viewMain.onScrollAfter$.subscribeEvent(() => {
-                const position = calcDocRangePositions(range, currentRender);
-                if (position) {
-                    positions$.next(position);
-                }
+                updatePositions();
             }));
         }
+
+        disposable.add(currentRender.scene.onTransformChange$.subscribeEvent(() => {
+            updatePositions();
+        }));
 
         return {
             positions,
@@ -234,29 +324,34 @@ export class DocCanvasPopManagerService extends Disposable {
         };
     }
 
-    attachPopupToRect(rect: IBoundRectNoAngle, popup: IDocCanvasPopup, unitId: string): INeedCheckDisposable {
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+    attachPopupToRect(rect: IBoundRectNoAngle | (() => IBoundRectNoAngle), popup: IDocCanvasPopup, unitId: string): INeedCheckDisposable {
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         if (!currentRender) {
             throw new Error(`Current render not found, unitId: ${unitId}`);
         }
+        const popupInjector = this._resolveEmbeddedPopupInjector(unitId, currentRender);
+        const popupManagerService = this._resolvePopupManagerService(popupInjector);
 
         const { position, position$, disposable } = this._createRectPositionObserver(rect, currentRender);
-        const id = this._globalPopupManagerService.addPopup({
+        const id = popupManagerService.addPopup({
             ...popup,
             unitId,
             subUnitId: 'default',
+            connectorInjector: popupInjector,
             anchorRect: position,
             anchorRect$: position$,
             canvasElement: currentRender.engine.getCanvasElement(),
         });
+        const popupActivity = popup.requiresStableLayout === false ? null : this._beginPopupActivity(unitId);
 
         return {
             dispose: () => {
-                this._globalPopupManagerService.removePopup(id);
+                popupManagerService.removePopup(id);
                 position$.complete();
                 disposable.dispose();
+                popupActivity?.dispose();
             },
-            canDispose: () => this._globalPopupManagerService.activePopupId !== id,
+            canDispose: () => popupManagerService.activePopupId !== id,
         };
     }
 
@@ -268,28 +363,33 @@ export class DocCanvasPopManagerService extends Disposable {
      * @returns disposable
      */
     attachPopupToObject(targetObject: BaseObject, popup: IDocCanvasPopup, unitId: string): INeedCheckDisposable {
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         if (!currentRender) {
             throw new Error(`Current render not found, unitId: ${unitId}`);
         }
+        const popupInjector = this._resolveEmbeddedPopupInjector(unitId, currentRender);
+        const popupManagerService = this._resolvePopupManagerService(popupInjector);
 
         const { position, position$, disposable } = this._createObjectPositionObserver(targetObject, currentRender);
-        const id = this._globalPopupManagerService.addPopup({
+        const id = popupManagerService.addPopup({
             ...popup,
             unitId,
             subUnitId: 'default',
+            connectorInjector: popupInjector,
             anchorRect: position,
             anchorRect$: position$,
             canvasElement: currentRender.engine.getCanvasElement(),
         });
+        const popupActivity = popup.requiresStableLayout === false ? null : this._beginPopupActivity(unitId);
 
         return {
             dispose: () => {
-                this._globalPopupManagerService.removePopup(id);
+                popupManagerService.removePopup(id);
                 position$.complete();
                 disposable.dispose();
+                popupActivity?.dispose();
             },
-            canDispose: () => this._globalPopupManagerService.activePopupId !== id,
+            canDispose: () => popupManagerService.activePopupId !== id,
         };
     }
 
@@ -308,19 +408,31 @@ export class DocCanvasPopManagerService extends Disposable {
             throw new Error(`Document not found, unitId: ${unitId}`);
         }
         const { direction = 'top', multipleDirection } = popup;
-        const currentRender = this._renderManagerService.getRenderById(unitId);
+        const currentRender = this._renderManagerService.getRenderUnitById(unitId);
         if (!currentRender) {
             throw new Error(`Current render not found, unitId: ${unitId}`);
         }
+        const popupInjector = this._resolveEmbeddedPopupInjector(unitId, currentRender);
+        const popupManagerService = this._resolvePopupManagerService(popupInjector);
 
         const { positions: bounds, positions$: bounds$, disposable } = this._createRangePositionObserver(range, currentRender);
-        const position$ = bounds$.pipe(map((bounds) => direction.includes('top') ? bounds[0] : bounds[bounds.length - 1]));
+        const getAnchor = (bounds: IBoundRectNoAngle[]) => {
+            if (popup.rangeAnchor === 'selection-end') {
+                const backward = range.direction === 'backward';
+                const bound = backward ? bounds[0] : bounds[bounds.length - 1];
+                const x = backward ? bound.left : bound.right;
+                return { ...bound, left: x, right: x };
+            }
+            return direction.includes('top') ? bounds[0] : bounds[bounds.length - 1];
+        };
+        const position$ = bounds$.pipe(map(getAnchor));
 
-        const id = this._globalPopupManagerService.addPopup({
+        const id = popupManagerService.addPopup({
             ...popup,
             unitId,
             subUnitId: 'default',
-            anchorRect: direction.includes('top') ? bounds[0] : bounds[bounds.length - 1],
+            connectorInjector: popupInjector,
+            anchorRect: getAnchor(bounds),
             anchorRect$: position$,
             excludeRects: bounds,
             excludeRects$: bounds$,
@@ -331,15 +443,31 @@ export class DocCanvasPopManagerService extends Disposable {
                 : direction,
             canvasElement: currentRender.engine.getCanvasElement(),
         });
+        const popupActivity = popup.requiresStableLayout === false ? null : this._beginPopupActivity(unitId);
 
         return {
             dispose: () => {
-                this._globalPopupManagerService.removePopup(id);
+                popupManagerService.removePopup(id);
                 bounds$.complete();
                 disposable.dispose();
+                popupActivity?.dispose();
             },
-            canDispose: () => this._globalPopupManagerService.activePopupId !== id,
+            canDispose: () => popupManagerService.activePopupId !== id,
         };
     }
     // #endregion
+
+    private _resolveEmbeddedPopupInjector(unitId: string, currentRender: IRender): Injector | undefined {
+        const isEmbeddedRender = currentRender.isMainScene === false ||
+            this._univerInstanceService.getUnitCreateOptions(unitId)?.embeddedRender === true;
+        return isEmbeddedRender
+            ? currentRender.getInjector?.()
+            : undefined;
+    }
+
+    private _resolvePopupManagerService(popupInjector: Injector | undefined): ICanvasPopupService {
+        return popupInjector?.has(ICanvasPopupService)
+            ? popupInjector.get(ICanvasPopupService)
+            : this._globalPopupManagerService;
+    }
 }

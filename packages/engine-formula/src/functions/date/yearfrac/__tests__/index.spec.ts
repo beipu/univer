@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { DateSystem } from '@univerjs/core';
 import { describe, expect, it } from 'vitest';
 import { ErrorType } from '../../../../basics/error-type';
 import { ArrayValueObject, transformToValueObject } from '../../../../engine/value-object/array-value-object';
@@ -36,6 +37,38 @@ describe('Test yearfrac function', () => {
             const basis = NumberValueObject.create(1);
             result = testFunction.calculate(startDate, endDate, basis);
             expect(result.getValue()).toStrictEqual(9.102107856556255);
+        });
+
+        it('uses the configured date system for numeric serials', () => {
+            const startDate = NumberValueObject.create(0);
+            const endDate = NumberValueObject.create(365);
+            const basis = NumberValueObject.create(1);
+
+            testFunction.setDateSystem(DateSystem.Date1900);
+            expect(testFunction.calculate(startDate, endDate, basis).getValue()).toBe(1);
+
+            testFunction.setDateSystem(DateSystem.Date1904);
+            expect(testFunction.calculate(startDate, endDate, basis).getValue()).toBeCloseTo(0.9972677596, 10);
+
+            testFunction.setDateSystem(DateSystem.Date1900);
+        });
+
+        it('matches Excel basis 0 for February month-end dates', () => {
+            const startDate = NumberValueObject.create(44620);
+            const endDate = NumberValueObject.create(44985);
+
+            const result = testFunction.calculate(startDate, endDate);
+
+            expect(result.getValue()).toStrictEqual(1);
+        });
+
+        it('does not apply the February month-end rule to non-February start dates', () => {
+            const startDate = NumberValueObject.create(44804);
+            const endDate = NumberValueObject.create(44985);
+
+            const result = testFunction.calculate(startDate, endDate);
+
+            expect(result.getValue()).toBeCloseTo(0.494444444444444, 15);
         });
 
         it('value is normal, endDate < startDate', () => {
@@ -91,6 +124,19 @@ describe('Test yearfrac function', () => {
             const endDate = StringValueObject.create('2021-12-31');
             const result = testFunction.calculate(startDate, endDate);
             expect(result.getValue()).toStrictEqual(ErrorType.VALUE);
+        });
+        it('checks the serial-zero boundary in both date systems', () => {
+            const startDate = NumberValueObject.create(0);
+            const endDate = NumberValueObject.create(366);
+            const basis = NumberValueObject.create(1);
+
+            testFunction.setDateSystem(DateSystem.Date1900);
+            expect(testFunction.calculate(startDate, endDate, basis).getValue()).toBe(1.0027397260273974);
+
+            testFunction.setDateSystem(DateSystem.Date1904);
+            expect(testFunction.calculate(startDate, endDate, basis).getValue()).toBe(1);
+
+            testFunction.setDateSystem(DateSystem.Date1900);
         });
     });
 });

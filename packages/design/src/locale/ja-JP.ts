@@ -18,6 +18,20 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'バッジを閉じる',
+            close: '閉じる',
+            menu: 'メニュー',
+            previous: '前へ',
+            next: '次へ',
+            imageGallery: '画像ギャラリー',
+            image: '画像 {0}/{1}',
+            zoomIn: '拡大',
+            zoomOut: '縮小',
+            resetZoom: 'ズームをリセット',
+            increment: '増加',
+            decrement: '減少',
+        },
         Confirm: {
             cancel: 'キャンセル',
             confirm: '確認',
@@ -42,9 +56,12 @@ const locale: typeof enUS = {
                 '11月',
                 '12月',
             ],
-        },
-        Select: {
-            empty: '該当なし',
+            ariaLabels: {
+                previousMonth: '前の月',
+                nextMonth: '次の月',
+                selectYear: '年を選択',
+                selectMonth: '月を選択',
+            },
         },
         ColorPicker: {
             more: 'その他の色',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: '菱形',
             offset: 'オフセット',
             angle: '角度',
-            flip: '反転',
             delete: '削除',
+            transparency: '透明度',
         },
     },
 };

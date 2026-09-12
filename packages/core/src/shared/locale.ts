@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-import { merge } from '../common/lodash';
-
 export type LanguageValue = string | string[] | ILanguagePack | ILanguagePack[] | boolean;
 
 export interface ILanguagePack {
@@ -26,8 +24,19 @@ export interface ILocales {
     [key: string]: ILanguagePack;
 }
 
+export type LocaleLeafKeys<T> = {
+    [K in keyof T & string]: T[K] extends string
+        ? K
+        : T[K] extends readonly unknown[]
+            ? never
+            : T[K] extends Record<string, unknown>
+                ? `${K}.${LocaleLeafKeys<T[K]>}`
+                : never;
+}[keyof T & string];
+
 // eslint-disable-next-line ts/no-explicit-any
 type MergeLocalesInput = Record<string, any>;
+
 /**
  * Merges multiple locale objects into a single locale object.
  * It can accept either multiple locale objects as arguments or a single array of locale objects.
@@ -41,5 +50,5 @@ export function mergeLocales(...locales: (MergeLocalesInput | MergeLocalesInput[
     } else {
         mergedLocales = locales as MergeLocalesInput[];
     }
-    return merge({}, ...mergedLocales);
+    return Object.assign({}, ...mergedLocales);
 }

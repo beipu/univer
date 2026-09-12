@@ -19,13 +19,20 @@ import type enUS from './en-US';
 const locale: typeof enUS = {
     'find-replace': {
         toolbar: '查找替换',
+        mobile: {
+            settings: '查找替换设置',
+            'settings-title': '查找替换设置',
+            'previous-match': '上一个匹配项',
+            'next-match': '下一个匹配项',
+            close: '关闭查找替换',
+        },
         shortcut: {
             'open-find-dialog': '打开查找对话框',
             'open-replace-dialog': '打开替换对话框',
-            'close-dialog': '关闭查找替换对话框',
             'go-to-next-match': '下一个匹配项',
             'go-to-previous-match': '下一个匹配项',
             'focus-selection': '聚焦选区',
+            panel: '查找替换',
         },
         dialog: {
             title: '查找',
@@ -37,6 +44,7 @@ const locale: typeof enUS = {
             'replace-placeholder': '输入替换内容',
             'case-sensitive': '匹配大小写',
             'match-the-whole-cell': '匹配整个单元格',
+            'match-the-whole-word': '全词匹配',
             'find-scope': {
                 title: '查找范围',
                 'current-sheet': '当前子表',
@@ -57,13 +65,17 @@ const locale: typeof enUS = {
         },
         replace: {
             'all-success': '已全部替换 {0} 个匹配项',
+            'partial-success': '已替换 {0} 个匹配项，{1} 个替换失败',
             'all-failure': '替换失败',
             confirm: {
                 title: '确定要替换所有的匹配项吗？',
             },
         },
+        button: {
+            confirm: '确定',
+            cancel: '取消',
+        },
     },
-    'find-replace-shortcuts': '查找替换',
 };
 
 export default locale;

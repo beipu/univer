@@ -16,15 +16,17 @@
 
 import type { Nullable } from '@univerjs/core';
 import type { BaseFunction } from '../../functions/base-function';
-
 import type { BaseReferenceObject, FunctionVariantType } from '../reference-object/base-reference-object';
 import type { BaseValueObject } from '../value-object/base-value-object';
+import { DateSystem } from '@univerjs/core';
 import { ErrorType } from '../../basics/error-type';
-import { prefixToken } from '../../basics/token';
+import { OPERATOR_TOKEN_COMPARE_SET, prefixToken } from '../../basics/token';
+import { FUNCTION_NAMES_LOOKUP } from '../../functions/lookup/function-names';
 import { FUNCTION_NAMES_META } from '../../functions/meta/function-names';
 import { IFunctionService } from '../../services/function.service';
 import { IFormulaRuntimeService } from '../../services/runtime.service';
 import { LexerNode } from '../analysis/lexer-node';
+import { ArrayValueObject } from '../value-object/array-value-object';
 import { ErrorValueObject } from '../value-object/base-value-object';
 import { NumberValueObject } from '../value-object/primitive-object';
 import { BaseAstNode, ErrorNode } from './base-ast-node';
@@ -44,7 +46,7 @@ export class PrefixNode extends BaseAstNode {
         return NodeType.PREFIX;
     }
 
-    override execute() {
+    override execute(dateSystem: DateSystem = DateSystem.Date1900) {
         const children = this.getChildren();
         let value = children[0].getValue();
         let result: FunctionVariantType;
@@ -56,29 +58,36 @@ export class PrefixNode extends BaseAstNode {
 
         if (this._operatorString === prefixToken.MINUS) {
             if (value.isReferenceObject()) {
-                value = (value as BaseReferenceObject).toArrayValueObject();
+                value = (value as BaseReferenceObject).withDateSystem(dateSystem).toArrayValueObject();
             }
             result = this._functionExecutor!.calculate(
                 NumberValueObject.create(0),
-                value as BaseValueObject
+                (value as BaseValueObject).withDateSystem(dateSystem)
             ) as FunctionVariantType;
         } else if (this._operatorString === prefixToken.AT) {
             result = this._handlerAT(value);
         } else {
             result = ErrorValueObject.create(ErrorType.VALUE);
         }
-        this.setValue(result);
+        this.setValue(result.withDateSystem(dateSystem));
     }
 
     private _handlerAT(value: FunctionVariantType) {
+        if (value instanceof ArrayValueObject) {
+            return value.get(0, 0) ?? ErrorValueObject.create(ErrorType.VALUE);
+        }
         if (!value.isReferenceObject()) {
-            return ErrorValueObject.create(ErrorType.VALUE);
+            return value;
         }
 
         const currentValue = value as BaseReferenceObject;
 
         if (currentValue.isCell()) {
-            return ErrorValueObject.create(ErrorType.VALUE);
+            return currentValue.getCellByPosition();
+        }
+
+        if (this._preserveAtRangeForFormula2LookupArray()) {
+            return currentValue;
         }
 
         const runtimeService = this._runtimeService;
@@ -110,6 +119,34 @@ export class PrefixNode extends BaseAstNode {
         }
 
         return ErrorValueObject.create(ErrorType.VALUE);
+    }
+
+    private _preserveAtRangeForFormula2LookupArray(): boolean {
+        let node: BaseAstNode = this;
+        let parent = node.getParent();
+        let sawCompareOperator = false;
+
+        while (parent != null) {
+            if (parent.nodeType === NodeType.OPERATOR) {
+                sawCompareOperator ||= OPERATOR_TOKEN_COMPARE_SET.has(parent.getToken());
+            }
+
+            if (parent.nodeType === NodeType.FUNCTION) {
+                const functionName = parent.getToken().toUpperCase();
+                if (
+                    sawCompareOperator &&
+                    functionName === FUNCTION_NAMES_LOOKUP.XMATCH
+                ) {
+                    return parent.getChildren().indexOf(node) === 1;
+                }
+                return false;
+            }
+
+            node = parent;
+            parent = parent.getParent();
+        }
+
+        return false;
     }
 }
 

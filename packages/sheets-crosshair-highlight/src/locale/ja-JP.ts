@@ -17,9 +17,9 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    crosshair: {
+    'sheets-crosshair-highlight': {
         button: {
-            tooltip: '십자선 강조',
+            tooltip: '十字線を強調表示',
         },
     },
 };

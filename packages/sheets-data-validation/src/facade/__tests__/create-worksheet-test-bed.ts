@@ -31,18 +31,33 @@ import {
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
 import { UniverDataValidationPlugin } from '@univerjs/data-validation';
-import { ActiveDirtyManagerService, DefinedNamesService, FormulaDataModel, IActiveDirtyManagerService, IDefinedNamesService, ISheetRowFilteredService, LexerTreeBuilder, RegisterOtherFormulaService, SheetRowFilteredService } from '@univerjs/engine-formula';
-
+import {
+    ActiveDirtyManagerService,
+    DefinedNamesService,
+    FormulaDataModel,
+    IActiveDirtyManagerService,
+    IDefinedNamesService,
+    ISheetRowFilteredService,
+    LexerTreeBuilder,
+    RegisterOtherFormulaService,
+    SheetRowFilteredService,
+} from '@univerjs/engine-formula';
 import {
     RefRangeService,
     SheetInterceptorService,
     SheetSkeletonService,
     SheetsSelectionsService,
 } from '@univerjs/sheets';
-import { DataValidationCacheService, DataValidationCustomFormulaService, DataValidationFormulaService, DataValidationListCacheService, SheetDataValidationModel, SheetsDataValidationValidatorService } from '@univerjs/sheets-data-validation';
+import {
+    DataValidationCacheService,
+    DataValidationCustomFormulaService,
+    DataValidationFormulaService,
+    DataValidationListCacheService,
+    SheetDataValidationModel,
+    SheetsDataValidationValidatorService,
+} from '@univerjs/sheets-data-validation';
 import enUS from '@univerjs/sheets/locale/en-US';
 import zhCN from '@univerjs/sheets/locale/zh-CN';
-
 import '@univerjs/sheets/facade';
 import '@univerjs/sheets-data-validation/facade';
 
@@ -95,7 +110,6 @@ export interface ITestBed {
     injector: Injector;
 }
 
-// eslint-disable-next-line max-lines-per-function
 export function createWorksheetTestBed(workbookData?: IWorkbookData, dependencies?: Dependency[]): ITestBed {
     const univer = new Univer();
     const injector = univer.__getInjector();
@@ -151,7 +165,7 @@ export function createWorksheetTestBed(workbookData?: IWorkbookData, dependencie
     // load theme service
     const themeService = injector.get(ThemeService);
     const theme = themeService.getCurrentTheme();
-    const newTheme = set(theme, 'black', '#35322b');
+    const newTheme = set(theme, 'gray.1000', '#35322b');
     themeService.setTheme(newTheme);
 
     // register builtin plugins

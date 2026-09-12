@@ -14,50 +14,59 @@
  * limitations under the License.
  */
 
+import type { LocaleKey } from '../../locale/types';
 import type { IBusinessComponentProps } from './interface';
 import { ILocalStorageService, LocaleService } from '@univerjs/core';
 import { borderClassName, clsx, Input } from '@univerjs/design';
 import { CheckMarkIcon } from '@univerjs/icons';
 import { CURRENCYFORMAT, DATEFMTLISG, NUMBERFORMAT } from '@univerjs/sheets-numfmt';
 import { useDependency } from '@univerjs/ui';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { UserHabitController } from '../../controllers/user-habit.controller';
 
 const key = 'customFormat';
 const historyPatternKey = 'numfmt_custom_pattern';
 
 export function CustomFormat(props: IBusinessComponentProps) {
-    const { defaultPattern, action, onChange } = props;
+    const { defaultPattern, onActionChange, onChange } = props;
     const userHabitController = useDependency(UserHabitController);
     const localStorageService = useDependency(ILocalStorageService);
     const localeService = useDependency(LocaleService);
 
     const [pattern, setPattern] = useState(defaultPattern);
-    action.current = () => {
-        userHabitController.markHabit(key, pattern);
-        localStorageService.getItem<string[]>(historyPatternKey).then((list = []) => {
-            const _list = [...new Set([pattern, ...(list || [])])].splice(0, 10).filter((e) => !!e);
-            localStorageService.setItem(historyPatternKey, _list);
+    useLayoutEffect(() => {
+        onActionChange(() => {
+            userHabitController.markHabit(key, pattern);
+            localStorageService.getItem<string[]>(historyPatternKey).then((list = []) => {
+                const _list = [...new Set([pattern, ...(list || [])])].splice(0, 10).filter((e) => !!e);
+                localStorageService.setItem(historyPatternKey, _list);
+            });
+            return pattern;
         });
-        return pattern;
-    };
+    }, [localStorageService, onActionChange, pattern, userHabitController]);
     const [options, setOptions] = useState<(string | number)[]>([]);
 
     useEffect(() => {
-        localStorageService.getItem<string[]>(historyPatternKey).then((historyList) => {
+        let cancelled = false;
+
+        void localStorageService.getItem<string[]>(historyPatternKey).then((historyList) => {
             const list = [
                 ...CURRENCYFORMAT.map((item) => item.suffix('$')),
                 ...DATEFMTLISG.map((item) => item.suffix),
                 ...NUMBERFORMAT.map((item) => item.suffix),
+                ...(historyList ?? []),
             ];
-            list.push(...(historyList || []));
-            userHabitController.addHabit(key, []).finally(() => {
-                userHabitController.getHabit(key, list).then((list) => {
-                    setOptions([...new Set(list)]);
-                });
-            });
+            return userHabitController.addHabit(key, []).then(() => userHabitController.getHabit(key, list));
+        }).then((list) => {
+            if (!cancelled) {
+                setOptions([...new Set(list)]);
+            }
         });
-    }, []);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [localStorageService, userHabitController]);
 
     const handleClick = (p: string) => {
         setPattern(p);
@@ -70,16 +79,21 @@ export function CustomFormat(props: IBusinessComponentProps) {
 
     return (
         <div>
-            <div className="univer-mt-4 univer-text-sm univer-text-gray-400">{localeService.t('sheet.numfmt.customFormat')}</div>
+            <div className="univer-mt-4 univer-text-sm univer-text-gray-400">
+                {localeService.t<LocaleKey>('sheets-numfmt-ui.customFormat')}
+            </div>
             <Input
-                placeholder={localeService.t('sheet.numfmt.customFormat')}
+                placeholder={localeService.t<LocaleKey>('sheets-numfmt-ui.customFormat')}
                 onBlur={handleBlur}
                 value={pattern}
                 onChange={setPattern}
                 className="univer-mt-2 univer-w-full"
             />
             <div
-                className={clsx('univer-mt-2 univer-max-h-[400px] univer-overflow-auto univer-rounded-lg univer-p-2', borderClassName)}
+                className={clsx(
+                    'univer-mt-2 univer-max-h-[400px] univer-overflow-auto univer-rounded-lg univer-p-2',
+                    borderClassName
+                )}
             >
                 {options.map((p) => (
                     <div
@@ -105,7 +119,7 @@ export function CustomFormat(props: IBusinessComponentProps) {
                   dark:!univer-text-gray-200
                 `}
             >
-                {localeService.t('sheet.numfmt.customFormatDes')}
+                {localeService.t<LocaleKey>('sheets-numfmt-ui.customFormatDes')}
             </div>
         </div>
     );

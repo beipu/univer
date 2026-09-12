@@ -18,6 +18,20 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'بستن نشان',
+            close: 'بستن',
+            menu: 'منو',
+            previous: 'قبلی',
+            next: 'بعدی',
+            imageGallery: 'گالری تصاویر',
+            image: 'تصویر {0} از {1}',
+            zoomIn: 'بزرگ‌نمایی',
+            zoomOut: 'کوچک‌نمایی',
+            resetZoom: 'بازنشانی بزرگ‌نمایی',
+            increment: 'افزایش',
+            decrement: 'کاهش',
+        },
         Confirm: {
             cancel: 'لغو',
             confirm: 'باشه',
@@ -42,9 +56,12 @@ const locale: typeof enUS = {
                 'بهمن',
                 'اسفند',
             ],
-        },
-        Select: {
-            empty: 'هیچ‌کدام',
+            ariaLabels: {
+                previousMonth: 'ماه قبل',
+                nextMonth: 'ماه بعد',
+                selectYear: 'انتخاب سال',
+                selectMonth: 'انتخاب ماه',
+            },
         },
         ColorPicker: {
             more: 'رنگ‌های بیشتر',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: 'الماسی',
             offset: 'افست',
             angle: 'زاویه',
-            flip: 'برگردان',
             delete: 'حذف',
+            transparency: 'شفافیت',
         },
     },
 };

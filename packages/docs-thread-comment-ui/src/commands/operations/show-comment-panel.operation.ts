@@ -18,12 +18,14 @@ import type { DocumentDataModel, ICommand } from '@univerjs/core';
 import type { ActiveCommentInfo } from '@univerjs/thread-comment-ui';
 import { BuildTextUtils, CommandType, ICommandService, IUniverInstanceService, UniverInstanceType, UserManagerService } from '@univerjs/core';
 import { DocSelectionManagerService } from '@univerjs/docs';
+import { DEFAULT_DOC_SUBUNIT_ID } from '@univerjs/docs-thread-comment';
 import { DocSelectionRenderService } from '@univerjs/docs-ui';
+import { IDrawingManagerService } from '@univerjs/drawing';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { getDT } from '@univerjs/thread-comment';
-import { ThreadCommentPanelService } from '@univerjs/thread-comment-ui';
+import { getDT, ThreadCommentAnchorKind } from '@univerjs/thread-comment';
+import { ThreadCommentDraftService, ThreadCommentPanelService } from '@univerjs/thread-comment-ui';
 import { ISidebarService } from '@univerjs/ui';
-import { DEFAULT_DOC_SUBUNIT_ID, DOCS_THREAD_COMMENT_PANEL } from '../../common/const';
+import { DOCS_THREAD_COMMENT_PANEL } from '../../common/const';
 import { DocThreadCommentService } from '../../services/doc-thread-comment.service';
 
 export interface IShowCommentPanelOperationParams {
@@ -39,7 +41,7 @@ export const ShowCommentPanelOperation: ICommand<IShowCommentPanelOperationParam
 
         if (!panelService.panelVisible || sidebarService.options.children?.label !== DOCS_THREAD_COMMENT_PANEL) {
             sidebarService.open({
-                header: { title: 'threadCommentUI.panel.title' },
+                header: { title: 'docs-thread-comment-ui.panel.title' },
                 children: { label: DOCS_THREAD_COMMENT_PANEL },
                 width: 320,
                 onClose: () => panelService.setPanelVisible(false),
@@ -64,7 +66,7 @@ export const ToggleCommentPanelOperation: ICommand = {
 
         if (!panelService.panelVisible || sidebarService.options.children?.label !== DOCS_THREAD_COMMENT_PANEL) {
             sidebarService.open({
-                header: { title: 'threadCommentUI.panel.title' },
+                header: { title: 'docs-thread-comment-ui.panel.title' },
                 children: { label: DOCS_THREAD_COMMENT_PANEL },
                 width: 320,
                 onClose: () => panelService.setPanelVisible(false),
@@ -85,7 +87,7 @@ export const StartAddCommentOperation: ICommand = {
     handler(accessor) {
         const panelService = accessor.get(ThreadCommentPanelService);
         const univerInstanceService = accessor.get(IUniverInstanceService);
-        const doc = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const doc = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
         const renderManagerService = accessor.get(IRenderManagerService);
         const userManagerService = accessor.get(UserManagerService);
@@ -97,7 +99,7 @@ export const StartAddCommentOperation: ICommand = {
             return false;
         }
 
-        const docSelectionRenderManager = renderManagerService.getRenderById(doc.getUnitId())?.with(DocSelectionRenderService);
+        const docSelectionRenderManager = renderManagerService.getRenderUnitById(doc.getUnitId())?.with(DocSelectionRenderService);
         docSelectionRenderManager?.setReserveRangesStatus(true);
         if (textRange.collapsed) {
             if (panelService.panelVisible) {
@@ -139,6 +141,37 @@ export const StartAddCommentOperation: ICommand = {
             commentId,
         });
 
+        return true;
+    },
+};
+
+export const AddDocDrawingCommentOperation: ICommand = {
+    id: 'docs.operation.add-drawing-comment',
+    type: CommandType.OPERATION,
+    handler(accessor) {
+        const drawing = accessor.get(IDrawingManagerService).getFocusDrawings()[0];
+        const doc = accessor.get(IUniverInstanceService)
+            .getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        if (!drawing || !doc || drawing.unitId !== doc.getUnitId()) {
+            return false;
+        }
+        accessor.get(ThreadCommentDraftService).place({
+            unitId: drawing.unitId,
+            subUnitId: drawing.subUnitId,
+            anchor: {
+                kind: ThreadCommentAnchorKind.DOC_DRAWING,
+                pageId: drawing.subUnitId,
+                elementId: drawing.drawingId,
+            },
+        });
+        const panelService = accessor.get(ThreadCommentPanelService);
+        accessor.get(ISidebarService).open({
+            header: { title: 'docs-thread-comment-ui.panel.title' },
+            children: { label: DOCS_THREAD_COMMENT_PANEL },
+            width: 320,
+            onClose: () => panelService.setPanelVisible(false),
+        });
+        panelService.setPanelVisible(true);
         return true;
     },
 };

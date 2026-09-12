@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import type { IDisposable, IRange, Nullable } from '@univerjs/core';
+import type { IDisposable, IRange, Nullable, Workbook } from '@univerjs/core';
 import type { FilterColumn, FilterModel, IFilterColumn, ISetSheetsFilterCriteriaCommandParams } from '@univerjs/sheets-filter';
 import type { Observable } from 'rxjs';
 import type { FilterOperator, IFilterConditionFormParams, IFilterConditionItem } from '../models/conditions';
-import { ColorKit, createIdentifier, Disposable, ICommandService, Inject, Injector, IUniverInstanceService, LocaleService, Quantity, Tools } from '@univerjs/core';
+import { ColorKit, createIdentifier, Disposable, ICommandService, Inject, Injector, IUniverInstanceService, LocaleService, Quantity, Tools, UniverInstanceType } from '@univerjs/core';
 import { COLOR_BLACK_RGB } from '@univerjs/engine-render';
 import { RefRangeService } from '@univerjs/sheets';
 import { FilterBy, SetSheetsFilterCriteriaCommand } from '@univerjs/sheets-filter';
@@ -56,17 +56,17 @@ export interface IFilterByColorItem {
 }
 
 export interface ISheetsFilterPanelService {
-    /**
-     * Set up the panel to change the filter condition on a specific column.
-     * @param filterModel the filter model we will be working on
-     * @param col
-     * @returns if the filter condition is set up successfully
-     */
-    setUpFilterConditionOfCol(filterModel: FilterModel, col: number): boolean;
+    readonly col: number;
+    readonly col$: Observable<number>;
+    readonly filterBy: FilterBy;
+    readonly filterBy$: Observable<FilterBy>;
+    readonly filterByModel: Nullable<IFilterByModel>;
+    readonly filterByModel$: Observable<Nullable<IFilterByModel>>;
+    readonly filterModel: Nullable<FilterModel>;
+    readonly hasCriteria$: Observable<boolean>;
 
-    /**
-     * Terminate the filter panel without applying changes.
-     */
+    setupCol(filterModel: FilterModel, col: number): void;
+    changeFilterBy(filterBy: FilterBy): boolean;
     terminate(): boolean;
 }
 export const ISheetsFilterPanelService = createIdentifier<ISheetsFilterPanelService>('sheets-filter-ui.sheets-filter-panel.service');
@@ -84,7 +84,7 @@ export interface IFilterByModel extends IDisposable {
  * This service controls the state of the filter panel. There should be only one instance of the filter panel
  * at one time.
  */
-export class SheetsFilterPanelService extends Disposable {
+export class SheetsFilterPanelService extends Disposable implements ISheetsFilterPanelService {
     private readonly _filterBy$ = new BehaviorSubject<FilterBy>(FilterBy.VALUES);
     readonly filterBy$ = this._filterBy$.asObservable();
     get filterBy(): FilterBy { return this._filterBy$.getValue(); }
@@ -440,7 +440,7 @@ export class ByValuesModel extends Disposable implements IFilterByModel {
         const generateFilterValuesService = injector.get(ISheetsGenerateFilterValuesService, Quantity.OPTIONAL);
 
         const { unitId, subUnitId } = filterModel;
-        const workbook = univerInstanceService.getUniverSheetInstance(unitId);
+        const workbook = univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
         if (!workbook) throw new Error(`[ByValuesModel]: Workbook not found for filter model with unitId: ${unitId}!`);
 
         const worksheet = workbook?.getSheetBySheetId(subUnitId);
@@ -547,7 +547,7 @@ export class ByValuesModel extends Disposable implements IFilterByModel {
                 })
             ),
             this._manuallyUpdateFilterItems$
-        ).pipe(shareReplay(1));
+        ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
 
         this.canApply$ = this.filterItems$.pipe(map((items) => {
             const stat = statisticFilterByValueItems(items);
@@ -702,7 +702,7 @@ export class ByColorsModel extends Disposable implements IFilterByModel {
         const univerInstanceService = injector.get(IUniverInstanceService);
 
         const { unitId, subUnitId } = filterModel;
-        const workbook = univerInstanceService.getUniverSheetInstance(unitId);
+        const workbook = univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
         if (!workbook) throw new Error(`[ByColorsModel]: Workbook not found for filter model with unitId: ${unitId}!`);
 
         const worksheet = workbook?.getSheetBySheetId(subUnitId);

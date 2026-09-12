@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-import type { Nullable } from '@univerjs/core';
+import type { ITransformState, Nullable } from '@univerjs/core';
 import type { BaseObject } from '../base-object';
 import type { IMouseEvent, IPointerEvent } from './i-events';
 
 export interface ITransformerConfig {
     // for image copper
     isCropper?: boolean;
+    /** Minimum crop-handle hit target in screen pixels; does not change its appearance. */
+    cropAnchorHitSize?: number;
 
     hoverEnabled?: boolean;
     hoverEnterFunc?: Nullable<(e: IPointerEvent | IMouseEvent) => void>;
@@ -30,8 +32,16 @@ export interface ITransformerConfig {
     rotationSnaps?: number[];
     rotationSnapTolerance?: number;
     rotateAnchorOffset?: number;
+    rotateAnchorPosition?: 'top' | 'bottom';
+    rotateLineEnabled?: boolean;
     rotateSize?: number;
     rotateCornerRadius?: number;
+    rotateFill?: string;
+    rotateStroke?: string;
+    rotateStrokeWidth?: number;
+    rotateIconEnabled?: boolean;
+    rotateIconStroke?: string;
+    rotateIconStrokeWidth?: number;
 
     borderEnabled?: boolean;
     borderStroke?: string;
@@ -40,12 +50,23 @@ export interface ITransformerConfig {
     borderSpacing?: number;
 
     resizeEnabled?: boolean;
+    moveEnabled?: boolean;
+    /** Start moving only when the object was already selected before pointer down. */
+    moveOnlyWhenSelected?: boolean;
     enabledAnchors?: number[];
     anchorFill?: string;
     anchorStroke?: string;
     anchorStrokeWidth?: number;
     anchorSize?: number;
     anchorCornerRadius?: number;
+    anchorStyle?: 'default' | 'canva';
+    anchorSideLongSize?: number;
+    anchorSideShortSize?: number;
+    anchorSideCornerRadius?: number;
+    anchorShadowColor?: string;
+    anchorShadowBlur?: number;
+    anchorShadowOffsetX?: number;
+    anchorShadowOffsetY?: number;
 
     keepRatio?: boolean;
     centeredScaling?: boolean;
@@ -56,6 +77,42 @@ export interface ITransformerConfig {
     useSingleNodeRotation?: boolean;
     shouldOverdrawWholeArea?: boolean;
 
+    /** Render transformer controls on a layer independent from the selected object. */
+    controlLayerIndex?: number;
+
+    /** Resolve display geometry for controls without changing the object's persisted transform. */
+    controlStateResolver?: (object: BaseObject) => ITransformState;
+
     zeroLeft?: number;
     zeroTop?: number;
+    moveBoundaryEnabled?: boolean;
 }
+
+export const DEFAULT_TRANSFORMER_CONFIG = {
+    moveEnabled: true,
+    resizeEnabled: true,
+    rotateEnabled: true,
+    rotateAnchorOffset: 28,
+    rotateAnchorPosition: 'bottom',
+    rotateLineEnabled: false,
+    rotateSize: 18,
+    rotateCornerRadius: 9,
+    rotateFill: '#ffffff',
+    rotateStroke: '#4086f4',
+    rotateStrokeWidth: 1,
+    rotateIconEnabled: true,
+    rotateIconStroke: '#4086f4',
+    rotateIconStrokeWidth: 1.25,
+    borderEnabled: true,
+    borderStroke: '#4086f4',
+    borderStrokeWidth: 1,
+    borderSpacing: 2,
+    anchorFill: '#ffffff',
+    anchorStroke: '#4086f4',
+    anchorStrokeWidth: 1.5,
+    anchorSize: 8,
+    anchorCornerRadius: 2,
+    anchorStyle: 'canva',
+    keepRatio: true,
+    moveBoundaryEnabled: true,
+} satisfies ITransformerConfig;

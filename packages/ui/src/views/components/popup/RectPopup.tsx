@@ -14,17 +14,15 @@
  * limitations under the License.
  */
 
-import type { Nullable } from '@univerjs/core';
-import type { ReactNode, RefObject } from 'react';
+import type { MouseEventHandler, ReactNode, RefObject } from 'react';
 import type { Observable } from 'rxjs';
-import type { IUniverUIConfig } from '../../../config/config';
-import { IConfigService } from '@univerjs/core';
+import { IConfigService, LocaleService } from '@univerjs/core';
 import { clsx } from '@univerjs/design';
-import { createContext, useContext, useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useEvent } from '../../../components/hooks/event';
-import { UI_PLUGIN_CONFIG_KEY } from '../../../config/config';
-import { useDependency } from '../../../utils/di';
+import { defaultPluginConfig, UI_PLUGIN_CONFIG_KEY } from '../../../config/config';
+import { useDependency, useObservable } from '../../../utils/di';
+import { useEvent } from '../../hooks/event';
 
 interface IAbsolutePosition {
     left: number;
@@ -34,6 +32,7 @@ interface IAbsolutePosition {
 }
 
 const RectPopupContext = createContext<RefObject<IAbsolutePosition | undefined>>({ current: undefined });
+const RectPopupDirectionContext = createContext<RectPopupDirection>('vertical');
 
 export type RectPopupDirection =
     | 'left'
@@ -68,7 +67,7 @@ export interface IRectPopupProps {
      * the anchor element bounding rect
      */
     anchorRect$: Observable<IAbsolutePosition>;
-    excludeRects?: RefObject<Nullable<IAbsolutePosition[]>>;
+    excludeRects?: RefObject<IAbsolutePosition[] | null | undefined | void>;
     direction?: RectPopupDirection;
     hidden?: boolean;
     // #region closing behavior
@@ -76,9 +75,9 @@ export interface IRectPopupProps {
     excludeOutside?: HTMLElement[];
     onContextMenu?: () => void;
 
-    onPointerEnter?: (e: React.MouseEvent<HTMLElement>) => void;
-    onPointerLeave?: (e: React.MouseEvent<HTMLElement>) => void;
-    onClick?: (e: React.MouseEvent<HTMLElement>) => void;
+    onPointerEnter?: MouseEventHandler<HTMLElement>;
+    onPointerLeave?: MouseEventHandler<HTMLElement>;
+    onClick?: MouseEventHandler<HTMLElement>;
     // #endregion
     portal?: boolean;
 
@@ -89,12 +88,16 @@ export interface IRectPopupProps {
     noPushMinimumGap?: boolean;
 
     autoRelayout?: boolean;
+    boundaryElement?: Element;
+    boundaryInsets?: { left?: number; top?: number };
 }
 
-export interface IPopupLayoutInfo extends Pick<IRectPopupProps, 'direction'> {
+export interface IPopupLayoutInfo extends Pick<IRectPopupProps, 'boundaryInsets' | 'direction'> {
     position: IAbsolutePosition;
     width: number;
     height: number;
+    containerLeft?: number;
+    containerTop?: number;
     containerWidth: number;
     containerHeight: number;
     noPushMinimumGap?: boolean;
@@ -103,13 +106,39 @@ export interface IPopupLayoutInfo extends Pick<IRectPopupProps, 'direction'> {
 /** The popup should have a minimum edge to the boundary. */
 const PUSHING_MINIMUM_GAP = 8;
 
-function calcPopupPosition(layout: IPopupLayoutInfo): { top: number; left: number } {
-    const { position, width, height, containerHeight, containerWidth, direction = 'vertical', noPushMinimumGap = false } = layout;
+function resolvePopupDirection(layout: IPopupLayoutInfo): RectPopupDirection {
+    const direction = layout.direction ?? 'vertical';
+    const containerTop = (layout.containerTop ?? 0) + (layout.boundaryInsets?.top ?? 0);
+    const availableTop = layout.position.top - containerTop;
+    const availableBottom = (layout.containerTop ?? 0) + layout.containerHeight - layout.position.bottom;
+    const placeAbove = availableTop >= availableBottom;
 
-    const minTop = noPushMinimumGap ? -Infinity : PUSHING_MINIMUM_GAP;
-    const maxTop = noPushMinimumGap ? Infinity : containerHeight - height - PUSHING_MINIMUM_GAP;
-    const minLeft = noPushMinimumGap ? -Infinity : PUSHING_MINIMUM_GAP;
-    const maxLeft = noPushMinimumGap ? Infinity : containerWidth - width - PUSHING_MINIMUM_GAP;
+    switch (direction) {
+        case 'vertical-center':
+            return placeAbove ? 'top-center' : 'bottom-center';
+        case 'vertical-left':
+            return placeAbove ? 'top-left' : 'bottom-left';
+        case 'vertical-right':
+            return placeAbove ? 'top-right' : 'bottom-right';
+        default:
+            return direction;
+    }
+}
+
+function calcPopupPosition(layout: IPopupLayoutInfo): { top: number; left: number } {
+    const { position, width, height, containerHeight, containerWidth, noPushMinimumGap = false } = layout;
+    const direction = resolvePopupDirection(layout);
+
+    const boundaryLeft = layout.containerLeft ?? 0;
+    const boundaryTop = layout.containerTop ?? 0;
+    const containerLeft = boundaryLeft + (layout.boundaryInsets?.left ?? 0);
+    const containerTop = boundaryTop + (layout.boundaryInsets?.top ?? 0);
+    const containerRight = boundaryLeft + containerWidth;
+    const containerBottom = boundaryTop + containerHeight;
+    const minTop = noPushMinimumGap ? -Infinity : containerTop + PUSHING_MINIMUM_GAP;
+    const maxTop = noPushMinimumGap ? Infinity : containerBottom - height - PUSHING_MINIMUM_GAP;
+    const minLeft = noPushMinimumGap ? -Infinity : containerLeft + PUSHING_MINIMUM_GAP;
+    const maxLeft = noPushMinimumGap ? Infinity : containerRight - width - PUSHING_MINIMUM_GAP;
 
     // In y-axis
     if (direction === 'vertical' || direction.indexOf('top') === 0 || direction.indexOf('bottom') === 0) {
@@ -126,7 +155,7 @@ function calcPopupPosition(layout: IPopupLayoutInfo): { top: number; left: numbe
             const rectWidth = endX - startX;
             const offsetX = (rectWidth - width) / 2;
 
-            horizontalStyle = (Math.max(startX + offsetX, minLeft) + width) > containerWidth
+            horizontalStyle = (Math.max(startX + offsetX, minLeft) + width) > containerRight
                 ? { left: Math.max(Math.min(maxLeft, endX - width - offsetX), minLeft) }
                 : { left: Math.max(minLeft, Math.min(startX + offsetX, maxLeft)) };
         } else if (direction.includes('right')) {
@@ -135,7 +164,7 @@ function calcPopupPosition(layout: IPopupLayoutInfo): { top: number; left: numbe
             horizontalStyle = { left: Math.max(Math.min(startX, maxLeft), minLeft) };
         } else {
             // If the popup element exceed the visible area. We should "push" it back.
-            horizontalStyle = (startX + width) > containerWidth
+            horizontalStyle = (startX + width) > containerRight
                 ? Math.max(endX - width, minLeft) < PUSHING_MINIMUM_GAP
                     ? { left: Math.max(Math.min(startX, maxLeft), minLeft) }
                     : { left: Math.max(Math.min(endX - width, maxLeft), minLeft) } // on left
@@ -158,7 +187,7 @@ function calcPopupPosition(layout: IPopupLayoutInfo): { top: number; left: numbe
         const rectHeight = endY - startY;
         const offsetY = (rectHeight - height) / 2;
 
-        verticalStyle = (Math.max(startY + offsetY, minTop) + height) > containerHeight
+        verticalStyle = (Math.max(startY + offsetY, minTop) + height) > containerBottom
             ? { top: Math.max(Math.min(maxTop, endY - height - offsetY), minTop) }
             : { top: Math.max(minTop, Math.min(startY + offsetY, maxTop)) };
     } else if (direction.includes('top')) {
@@ -171,7 +200,7 @@ function calcPopupPosition(layout: IPopupLayoutInfo): { top: number; left: numbe
         };
     } else {
         // If the popup element exceed the visible area. We should "push" it back.
-        verticalStyle = ((startY + height) > containerHeight)
+        verticalStyle = ((startY + height) > containerBottom)
             ? Math.max(endY - height, minTop) < PUSHING_MINIMUM_GAP
                 ? { top: Math.max(Math.min(startY, maxTop), minTop) }
                 : { top: Math.max(Math.min(endY - height, maxTop), minTop) } // on top
@@ -201,6 +230,8 @@ function RectPopup(props: IRectPopupProps) {
         onMaskClick,
         noPushMinimumGap,
         autoRelayout = true,
+        boundaryElement,
+        boundaryInsets,
     } = props;
     const nodeRef = useRef<HTMLElement>(null);
     const clickOtherFn = useEvent(onClickOutside ?? (() => { /* empty */ }));
@@ -212,7 +243,8 @@ function RectPopup(props: IRectPopupProps) {
     const excludeRectsRef = excludeRects;
     const configService = useDependency(IConfigService);
     const anchorRectRef = useRef<IAbsolutePosition | undefined>(undefined);
-    const uiConfig = configService.getConfig(UI_PLUGIN_CONFIG_KEY) as IUniverUIConfig;
+    const [resolvedDirection, setResolvedDirection] = useState<RectPopupDirection>(direction);
+    const uiConfig = configService.getConfig<typeof defaultPluginConfig>(UI_PLUGIN_CONFIG_KEY) ?? defaultPluginConfig;
     const popupRootId = uiConfig?.popupRootId ?? 'univer-popup-portal';
 
     const updatePosition = useEvent((position: IAbsolutePosition) => {
@@ -220,20 +252,40 @@ function RectPopup(props: IRectPopupProps) {
             if (!nodeRef.current) return;
 
             const { clientWidth, clientHeight } = nodeRef.current;
-            const innerWidth = window.innerWidth;
-            const innerHeight = window.innerHeight;
-
-            positionRef.current = calcPopupPosition(
-                {
-                    position,
-                    width: clientWidth,
-                    height: clientHeight,
-                    containerWidth: innerWidth,
-                    containerHeight: innerHeight,
-                    direction,
-                    noPushMinimumGap,
-                }
+            const boundaryRect = boundaryElement?.getBoundingClientRect();
+            const containerLeft = Math.max(boundaryRect?.left ?? 0, 0);
+            const containerTop = Math.max(boundaryRect?.top ?? 0, 0);
+            const containerRight = Math.min(boundaryRect?.right ?? window.innerWidth, window.innerWidth);
+            const containerBottom = Math.min(boundaryRect?.bottom ?? window.innerHeight, window.innerHeight);
+            const containerWidth = Math.max(containerRight - containerLeft, 0);
+            const containerHeight = Math.max(containerBottom - containerTop, 0);
+            const minimumGap = noPushMinimumGap ? 0 : PUSHING_MINIMUM_GAP * 2;
+            const cannotFitBoundary = boundaryElement != null && (
+                containerWidth <= 0 ||
+                containerHeight <= 0 ||
+                containerWidth < clientWidth + minimumGap ||
+                containerHeight < clientHeight + minimumGap
             );
+
+            nodeRef.current.style.visibility = cannotFitBoundary ? 'hidden' : '';
+            if (cannotFitBoundary) return;
+
+            const layout = {
+                position,
+                width: clientWidth,
+                height: clientHeight,
+                containerLeft,
+                containerTop,
+                containerWidth,
+                containerHeight,
+                boundaryInsets,
+                direction,
+                noPushMinimumGap,
+            };
+            const nextDirection = resolvePopupDirection(layout);
+
+            setResolvedDirection((currentDirection) => currentDirection === nextDirection ? currentDirection : nextDirection);
+            positionRef.current = calcPopupPosition({ ...layout, direction: nextDirection });
 
             nodeRef.current.style.top = `${positionRef.current.top}px`;
             nodeRef.current.style.left = `${positionRef.current.left}px`;
@@ -311,6 +363,9 @@ function RectPopup(props: IRectPopupProps) {
         };
     }, [contextMenuFn]);
 
+    const localeService = useDependency(LocaleService);
+    const dir = useObservable(localeService.direction$);
+
     const ele = (
         <>
             {mask && (
@@ -324,6 +379,7 @@ function RectPopup(props: IRectPopupProps) {
             <section
                 data-u-comp="rect-popup"
                 ref={nodeRef}
+                dir={dir}
                 className={clsx(`
                   univer-pointer-events-auto univer-fixed univer-left-[-9999px] univer-top-[-9999px] univer-z-[1020]
                 `, {
@@ -336,9 +392,11 @@ function RectPopup(props: IRectPopupProps) {
                 onPointerEnter={onPointerEnter}
                 onPointerLeave={onPointerLeave}
             >
-                <RectPopupContext.Provider value={anchorRectRef}>
-                    {children}
-                </RectPopupContext.Provider>
+                <RectPopupDirectionContext.Provider value={resolvedDirection}>
+                    <RectPopupContext.Provider value={anchorRectRef}>
+                        {children}
+                    </RectPopupContext.Provider>
+                </RectPopupDirectionContext.Provider>
             </section>
         </>
     );
@@ -349,5 +407,6 @@ function RectPopup(props: IRectPopupProps) {
 RectPopup.calcPopupPosition = calcPopupPosition;
 
 RectPopup.useContext = () => useContext(RectPopupContext);
+RectPopup.useDirection = () => useContext(RectPopupDirectionContext);
 
 export { RectPopup };

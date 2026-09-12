@@ -18,6 +18,20 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'Đóng huy hiệu',
+            close: 'Đóng',
+            menu: 'Trình đơn',
+            previous: 'Trước',
+            next: 'Tiếp theo',
+            imageGallery: 'Thư viện ảnh',
+            image: 'Ảnh {0} trên {1}',
+            zoomIn: 'Phóng to',
+            zoomOut: 'Thu nhỏ',
+            resetZoom: 'Đặt lại thu phóng',
+            increment: 'Tăng',
+            decrement: 'Giảm',
+        },
         Confirm: {
             cancel: 'Hủy bỏ',
             confirm: 'Xác nhận',
@@ -42,9 +56,12 @@ const locale: typeof enUS = {
                 'Tháng 11',
                 'Tháng 12',
             ],
-        },
-        Select: {
-            empty: 'Không có',
+            ariaLabels: {
+                previousMonth: 'Tháng trước',
+                nextMonth: 'Tháng sau',
+                selectYear: 'Chọn năm',
+                selectMonth: 'Chọn tháng',
+            },
         },
         ColorPicker: {
             more: 'Màu sắc khác',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: 'Hình thoi',
             offset: 'Độ lệch',
             angle: 'Góc',
-            flip: 'Lật',
             delete: 'Xóa',
+            transparency: 'Độ trong suốt',
         },
     },
 };

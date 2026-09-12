@@ -26,12 +26,11 @@ import {
     IUniverInstanceService,
     toDisposable,
 } from '@univerjs/core';
-import { getDrawingShapeKeyByDrawingSearch, IDrawingManagerService, IImageIoService, SetDrawingSelectedOperation } from '@univerjs/drawing';
+import { getDrawingShapeKeyByDrawingSearch, IDrawingManagerService, SetDrawingSelectedOperation } from '@univerjs/drawing';
 import { CURSOR_TYPE, IRenderManagerService } from '@univerjs/engine-render';
-import { IDialogService } from '@univerjs/ui';
 import { bufferTime, filter, map } from 'rxjs';
 import { ImageResetSizeOperation } from '../commands/operations/image-reset-size.operation';
-import { DrawingRenderService } from '../services/drawing-render.service';
+import { DrawingRenderService, ensureDrawingRenderLayer } from '../services/drawing-render.service';
 import { getCurrentUnitInfo } from './utils';
 
 export class ImageUpdateController extends Disposable {
@@ -39,8 +38,6 @@ export class ImageUpdateController extends Disposable {
         @ICommandService private readonly _commandService: ICommandService,
         @IRenderManagerService private readonly _renderManagerService: IRenderManagerService,
         @IDrawingManagerService private readonly _drawingManagerService: IDrawingManagerService,
-        @IDialogService private readonly _dialogService: IDialogService,
-        @IImageIoService private readonly _imageIoService: IImageIoService,
         @IUniverInstanceService private readonly _currentUniverService: IUniverInstanceService,
         @Inject(DrawingRenderService) private readonly _drawingRenderService: DrawingRenderService
     ) {
@@ -80,7 +77,7 @@ export class ImageUpdateController extends Disposable {
             return;
         }
 
-        const renderObject = this._renderManagerService.getRenderById(unitId);
+        const renderObject = this._renderManagerService.getRenderUnitById(unitId);
 
         const scene = renderObject?.scene;
 
@@ -176,7 +173,7 @@ export class ImageUpdateController extends Disposable {
                     filter((items) => items.length > 0)
                 )
                 .subscribe((uniqueParams) => {
-                    void this._insertImages(uniqueParams);
+                    this._insertImages(uniqueParams);
                 })
         );
     }
@@ -197,7 +194,12 @@ export class ImageUpdateController extends Disposable {
             }
 
             const images = await this._drawingRenderService.renderImages(imageParam, renderObject.scene);
-            this._drawingManagerService.refreshTransform([imageParam]);
+            // Image loading is asynchronous, so commands may have changed its transform or metadata while
+            // renderImages was pending. Refresh from the current model instead of the stale pre-load snapshot.
+            const currentImageParam = this._drawingManagerService.getDrawingByParam(param) as IImageData;
+            if (currentImageParam) {
+                this._drawingManagerService.refreshTransform([currentImageParam]);
+            }
 
             if (images == null || images.length === 0) {
                 return;
@@ -233,7 +235,7 @@ export class ImageUpdateController extends Disposable {
                     if (renderObject == null) {
                         return;
                     }
-                    const { scene, transformer } = renderObject;
+                    const { scene } = renderObject;
 
                     if (transform == null) {
                         return true;
@@ -247,6 +249,11 @@ export class ImageUpdateController extends Disposable {
                         return true;
                     }
 
+                    const { left = 0, top = 0, width = 0, height = 0, angle = 0, flipX = false, flipY = false, skewX = 0, skewY = 0 } = transform;
+
+                    imageShape.transformByState({ left, top, width, height, angle, flipX, flipY, skewX, skewY });
+                    (imageShape as Image & { setClipBounds?: (clipBounds?: unknown) => void }).setClipBounds?.((transform as { clipBounds?: unknown }).clipBounds);
+                    ensureDrawingRenderLayer(scene, imageShape, drawingParam);
                     imageShape.setSrcRect(srcRect);
                     imageShape.setPrstGeom(prstGeom);
                     if (source != null && source.length > 0 && (imageSourceType === ImageSourceType.BASE64 || imageSourceType === ImageSourceType.URL)) {
@@ -276,12 +283,15 @@ export class ImageUpdateController extends Disposable {
     }
 
     private _addDialogForImage(o: Image) {
+        const preview = () => {
+            const native = o.getNative();
+            if (native) {
+                this._drawingRenderService.previewImage(`${o.oKey}-viewer-dialog`, native.src, o.getNativeSize().width, o.getNativeSize().height);
+            }
+        };
         this.disposeWithMe(
             toDisposable(
-                o.onDblclick$.subscribeEvent(() => {
-                    const dialogId = `${o.oKey}-viewer-dialog`;
-                    this._drawingRenderService.previewImage(dialogId, o.getNative()!.src, o.getNativeSize().width, o.getNativeSize().height);
-                })
+                o.onDblclick$.subscribeEvent(preview)
             )
         );
     }

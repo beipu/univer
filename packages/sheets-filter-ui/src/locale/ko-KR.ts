@@ -17,22 +17,29 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-filter': {
+    'sheets-filter-ui': {
         toolbar: {
             'smart-toggle-filter-tooltip': '필터 토글',
             'clear-filter-criteria': '필터 조건 지우기',
             're-calc-filter-conditions': '필터 조건 재계산',
         },
-        command: {
-            'not-valid-filter-range': '선택한 범위에 한 행만 있어 필터를 적용할 수 없습니다.',
-        },
         shortcut: {
             'smart-toggle-filter': '필터 토글',
+        },
+        permission: {
+            filterErr: '필터를 사용할 권한이 없습니다.',
         },
         panel: {
             'clear-filter': '필터 지우기',
             cancel: '취소',
             confirm: '확인',
+            mobile: {
+                resize: '필터 패널 크기 조정',
+                back: '뒤로',
+                column: '{0} 열',
+                'previous-column': '이전 열',
+                'next-column': '다음 열',
+            },
             'by-values': '값으로 필터',
             'by-colors': '색상으로 필터',
             'filter-by-cell-fill-color': '셀 채우기 색상으로 필터',
@@ -67,9 +74,6 @@ const locale: typeof enUS = {
             between: '범위 내',
             'not-between': '범위 밖',
             custom: '사용자 지정',
-        },
-        msg: {
-            'filter-header-forbidden': '필터 헤더 행은 이동할 수 없습니다.',
         },
         date: {
             1: '1월',

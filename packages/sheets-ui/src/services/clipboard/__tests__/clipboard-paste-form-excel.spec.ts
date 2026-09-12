@@ -14,8 +14,17 @@
  * limitations under the License.
  */
 
-import type { ICellData, Injector, IStyleData, Nullable, Univer } from '@univerjs/core';
-import { CellValueType, DEFAULT_TEXT_FORMAT_EXCEL, ICommandService, IUniverInstanceService, LocaleType, RANGE_TYPE } from '@univerjs/core';
+import type { ICellData, Injector, IStyleData, Nullable, Univer, Workbook } from '@univerjs/core';
+import {
+    CellValueType,
+    DEFAULT_TEXT_FORMAT_EXCEL,
+    HorizontalAlign,
+    ICommandService,
+    IUniverInstanceService,
+    LocaleType,
+    RANGE_TYPE,
+    UniverInstanceType,
+} from '@univerjs/core';
 import {
     AddWorksheetMergeMutation,
     MoveRangeMutation,
@@ -31,7 +40,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SheetSkeletonManagerService } from '../../sheet-skeleton-manager.service';
 import { ISheetClipboardService } from '../clipboard.service';
 import { clipboardTestBed } from './clipboard-test-bed';
-import { excelSample, excelSample2, excelSample3, excelSample4, excelSample5, excelSample6 } from './constant';
+import {
+    excelSample,
+    excelSample2,
+    excelSample3,
+    excelSample4,
+    excelSample5,
+    excelSample6,
+    excelSample7,
+} from './constant';
 
 describe('Test clipboard', () => {
     let univer: Univer;
@@ -112,7 +129,7 @@ describe('Test clipboard', () => {
             endColumn: number
         ): Array<Array<Nullable<ICellData>>> | undefined =>
             get(IUniverInstanceService)
-                .getUniverSheetInstance('test')
+                .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                 ?.getSheetBySheetId('sheet1')
                 ?.getRange(startRow, startColumn, endRow, endColumn)
                 .getValues();
@@ -124,7 +141,7 @@ describe('Test clipboard', () => {
             endColumn: number
         ): Array<Array<Nullable<IStyleData>>> | undefined => {
             const values = getValues(startRow, startColumn, endRow, endColumn);
-            const styles = get(IUniverInstanceService).getUniverSheetInstance('test')?.getStyles();
+            const styles = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getStyles();
             if (values && styles) {
                 return values.map((row) => row.map((cell) => styles.getStyleByCell(cell)));
             }
@@ -157,7 +174,7 @@ describe('Test clipboard', () => {
             });
         });
         it('test style with paste cell style', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(excelSample);
             expect(res).toBeTruthy();
@@ -172,42 +189,13 @@ describe('Test clipboard', () => {
                 fs: 12,
                 ht: 0,
                 it: 1,
-                ol: {
-                    cl: {
-                        rgb: 'rgb(0,0,0)',
-                    },
-                    s: 0,
-                },
-                pd: {
-                    b: 2,
-                    l: 2,
-                    r: 2,
-                    t: 0,
-                },
-                st: {
-                    cl: {
-                        rgb: 'rgb(0,0,0)',
-                    },
-                    s: 0,
-                },
                 tb: 1,
-                td: 0,
-                tr: {
-                    a: 0,
-                    v: 0,
-                },
-                ul: {
-                    cl: {
-                        rgb: 'rgb(0,0,0)',
-                    },
-                    s: 0,
-                },
                 vt: 2,
             });
         });
 
         it('test style with paste rich text style', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(excelSample);
             expect(res).toBeTruthy();
@@ -215,13 +203,15 @@ describe('Test clipboard', () => {
             const cellStyle = getStyles(2, 3, 2, 3)?.[0]?.[0];
             expect(cellStyle?.vt).toBe(2);
             expect(cellStyle?.bg).toStrictEqual({ rgb: 'rgb(15,158,213)' });
-            const richTextStyle = getValues(2, 3, 2, 3)?.[0]?.[0]?.p;
+            const richTextCell = getValues(2, 3, 2, 3)?.[0]?.[0];
+            const layout = worksheet.getCellDocumentModel(richTextCell, cellStyle, { isDeepClone: true });
+            expect(layout?.documentModel?.getBody()?.paragraphs?.[0]?.paragraphStyle?.horizontalAlign)
+                .toBe(HorizontalAlign.UNSPECIFIED);
+            const richTextStyle = richTextCell?.p;
             expect(richTextStyle?.body?.dataStream).toBe('Univer\r\n');
             expect(richTextStyle?.body?.paragraphs).toStrictEqual([
                 {
-                    paragraphStyle: {
-                        horizontalAlign: 0,
-                    },
+                    paragraphId: expect.stringMatching(/^para_/),
                     startIndex: 6,
                 },
             ]);
@@ -247,7 +237,7 @@ describe('Test clipboard', () => {
         });
 
         it('test numfmt with paste', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(excelSample);
             expect(res).toBeTruthy();
@@ -255,8 +245,19 @@ describe('Test clipboard', () => {
             expect(cellValue?.v).toEqual(45607);
         });
 
+        it('falls back to automatic parsing for unsupported named number formats', async () => {
+            const html = `
+                <style>.percent { mso-number-format: Percent; }</style>
+                <table><tr><td class="percent">12%</td></tr></table>
+            `;
+
+            await expect(sheetClipboardService.legacyPaste(html)).resolves.toBe(true);
+            expect(getValues(1, 1, 1, 1)?.[0]?.[0]?.v).toBe(0.12);
+            expect(getStyles(1, 1, 1, 1)?.[0]?.[0]?.n?.pattern).toBe('0%');
+        });
+
         it('test formula with paste', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste('', '=SUM(A1');
             expect(res).toBeTruthy();
@@ -265,7 +266,7 @@ describe('Test clipboard', () => {
         });
 
         it('test paste to range K1:L1, K1 has style, L1 has text format', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
 
             // set selection to K1:L1
@@ -302,16 +303,10 @@ describe('Test clipboard', () => {
                 fs: 11,
                 it: 0,
                 bl: 0,
-                ul: { s: 0, cl: { rgb: 'rgb(0,0,0)' } },
-                st: { s: 0, cl: { rgb: 'rgb(0,0,0)' } },
-                ol: { s: 0, cl: { rgb: 'rgb(0,0,0)' } },
-                tr: { a: 0, v: 0 },
-                td: 0,
                 cl: { rgb: 'rgb(0,0,0)' },
                 ht: 0,
                 vt: 2,
                 tb: 1,
-                pd: { t: 0, b: 2, l: 2, r: 2 },
             });
             expect(L1CellStyle).toStrictEqual({
                 n: { pattern: DEFAULT_TEXT_FORMAT_EXCEL },
@@ -319,21 +314,15 @@ describe('Test clipboard', () => {
                 fs: 11,
                 it: 0,
                 bl: 0,
-                ul: { s: 0, cl: { rgb: 'rgb(0,0,0)' } },
-                st: { s: 0, cl: { rgb: 'rgb(0,0,0)' } },
-                ol: { s: 0, cl: { rgb: 'rgb(0,0,0)' } },
-                tr: { a: 0, v: 0 },
-                td: 0,
                 cl: { rgb: 'rgb(0,0,0)' },
                 ht: 0,
                 vt: 2,
                 tb: 1,
-                pd: { t: 0, b: 2, l: 2, r: 2 },
             });
         });
 
         it('copy number 123456789123456789', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
 
             // set selection to K1:L1
@@ -363,7 +352,7 @@ describe('Test clipboard', () => {
         });
 
         it('copy value is 1,234.57, the format "#,##0.00", the origin value 1234.567', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
 
             // set selection to K1:L1
@@ -393,7 +382,7 @@ describe('Test clipboard', () => {
         });
 
         it('copy value is $ 23,123.00, the format "$#,##0.00", the origin value 23123', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
 
             // set selection to K1:L1
@@ -423,7 +412,7 @@ describe('Test clipboard', () => {
         });
 
         it('copy value is `  1   3   `, no specific format', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
 
             // set selection to K1:L1
@@ -451,6 +440,41 @@ describe('Test clipboard', () => {
             // space char code is 32(' '), no-break space char code is 160(\u00A0)
             expect(cellValue?.v).toMatch(/[ \u00A0]{2}1[ \u00A0]{3}3[ \u00A0]{3}/);
             expect(cellValue?.t).toBe(CellValueType.STRING);
+        });
+
+        it('copy value is (30), (30,303,003,030), 3.14, 2015/2/2, 3000%, ¥ 1,234.57', async () => {
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
+            if (!worksheet) return false;
+
+            // set selection to K1:L1
+            const selectionManager = get(SheetsSelectionsService);
+            selectionManager.addSelections([
+                {
+                    range: {
+                        startRow: 0,
+                        startColumn: 0,
+                        endRow: 0,
+                        endColumn: 0,
+                        rangeType: RANGE_TYPE.NORMAL,
+                    },
+                    primary: null,
+                    style: null,
+                },
+            ]);
+
+            // paste data, excelSample2 value is 000123456
+            const res = await sheetClipboardService.legacyPaste(excelSample7);
+            expect(res).toBeTruthy();
+
+            // check the values
+            const cellValues = getValues(0, 0, 5, 0);
+
+            expect(cellValues?.[0]?.[0]?.v).toBe(-30);
+            expect(cellValues?.[1]?.[0]?.v).toBe(-30303003030);
+            expect(cellValues?.[2]?.[0]?.v).toBe(3.14);
+            expect(cellValues?.[3]?.[0]?.v).toBe(42037);
+            expect(cellValues?.[4]?.[0]?.v).toBe(30);
+            expect(cellValues?.[5]?.[0]?.v).toBe(1234.57);
         });
     });
 });

@@ -15,9 +15,10 @@
  */
 
 import type { ReactElement, ReactNode } from 'react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from '../../helper/clsx';
+import { ConfigContext } from '../config-provider/ConfigProvider';
 
 export interface ITooltipProps {
     /**
@@ -70,6 +71,8 @@ export function Tooltip(props: ITooltipProps) {
         visible: controlledVisible,
         onVisibleChange,
     } = props;
+
+    const { direction } = useContext(ConfigContext);
 
     // Internal state for uncontrolled mode
     const [uncontrolledVisible, setUncontrolledVisible] = useState(false);
@@ -223,7 +226,7 @@ export function Tooltip(props: ITooltipProps) {
 
     const triggerElement = asChild
         ? (
-            <span {...commonProps} className="univer-inline-block univer-max-w-full univer-truncate">
+            <span {...commonProps} className="univer-inline-flex univer-max-w-full univer-items-center univer-truncate">
                 {children}
             </span>
         )
@@ -239,11 +242,12 @@ export function Tooltip(props: ITooltipProps) {
         tooltipNode = createPortal(
             <div
                 ref={tooltipRef}
+                dir={direction}
                 role="tooltip"
                 className={clsx(`
                   univer-animate-in univer-fade-in-0 univer-zoom-in-95 univer-pointer-events-auto univer-absolute
                   univer-z-[1081] univer-box-border univer-w-fit univer-max-w-sm univer-text-balance univer-rounded-lg
-                  univer-bg-gray-700 univer-px-2.5 univer-py-2 univer-text-xs univer-font-medium univer-text-white
+                  univer-bg-gray-700 univer-px-2.5 univer-py-2 univer-text-xs univer-font-medium univer-text-gray-0
                   univer-shadow-lg univer-drop-shadow-sm
                   dark:!univer-bg-gray-100 dark:!univer-text-gray-900
                 `, className)}

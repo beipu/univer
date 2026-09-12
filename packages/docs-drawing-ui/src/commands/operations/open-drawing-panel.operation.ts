@@ -15,10 +15,13 @@
  */
 
 import type { IAccessor, ICommand } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import { CommandType, LocaleService } from '@univerjs/core';
 import { IDrawingManagerService } from '@univerjs/drawing';
 import { ISidebarService } from '@univerjs/ui';
-import { COMPONENT_DOC_DRAWING_PANEL } from '../../views/doc-image-panel/component-name';
+import {
+    COMPONENT_DOC_DRAWING_PANEL,
+} from '../../views/doc-image-panel/component-name';
 
 export interface IUIComponentCommandParams {
     value: string;
@@ -35,7 +38,7 @@ export const SidebarDocDrawingOperation: ICommand = {
         switch (params.value) {
             case 'open':
                 sidebarService.open({
-                    header: { title: localeService.t('docImage.panel.title') },
+                    header: { title: localeService.t<LocaleKey>('docs-drawing-ui.panel.title') },
                     children: { label: COMPONENT_DOC_DRAWING_PANEL },
                     onClose: () => {
                         drawingManagerService.focusDrawing(null);

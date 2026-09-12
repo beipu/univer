@@ -15,7 +15,7 @@
  */
 
 import type { IDocumentData } from '@univerjs/core';
-import { DEFAULT_EMPTY_DOCUMENT_VALUE, DocumentFlavor, IContextService } from '@univerjs/core';
+import { createParagraphId, DEFAULT_EMPTY_DOCUMENT_VALUE, DocumentFlavor, IContextService } from '@univerjs/core';
 import { borderClassName, clsx } from '@univerjs/design';
 import { IEditorService } from '@univerjs/docs-ui';
 import { FIX_ONE_PIXEL_BLUR_OFFSET } from '@univerjs/engine-render';
@@ -60,6 +60,7 @@ export function SlideEditorContainer() {
             paragraphs: [
                 {
                     startIndex: 0,
+                    paragraphId: createParagraphId(new Set()),
                 },
             ],
         },
@@ -69,7 +70,7 @@ export function SlideEditorContainer() {
     };
 
     useEffect(() => {
-        slideEditorManagerService.state$.subscribe((param) => {
+        const subscription = slideEditorManagerService.state$.subscribe((param) => {
             if (param == null) {
                 return;
             }
@@ -105,7 +106,9 @@ export function SlideEditorContainer() {
                 slideEditorManagerService.setRect({ left, top, width, height });
             }
         });
-    }, []); // Empty dependency array means this effect runs once on mount and clean up on unmount
+
+        return () => subscription.unsubscribe();
+    }, [editorService, slideEditorManagerService]);
 
     useEffect(() => {
         if (!disableAutoFocus) {

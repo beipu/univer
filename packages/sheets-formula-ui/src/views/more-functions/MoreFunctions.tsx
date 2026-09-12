@@ -15,7 +15,14 @@
  */
 
 import type { IFunctionInfo } from '@univerjs/engine-formula';
-import { DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY, DOCS_NORMAL_EDITOR_UNIT_ID_KEY, ICommandService, IUniverInstanceService, LocaleService } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
+import {
+    DOCS_FORMULA_BAR_EDITOR_UNIT_ID_KEY,
+    DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
+    ICommandService,
+    IUniverInstanceService,
+    LocaleService,
+} from '@univerjs/core';
 import { Button } from '@univerjs/design';
 import { IEditorService } from '@univerjs/docs-ui';
 import { DeviceInputEventType } from '@univerjs/engine-render';
@@ -26,7 +33,11 @@ import { useState } from 'react';
 import { InputParams } from './input-params/InputParams';
 import { SelectFunction } from './select-function/SelectFunction';
 
-export function MoreFunctions() {
+export interface IMoreFunctionsProps {
+    SelectFunctionComponent?: typeof SelectFunction;
+}
+
+export function MoreFunctions({ SelectFunctionComponent = SelectFunction }: IMoreFunctionsProps = {}) {
     const workbook = useActiveWorkbook();
     const [selectFunction, setSelectFunction] = useState<boolean>(true);
     const [inputParams, setInputParams] = useState<boolean>(false);
@@ -67,7 +78,7 @@ export function MoreFunctions() {
             data-u-comp="sheets-formula-functions-panel"
             className="univer-box-border univer-flex univer-h-full univer-flex-col univer-justify-between univer-py-2"
         >
-            {selectFunction && <SelectFunction onChange={setFunctionInfo} />}
+            {selectFunction && <SelectFunctionComponent onChange={setFunctionInfo} />}
             {inputParams && <InputParams functionInfo={functionInfo} onChange={() => {}} />}
             <div className="univer-flex univer-justify-end">
                 {/* TODO@Dushusir: open input params after range selector refactor */}
@@ -77,12 +88,12 @@ export function MoreFunctions() {
                         onClick={handleClickNextPrev}
                         className="univer-mb-5 univer-ml-4 univer-mr-0 univer-mt-0"
                     >
-                        {localeService.t('formula.moreFunctions.next')}
+                        {localeService.t<LocaleKey>('sheets-formula-ui.moreFunctions.next')}
                     </Button>
                 )}
                 {inputParams && (
                     <Button onClick={handleClickNextPrev} className="univer-mb-5 univer-ml-4 univer-mr-0 univer-mt-0">
-                        {localeService.t('formula.moreFunctions.prev')}
+                        {localeService.t<LocaleKey>('sheets-formula-ui.moreFunctions.prev')}
                     </Button>
                 )}
                 {selectFunction && !!workbook && (
@@ -92,7 +103,7 @@ export function MoreFunctions() {
                         onClick={handleConfirm}
                         className="univer-mb-5 univer-ml-4 univer-mr-0 univer-mt-0"
                     >
-                        {localeService.t('formula.moreFunctions.confirm')}
+                        {localeService.t<LocaleKey>('sheets-formula-ui.moreFunctions.confirm')}
                     </Button>
                 )}
             </div>

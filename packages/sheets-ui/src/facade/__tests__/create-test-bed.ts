@@ -31,14 +31,13 @@ import {
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
 import { LexerTreeBuilder } from '@univerjs/engine-formula';
-import { Engine, IRenderingEngine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
-
+import { Engine, IRenderManagerService, RenderManagerService } from '@univerjs/engine-render';
 import {
     SheetInterceptorService,
     SheetSkeletonService,
 } from '@univerjs/sheets';
-
-import '../f-sheet-hooks';
+import { DragManagerService } from '../../services/drag-manager.service';
+import { HoverManagerService } from '../../services/hover-manager.service';
 
 function getTestWorkbookDataDemo(): IWorkbookData {
     return {
@@ -126,11 +125,13 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
             const injector = this._injector;
             injector.add([SheetInterceptorService]);
             injector.add([SheetSkeletonService]);
-            injector.add([IRenderingEngine, { useFactory: () => new Engine() }]);
             injector.add([IRenderManagerService, { useClass: RenderManagerServiceTestBed }]);
             injector.add([LexerTreeBuilder]);
 
-            dependencies?.forEach((d) => injector.add(d));
+            const dependencyIds = new Set(dependencies?.map((dependency) => Array.isArray(dependency) ? dependency[0] : dependency));
+            if (!dependencyIds.has(HoverManagerService)) injector.add([HoverManagerService]);
+            if (!dependencyIds.has(DragManagerService)) injector.add([DragManagerService]);
+            dependencies?.forEach((dependency) => injector.add(dependency));
 
             this._injector.get(SheetInterceptorService);
         }
@@ -139,7 +140,7 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
     // load theme service
     const themeService = injector.get(ThemeService);
     const theme = themeService.getCurrentTheme();
-    const newTheme = set(theme, 'black', '#35322b');
+    const newTheme = set(theme, 'gray.1000', '#35322b');
     themeService.setTheme(newTheme);
 
     // register builtin plugins

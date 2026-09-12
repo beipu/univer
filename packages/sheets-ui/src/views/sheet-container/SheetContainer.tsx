@@ -14,16 +14,26 @@
  * limitations under the License.
  */
 
-import type { Workbook } from '@univerjs/core';
+import type { Workbook, Worksheet } from '@univerjs/core';
 import type { IUniverSheetsUIConfig } from '../../config/config';
-import { IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-import { ComponentManager, ContextMenuPosition, IMenuManagerService, ToolbarItem, useConfigValue, useDependency, useObservable } from '@univerjs/ui';
-import { useMemo } from 'react';
-import { useActiveWorkbook } from '../../components/hook';
+import {
+    Injector,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { IRenderManagerService } from '@univerjs/engine-render';
+import { ComponentManager, ContextMenuPosition, IMenuManagerService, IWorkbenchService, ToolbarItem, useConfigValue, useDependency, useObservable } from '@univerjs/ui';
+import { useEffect, useMemo } from 'react';
+import { EMPTY, merge } from 'rxjs';
+import { EMBEDDING_CELL_EDITOR_COMPONENT_KEY } from '../../common/keys';
 import { SHEETS_UI_PLUGIN_CONFIG_KEY } from '../../config/config';
+import { getEmbedSheetsTabCustomData } from '../../embed-tab-anchor';
+import { ISheetEmbedRuntimeFocusCoordinator } from '../../services/sheet-embed-integration.service';
+import { ISheetEmbedRuntimeService } from '../../services/sheet-embed-runtime.service';
 import { AutoFillPopupMenu } from '../auto-fill-popup-menu/AutoFillPopupMenu';
 import { EditorContainer } from '../editor-container/EditorContainer';
 import { FormulaBar } from '../formula-bar/FormulaBar';
+import { useActiveWorkbook, useActiveWorksheet } from '../hook';
 import { SheetBar } from '../sheet-bar/SheetBar';
 import { SheetZoomSlider } from '../sheet-slider/CountBar';
 import { StatusBar } from '../status-bar/StatusBar';
@@ -34,28 +44,41 @@ export function RenderSheetFooter() {
     const config = useConfigValue<IUniverSheetsUIConfig>(SHEETS_UI_PLUGIN_CONFIG_KEY);
     const menuManagerService = useDependency(IMenuManagerService);
     const showFooter = config?.footer ?? true;
-    const workbook = useActiveWorkbook();
+    const workbook = useRootWorkbenchWorkbook();
+    const activeWorkbookEmbeddedRender = useActiveWorkbookIsEmbeddedRender(workbook);
+    const rootUnitType = useWorkbenchRootUnitType();
+    const activeEmbedTab = useActiveSheetEmbedTabData(workbook);
     if (!workbook || !showFooter) return null;
+    if (activeWorkbookEmbeddedRender) return null;
+    if (rootUnitType !== UniverInstanceType.UNIVER_SHEET && !activeEmbedTab) return null;
 
     const footerMenus = menuManagerService.getMenuByPositionKey(ContextMenuPosition.FOOTER_MENU);
-    const { sheetBar = true, statisticBar = true, menus = true, zoomSlider = true } = config?.footer || {};
-    if (!sheetBar && !statisticBar && !menus && !zoomSlider) return null;
+    const {
+        sheetBar = true,
+        statisticBar = true,
+        menus = true,
+        zoomSlider = true,
+    } = config?.footer || {};
+    const showStatisticBar = activeEmbedTab ? false : statisticBar;
+    const showMenus = activeEmbedTab ? false : menus;
+    const showZoomSlider = activeEmbedTab ? false : zoomSlider;
+    if (!sheetBar && !showStatisticBar && !showMenus && !showZoomSlider) return null;
 
     return (
         <section
-            className={`
+            className="
               univer-box-border univer-grid univer-w-full univer-grid-flow-col univer-grid-cols-[1fr,auto,auto,auto]
-              univer-items-center univer-justify-between univer-bg-white univer-px-5 univer-text-gray-900
+              univer-items-center univer-justify-between univer-bg-gray-0 univer-px-5 univer-text-gray-900
               dark:!univer-bg-gray-900 dark:!univer-text-gray-200
-            `}
+            "
+            data-range-selector
             style={{
                 height: SHEET_FOOTER_BAR_HEIGHT,
             }}
-            data-range-selector
         >
             {sheetBar && <SheetBar />}
-            {statisticBar && <StatusBar />}
-            {menus && footerMenus.length > 0 && (
+            {showStatisticBar && <StatusBar />}
+            {showMenus && footerMenus.length > 0 && (
                 <div className="univer-box-border univer-flex univer-gap-2 univer-px-2">
                     {footerMenus.map((item) => item.children?.map((child) => (
                         child?.item && (
@@ -67,16 +90,22 @@ export function RenderSheetFooter() {
                     )))}
                 </div>
             )}
-            {zoomSlider && <SheetZoomSlider />}
+            {showZoomSlider && <SheetZoomSlider />}
         </section>
     );
 }
 
 export function RenderSheetHeader() {
     const config = useConfigValue<IUniverSheetsUIConfig>(SHEETS_UI_PLUGIN_CONFIG_KEY);
-    const hasWorkbook = useHasWorkbook();
+    const workbook = useRootWorkbenchWorkbook();
+    const hasWorkbook = !!workbook;
+    const activeWorkbookEmbeddedRender = useActiveWorkbookIsEmbeddedRender(workbook);
+    const rootUnitType = useWorkbenchRootUnitType();
+    const activeEmbedTab = useActiveSheetEmbedTabData(workbook);
     if (!hasWorkbook) return null;
-
+    if (activeWorkbookEmbeddedRender) return null;
+    if (activeEmbedTab) return null;
+    if (rootUnitType !== UniverInstanceType.UNIVER_SHEET) return null;
     if (config?.formulaBar !== false) {
         return <FormulaBar />;
     }
@@ -85,35 +114,200 @@ export function RenderSheetHeader() {
 }
 
 /**
- * @deprecated We should not write into this component anymore.
+ * We should not write into this component anymore.
  */
-export function RenderSheetContent() {
+export interface IRenderSheetContentProps {
+    AutoFillPopupMenuComponent?: typeof AutoFillPopupMenu | null;
+}
+
+export function RenderSheetContent({ AutoFillPopupMenuComponent = AutoFillPopupMenu }: IRenderSheetContentProps = {}) {
     const config = useConfigValue<IUniverSheetsUIConfig>(SHEETS_UI_PLUGIN_CONFIG_KEY);
-    const hasWorkbook = useHasWorkbook();
     const componentManager = useDependency(ComponentManager);
+    const activeWorkbook = useActiveWorkbook();
+    const workbook = useRootWorkbenchWorkbook();
+    const activeEmbedTab = useActiveSheetEmbedTabData(workbook);
+    const injector = useDependency(Injector);
+    const activeUnitEmbeddedRender = useActiveWorkbookIsEmbeddedRender(activeWorkbook);
+    const activeWorkbookEmbeddedRender = useActiveWorkbookIsEmbeddedRender(workbook);
+    const rootUnitType = useWorkbenchRootUnitType();
+    const rootWorkbenchOwnsSheet = rootUnitType === UniverInstanceType.UNIVER_SHEET || Boolean(activeEmbedTab);
 
-    // Attempt to retrieve the registered ShapeTextEditorContainer
-    // We use a string key to avoid hard dependency on sheets-shape-ui
-    const ShapeTextEditorContainer = componentManager.get('ShapeTextEditorContainer');
+    // We use string keys to avoid a hard dependency on sheets-shape-ui.
+    const ShapeTextEditorContainer = componentManager.get('SheetShapeTextEditorContainer') ?? componentManager.get('ShapeTextEditorContainer');
+    const CellEditorContainer = componentManager.get(EMBEDDING_CELL_EDITOR_COMPONENT_KEY) ?? EditorContainer;
 
-    if (!hasWorkbook) return null;
+    useEffect(() => {
+        if (
+            !workbook ||
+            activeEmbedTab ||
+            activeWorkbook?.getUnitId() !== workbook.getUnitId() ||
+            activeUnitEmbeddedRender ||
+            activeWorkbookEmbeddedRender ||
+            !rootWorkbenchOwnsSheet
+        ) {
+            return;
+        }
+
+        const instanceService = injector.get(IUniverInstanceService);
+        const currentWorkbook = instanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const runtimeFocusCoordinator = injector.has(ISheetEmbedRuntimeFocusCoordinator)
+            ? injector.get(ISheetEmbedRuntimeFocusCoordinator)
+            : undefined;
+        const currentRuntimeScope = runtimeFocusCoordinator?.resolveRuntimeScopeByChildUnitId(
+            currentWorkbook?.getUnitId()
+        );
+        const currentWorkbookEmbeddedRender = currentWorkbook != null && (
+            injector.get(IRenderManagerService).getRenderUnitById(currentWorkbook.getUnitId())?.isMainScene === false ||
+            instanceService.getUnitCreateOptions(currentWorkbook.getUnitId())?.embeddedRender === true
+        );
+        if (
+            currentWorkbook?.getUnitId() !== workbook.getUnitId() &&
+            (currentRuntimeScope?.hostUnitId === workbook.getUnitId() || currentWorkbookEmbeddedRender)
+        ) {
+            return;
+        }
+
+        instanceService.setCurrentUnitForType(workbook.getUnitId());
+        instanceService.focusUnit(workbook.getUnitId());
+        tryGetSheetEmbedRuntimeService(injector)?.clearTab();
+    }, [activeEmbedTab, activeUnitEmbeddedRender, activeWorkbook, activeWorkbookEmbeddedRender, injector, rootWorkbenchOwnsSheet, workbook]);
+
+    if (!workbook) return null;
+    if (!rootWorkbenchOwnsSheet) return null;
+    if (activeWorkbookEmbeddedRender) return null;
+    if (activeEmbedTab && workbook) {
+        return <RenderSheetEmbedTabHost workbook={workbook} worksheet={activeEmbedTab.worksheet} />;
+    }
 
     return (
         <>
             {ShapeTextEditorContainer && <ShapeTextEditorContainer />}
-            {!config?.disableEdit && <EditorContainer />}
-            <AutoFillPopupMenu />
+            {!config?.disableEdit && <CellEditorContainer />}
+            {AutoFillPopupMenuComponent && <AutoFillPopupMenuComponent />}
         </>
     );
 }
 
-function useHasWorkbook(): boolean {
-    const univerInstanceService = useDependency(IUniverInstanceService);
-    const workbook = useObservable(() => univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET), null, false, []);
-    const hasWorkbook = !!workbook;
-    return useMemo(
-        () => univerInstanceService.getAllUnitsForType(UniverInstanceType.UNIVER_SHEET).length > 0,
+function RenderSheetEmbedTabHost(props: { workbook: Workbook; worksheet: Worksheet }) {
+    const { workbook, worksheet } = props;
+    const injector = useDependency(Injector);
+    const embedData = getEmbedSheetsTabCustomData(worksheet.getConfig());
+    const hostUnitId = workbook.getUnitId();
+    const hostAnchorId = embedData?.hostAnchorId;
+    const embedId = embedData?.embedId;
 
-        [univerInstanceService, hasWorkbook]
+    useEffect(() => {
+        if (!embedId || !hostAnchorId) {
+            return undefined;
+        }
+
+        const embedRuntimeService = tryGetSheetEmbedRuntimeService(injector);
+        if (!embedRuntimeService) {
+            return undefined;
+        }
+
+        try {
+            const disposable = embedRuntimeService.mountSheetTab({
+                hostUnitId,
+                hostAnchorId,
+                embedId,
+            });
+
+            return () => {
+                disposable?.dispose();
+            };
+        } catch (error) {
+            console.warn('[sheets-ui] failed to mount embedded sheet-tab block', error);
+        }
+
+        return undefined;
+    }, [embedId, hostAnchorId, hostUnitId, injector]);
+
+    return (
+        <div
+            data-embed-sheets-sheet-tab-host={hostAnchorId}
+            className="
+              univer-absolute univer-inset-0 univer-z-40 univer-bg-gray-0
+              dark:!univer-bg-gray-900
+            "
+        />
     );
+}
+
+function useActiveWorkbookIsEmbeddedRender(workbook: Workbook | null): boolean {
+    const univerInstanceService = useDependency(IUniverInstanceService);
+    const renderManagerService = useDependency(IRenderManagerService);
+    const injector = useDependency(Injector);
+    const runtimeFocusCoordinator = injector.has(ISheetEmbedRuntimeFocusCoordinator)
+        ? injector.get(ISheetEmbedRuntimeFocusCoordinator)
+        : undefined;
+    const renderLifecycle = useObservable(
+        () => merge(
+            renderManagerService.created$,
+            renderManagerService.disposed$,
+            runtimeFocusCoordinator?.runtimeSessionChanged$ ?? EMPTY
+        ),
+        null,
+        false,
+        [renderManagerService, runtimeFocusCoordinator]
+    );
+    return useMemo(() => {
+        void renderLifecycle;
+        if (!workbook) {
+            return false;
+        }
+
+        // Imported Units may gain embedded ownership only after their non-main renderer is created.
+        return runtimeFocusCoordinator?.resolveRuntimeScopeByChildUnitId(workbook.getUnitId()) != null ||
+            renderManagerService.getRenderUnitById(workbook.getUnitId())?.isMainScene === false ||
+            univerInstanceService.getUnitCreateOptions(workbook.getUnitId())?.embeddedRender === true;
+    }, [renderLifecycle, renderManagerService, runtimeFocusCoordinator, univerInstanceService, workbook]);
+}
+
+function useRootWorkbenchWorkbook(): Workbook | null {
+    const activeWorkbook = useActiveWorkbook();
+    const injector = useDependency(Injector);
+    const instanceService = useDependency(IUniverInstanceService);
+    const runtimeFocusCoordinator = injector.has(ISheetEmbedRuntimeFocusCoordinator)
+        ? injector.get(ISheetEmbedRuntimeFocusCoordinator)
+        : undefined;
+    const runtimeSessionLifecycle = useObservable(
+        () => runtimeFocusCoordinator?.runtimeSessionChanged$ ?? EMPTY,
+        null,
+        false,
+        [runtimeFocusCoordinator]
+    );
+
+    return useMemo(() => {
+        void runtimeSessionLifecycle;
+        if (!activeWorkbook || !runtimeFocusCoordinator) {
+            return activeWorkbook;
+        }
+
+        const runtimeScope = runtimeFocusCoordinator.resolveRuntimeScopeByChildUnitId(activeWorkbook.getUnitId());
+        if (!runtimeScope?.hostUnitId) {
+            return activeWorkbook;
+        }
+
+        // Same-type embeds keep the host workbook in the root workbench while the child uses scoped services.
+        return instanceService.getUnit<Workbook>(runtimeScope.hostUnitId, UniverInstanceType.UNIVER_SHEET) ?? activeWorkbook;
+    }, [activeWorkbook, instanceService, runtimeFocusCoordinator, runtimeSessionLifecycle]);
+}
+
+function useWorkbenchRootUnitType(): UniverInstanceType | null {
+    const workbenchService = useDependency(IWorkbenchService);
+    return useObservable(workbenchService.rootUnitType$, null, true);
+}
+
+function useActiveSheetEmbedTabData(workbook: Workbook | null): { worksheet: Worksheet } | undefined {
+    const worksheet = useActiveWorksheet(workbook) as Worksheet | null | undefined;
+    return worksheet && getEmbedSheetsTabCustomData(worksheet.getConfig()) ? { worksheet } : undefined;
+}
+
+function tryGetSheetEmbedRuntimeService(injector: Injector) {
+    try {
+        return injector.get(ISheetEmbedRuntimeService);
+    } catch {
+        return undefined;
+    }
 }

@@ -14,64 +14,25 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, ICommand, IDocumentBody, IMutationInfo, IParagraph, IParagraphBorder, ITextRangeParam } from '@univerjs/core';
+import type { DocumentDataModel, ICommand, IDocumentBody, IMutationInfo, IParagraphBorder, ITextRangeParam } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
-import { BuildTextUtils, CommandType, DataStreamTreeTokenType, generateRandomId, ICommandService, IUniverInstanceService, JSONX, PresetListType, TextX, TextXActionType, Tools, UniverInstanceType, UpdateDocsAttributeType } from '@univerjs/core';
-import { DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
-import { getTextRunAtPosition } from '../../basics/paragraph';
+import { BuildTextUtils, CommandType, DataStreamTreeTokenType, getRichTextEditPath, ICommandService, IUniverInstanceService, JSONX, PresetListType, TextX, TextXActionType, UniverInstanceType, UpdateDocsAttributeType } from '@univerjs/core';
+import { DocSelectionManagerService, generateParagraphs, RichTextEditingMutation } from '@univerjs/docs';
+import { getTextRunAtPosition, isTopLevelStructuralGap } from '../../basics/paragraph';
 import { DocMenuStyleService } from '../../services/doc-menu-style.service';
-import { getRichTextEditPath } from '../util';
 
-export function generateParagraphs(
-    dataStream: string,
-    prevParagraph?: IParagraph,
-    borderBottom?: IParagraphBorder
-): IParagraph[] {
-    const paragraphs: IParagraph[] = [];
+export { generateParagraphs };
 
-    for (let i = 0, len = dataStream.length; i < len; i++) {
-        const char = dataStream[i];
-
-        if (char !== DataStreamTreeTokenType.PARAGRAPH) {
-            continue;
-        }
-
-        paragraphs.push({
-            startIndex: i,
-        });
-    }
-
-    if (prevParagraph) {
-        for (const paragraph of paragraphs) {
-            if (prevParagraph.bullet) {
-                paragraph.bullet = Tools.deepClone(prevParagraph.bullet);
-            }
-
-            if (prevParagraph.paragraphStyle) {
-                paragraph.paragraphStyle = Tools.deepClone(prevParagraph.paragraphStyle);
-                delete paragraph.paragraphStyle.borderBottom;
-                if (prevParagraph.paragraphStyle.headingId) {
-                    paragraph.paragraphStyle.headingId = generateRandomId(6);
-                }
-            }
-        }
-    }
-
-    if (borderBottom) {
-        for (const paragraph of paragraphs) {
-            if (!paragraph.paragraphStyle) {
-                paragraph.paragraphStyle = {};
-            }
-            paragraph.paragraphStyle.borderBottom = borderBottom;
-        }
-    }
-
-    return paragraphs;
+export enum BreakLineInsertionMode {
+    SplitParagraph = 'split-paragraph',
+    InsertGap = 'insert-gap',
 }
 
 interface IBreakLineCommandParams {
     horizontalLine?: IParagraphBorder;
+    insertionMode?: BreakLineInsertionMode;
     textRange?: ITextRangeParam;
+    unitId?: string;
 }
 
 export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
@@ -85,8 +46,14 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const commandService = accessor.get(ICommandService);
         const docMenuStyleService = accessor.get(DocMenuStyleService);
-        const activeTextRange = params?.textRange ?? docSelectionManagerService.getActiveTextRange();
-        const rectRanges = docSelectionManagerService.getRectRanges();
+        const selectionParams = params?.unitId
+            ? { unitId: params.unitId, subUnitId: params.unitId }
+            : undefined;
+        const targetTextRanges = docSelectionManagerService.getTextRanges(selectionParams) ?? [];
+        const activeTextRange = params?.textRange ?? (selectionParams
+            ? targetTextRanges.find((range) => range.isActive)
+            : docSelectionManagerService.getActiveTextRange());
+        const rectRanges = docSelectionManagerService.getRectRanges(selectionParams);
         if (activeTextRange == null) {
             return false;
         }
@@ -98,15 +65,17 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
             docSelectionManagerService.replaceDocRanges([{
                 startOffset,
                 endOffset: startOffset,
-            }]);
+            }], selectionParams);
 
             return true;
         }
 
-        const { horizontalLine } = params ?? {};
+        const { horizontalLine, insertionMode = BreakLineInsertionMode.SplitParagraph } = params ?? {};
         const { segmentId } = activeTextRange;
-        const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
-        const originBody = docDataModel?.getSelfOrHeaderFooterModel(segmentId ?? '').getBody();
+        const docDataModel = params?.unitId
+            ? univerInstanceService.getUnit<DocumentDataModel>(params.unitId, UniverInstanceType.UNIVER_DOC)
+            : univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const originBody = docDataModel?.getSelfOrHeaderFooterModel(segmentId ?? '')?.getBody();
 
         if (docDataModel == null || originBody == null) {
             return false;
@@ -117,13 +86,18 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
         const { startOffset, endOffset } = activeTextRange;
 
         const paragraphs = originBody.paragraphs ?? [];
-        const prevParagraph = paragraphs.find((p) => p.startIndex >= startOffset);
+        const isBareStructuralGap = isTopLevelStructuralGap(originBody.dataStream, startOffset) &&
+            originBody.dataStream[startOffset] !== DataStreamTreeTokenType.PARAGRAPH;
+        const insertsAtStructuralGap = insertionMode === BreakLineInsertionMode.InsertGap || isBareStructuralGap;
+        const prevParagraph = insertsAtStructuralGap
+            ? undefined
+            : paragraphs.find((p) => p.startIndex >= startOffset);
 
-        if (!prevParagraph) {
+        if (!prevParagraph && !insertsAtStructuralGap) {
             return false;
         }
-        const isAtParagraphEnd = startOffset === prevParagraph.startIndex;
-        const prevParagraphIndex = prevParagraph.startIndex;
+        const isAtParagraphEnd = startOffset === prevParagraph?.startIndex;
+        const prevParagraphIndex = prevParagraph?.startIndex;
         const defaultTextStyle = docMenuStyleService.getDefaultStyle();
         const styleCache = docMenuStyleService.getStyleCache();
         const curTextRun = getTextRunAtPosition(originBody, endOffset, defaultTextStyle, styleCache);
@@ -147,13 +121,15 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
             return false;
         }
 
-        const activeRange = docSelectionManagerService.getActiveTextRange();
+        const activeRange = selectionParams
+            ? targetTextRanges.find((range) => range.isActive)
+            : docSelectionManagerService.getActiveTextRange();
 
         if (originBody == null) {
             return false;
         }
         const { collapsed } = activeTextRange;
-        const cursorMove = insertBody.dataStream.length;
+        const cursorMove = insertsAtStructuralGap ? 0 : insertBody.dataStream.length;
         const textRanges = [
             {
                 startOffset: startOffset + cursorMove,
@@ -170,6 +146,7 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
                 actions: [],
                 textRanges,
                 debounce: true,
+                trigger: BreakLineCommand.id,
             },
         };
 
@@ -194,8 +171,12 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
             textX.push(...dos);
         }
 
-        if (prevParagraph.bullet?.listType === PresetListType.CHECK_LIST_CHECKED || prevParagraph.paragraphStyle?.headingId) {
-            if (activeTextRange.endOffset < prevParagraphIndex) {
+        const preserveEmptyParagraphStyle = collapsed && isAtParagraphEnd;
+        const resetParagraphType = prevParagraph?.bullet?.listType === PresetListType.CHECK_LIST_CHECKED ||
+            prevParagraph?.paragraphStyle?.headingId;
+
+        if (prevParagraph && (preserveEmptyParagraphStyle || resetParagraphType)) {
+            if (prevParagraphIndex != null && activeTextRange.endOffset < prevParagraphIndex) {
                 textX.push({
                     t: TextXActionType.RETAIN,
                     len: prevParagraphIndex - activeTextRange.endOffset,
@@ -207,27 +188,40 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
                 len: 1,
                 body: {
                     dataStream: '',
-                    paragraphs: [
-                        {
-                            ...prevParagraph,
-                            paragraphStyle: {
-                                ...prevParagraph.paragraphStyle,
-                                ...isAtParagraphEnd
-                                    ? {
-                                        headingId: undefined,
-                                        namedStyleType: undefined,
-                                    }
-                                    : null,
-                            },
-                            startIndex: 0,
-                            bullet: prevParagraph.paragraphStyle?.headingId
-                                ? undefined
-                                : {
-                                    ...prevParagraph.bullet!,
-                                    listType: PresetListType.CHECK_LIST,
+                    ...preserveEmptyParagraphStyle
+                        ? {
+                            textRuns: [{
+                                st: 0,
+                                ed: 1,
+                                ts: { ...curTextRun.ts },
+                            }],
+                        }
+                        : null,
+                    ...resetParagraphType
+                        ? {
+                            paragraphs: [
+                                {
+                                    ...prevParagraph,
+                                    paragraphStyle: {
+                                        ...prevParagraph.paragraphStyle,
+                                        ...isAtParagraphEnd
+                                            ? {
+                                                headingId: undefined,
+                                                namedStyleType: undefined,
+                                            }
+                                            : null,
+                                    },
+                                    startIndex: 0,
+                                    bullet: prevParagraph.paragraphStyle?.headingId
+                                        ? undefined
+                                        : {
+                                            ...prevParagraph.bullet!,
+                                            listType: PresetListType.CHECK_LIST,
+                                        },
                                 },
-                        },
-                    ],
+                            ],
+                        }
+                        : null,
                 },
                 coverType: UpdateDocsAttributeType.REPLACE,
             });
@@ -237,9 +231,11 @@ export const BreakLineCommand: ICommand<IBreakLineCommandParams> = {
             startOffset: startOffset + cursorMove,
             endOffset: startOffset + cursorMove,
             collapsed,
+            segmentId,
         }];
 
         const path = getRichTextEditPath(docDataModel, segmentId);
+        doMutation.params.segmentId = segmentId;
         doMutation.params.actions = jsonX.editOp(textX.serialize(), path);
         const result = commandService.syncExecuteCommand<
             IRichTextEditingMutationParams,

@@ -16,8 +16,8 @@
 
 import type { IDocumentBody } from '../../../../types/interfaces';
 import type { TextXAction } from '../action-types';
-import { describe, expect, it } from 'vitest';
-import { UpdateDocsAttributeType } from '../../../../shared';
+import { describe, expect, it, vi } from 'vitest';
+import { Tools, UpdateDocsAttributeType } from '../../../../shared';
 import { BooleanNumber, HorizontalAlign } from '../../../../types/enum';
 import { CustomRangeType } from '../../../../types/interfaces';
 import { PresetListType } from '../../preset-list-type';
@@ -73,6 +73,7 @@ function getDefaultDocWithParagraph() {
         paragraphs: [
             {
                 startIndex: 1,
+                paragraphId: 'para_fixture_1018',
             },
         ],
     };
@@ -104,6 +105,7 @@ function getDefaultDocWithCustomRange() {
         paragraphs: [
             {
                 startIndex: 10,
+                paragraphId: 'para_fixture_1019',
             },
         ],
     };
@@ -112,6 +114,91 @@ function getDefaultDocWithCustomRange() {
 }
 
 describe('apply method', () => {
+    it('does not deep-clone plain typing and delete actions', () => {
+        const deepClone = vi.spyOn(Tools, 'deepClone');
+        const doc: IDocumentBody = { dataStream: 'A\r\n' };
+
+        try {
+            TextX.apply(doc, [
+                { t: TextXActionType.RETAIN, len: 1 },
+                { t: TextXActionType.INSERT, len: 1, body: { dataStream: 'B' } },
+                { t: TextXActionType.DELETE, len: 1 },
+            ]);
+
+            expect(doc.dataStream).toBe('AB\n');
+            expect(deepClone).not.toHaveBeenCalled();
+        } finally {
+            deepClone.mockRestore();
+        }
+    });
+
+    it('keeps structural insert action payloads immutable', () => {
+        const doc: IDocumentBody = {
+            dataStream: 'A\r\n',
+            paragraphs: [{ startIndex: 1, paragraphId: 'source' }],
+        };
+        const actions: TextXAction[] = [{
+            t: TextXActionType.INSERT,
+            len: 1,
+            body: {
+                dataStream: '\r',
+                paragraphs: [{
+                    startIndex: 0,
+                    paragraphId: 'inserted',
+                    paragraphStyle: { horizontalAlign: HorizontalAlign.CENTER },
+                }],
+            },
+        }];
+        const serializedActions = JSON.stringify(actions);
+
+        TextX.apply(doc, actions);
+
+        expect(JSON.stringify(actions)).toBe(serializedActions);
+        expect(doc.paragraphs?.[0]).not.toBe(actions[0].body?.paragraphs?.[0]);
+    });
+
+    it('preserves whole-entity metadata when inserting inside a custom range', () => {
+        const doc: IDocumentBody = {
+            dataStream: 'formula\r\n',
+            customRanges: [{
+                startIndex: 0,
+                endIndex: 6,
+                rangeId: 'formula-range',
+                rangeType: CustomRangeType.CUSTOM,
+                wholeEntity: true,
+                properties: { kind: 'formula' },
+            }],
+        };
+
+        TextX.apply(doc, [
+            { t: TextXActionType.RETAIN, len: 3 },
+            {
+                t: TextXActionType.INSERT,
+                len: 1,
+                body: {
+                    dataStream: 'X',
+                    customRanges: [{
+                        startIndex: 0,
+                        endIndex: 0,
+                        rangeId: 'formula-range',
+                        rangeType: CustomRangeType.CUSTOM,
+                        wholeEntity: true,
+                        properties: { kind: 'formula' },
+                    }],
+                },
+            },
+        ]);
+
+        expect(doc.customRanges).toEqual([{
+            startIndex: 0,
+            endIndex: 7,
+            rangeId: 'formula-range',
+            rangeType: CustomRangeType.CUSTOM,
+            wholeEntity: true,
+            properties: { kind: 'formula' },
+        }]);
+    });
+
     it('should get the same result when apply two actions by order OR composed first case 1', () => {
         const actionsA: TextXAction[] = [
             {
@@ -299,6 +386,7 @@ describe('apply method', () => {
                     dataStream: '',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1020',
                         paragraphStyle: {
                             horizontalAlign: HorizontalAlign.LEFT,
                         },
@@ -319,6 +407,7 @@ describe('apply method', () => {
                     dataStream: '',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1020',
                         paragraphStyle: {
                             horizontalAlign: HorizontalAlign.RIGHT,
                         },
@@ -361,6 +450,7 @@ describe('apply method', () => {
                     dataStream: '',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1022',
                         paragraphStyle: {
                             horizontalAlign: HorizontalAlign.LEFT,
                         },
@@ -382,6 +472,7 @@ describe('apply method', () => {
                     dataStream: '',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1022',
                         paragraphStyle: {
                             horizontalAlign: HorizontalAlign.RIGHT,
                         },
@@ -424,6 +515,7 @@ describe('apply method', () => {
                     dataStream: '',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1024',
                         bullet: {
                             listId: 'J7FZTm',
                             listType: PresetListType.CHECK_LIST,
@@ -450,6 +542,7 @@ describe('apply method', () => {
                     dataStream: '',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1024',
                         bullet: {
                             listId: 'uODEbf',
                             listType: PresetListType.BULLET_LIST,
@@ -555,6 +648,7 @@ describe('apply method', () => {
                     dataStream: '\r',
                     paragraphs: [{
                         startIndex: 0,
+                        paragraphId: 'para_fixture_1026',
                         paragraphStyle: {
                             horizontalAlign: HorizontalAlign.LEFT,
                         },

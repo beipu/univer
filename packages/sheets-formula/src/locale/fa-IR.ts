@@ -17,13 +17,13 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    formula: {
+    'sheets-formula': {
         progress: {
-            analyzing: 'در حال تحلیل',
-            calculating: 'در حال محاسبه',
-            'array-analysis': 'تحلیل آرایه',
-            'array-calculation': 'محاسبه آرایه',
-            done: 'تمام',
+            analyzing: 'در حال تحلیل فرمول‌ها...',
+            calculating: 'در حال محاسبه فرمول‌ها...',
+            'array-analysis': 'در حال تحلیل فرمول‌های آرایه‌ای...',
+            'array-calculation': 'در حال محاسبه فرمول‌های آرایه‌ای...',
+            done: 'انجام شد',
         },
     },
 };

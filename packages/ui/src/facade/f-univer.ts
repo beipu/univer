@@ -16,11 +16,13 @@
 
 import type { IDisposable } from '@univerjs/core';
 import type { IMessageProps } from '@univerjs/design';
-import type { BuiltInUIPart, ComponentType, IComponentOptions, IDialogPartMethodOptions, IFontConfig, ISidebarMethodOptions } from '@univerjs/ui';
+import type { BuiltInUIPart, ComponentType, IComponentOptions, IDialogPartMethodOptions, IFontConfig, ISidebarMethodOptions, RibbonType } from '@univerjs/ui';
 import type { IFacadeMenuItem, IFacadeSubmenuItem } from './f-menu-builder';
+import { IConfigService } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { ComponentManager, connectInjector, CopyCommand, IDialogService, IFontService, IMessageService, ISidebarService, IUIPartsService, PasteCommand } from '@univerjs/ui';
+
+import { ComponentManager, connectInjector, CopyCommand, IDialogService, IFontService, IMessageService, ISidebarService, IUIPartsService, PasteCommand, UI_PLUGIN_CONFIG_KEY } from '@univerjs/ui';
 import { FMenu, FSubmenu } from './f-menu-builder';
 import { FShortcut } from './f-shortcut';
 
@@ -53,7 +55,8 @@ export interface IFUniverUIMixin {
      *
      * // Trigger a shortcut
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1');
      * fRange.activate();
      * fRange.setValue('Hello Univer');
@@ -81,7 +84,8 @@ export interface IFUniverUIMixin {
      * // this example listens for the cell click event and executes the copy and paste code.
      * univerAPI.addEvent(univerAPI.Event.CellClicked, async (params) => {
      *   const fWorkbook = univerAPI.getActiveWorkbook();
-     *   const fWorksheet = fWorkbook.getActiveSheet();
+     *   const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     *   if (!fWorksheet) return;
      *
      *   // Copy the range A1:B2 to the clipboard
      *   const fRange = fWorksheet.getRange('A1:B2');
@@ -112,7 +116,8 @@ export interface IFUniverUIMixin {
      * // this example listens for the cell click event and executes the copy and paste code.
      * univerAPI.addEvent(univerAPI.Event.CellClicked, async (params) => {
      *   const fWorkbook = univerAPI.getActiveWorkbook();
-     *   const fWorksheet = fWorkbook.getActiveSheet();
+     *   const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     *   if (!fWorksheet) return;
      *
      *   // Copy the range A1:B2 to the clipboard
      *   const fRange = fWorksheet.getRange('A1:B2');
@@ -139,7 +144,7 @@ export interface IFUniverUIMixin {
      * @param {IFacadeMenuItem} menuItem the menu item
      * @returns the {@link FMenu} object
      * @example
-     * ```ts
+     * ```tsx
      * // Univer Icon can be viewed at https://docs.univer.ai/icons
      * import { SmileIcon } from '@univerjs/icons'
      *
@@ -222,14 +227,6 @@ export interface IFUniverUIMixin {
 
     /**
      * Open a sidebar.
-     * @deprecated Please use `univerAPI.openSidebar` instead.
-     * @param {ISidebarMethodOptions} params the sidebar options
-     * @returns {IDisposable} the disposable object
-     */
-    openSiderbar(params: ISidebarMethodOptions): IDisposable;
-
-    /**
-     * Open a sidebar.
      * @param {ISidebarMethodOptions} params the sidebar options
      * @returns {IDisposable} the disposable object
      * @example
@@ -259,7 +256,7 @@ export interface IFUniverUIMixin {
      * @param {IDialogPartMethodOptions} dialog the dialog options
      * @returns {IDisposable} the disposable object
      * @example
-     * ```ts
+     * ```tsx
      * import { Button } from '@univerjs/design';
      *
      * univerAPI.openDialog({
@@ -301,6 +298,7 @@ export interface IFUniverUIMixin {
     /**
      * Show a message.
      * @returns {FUniver} the {@link FUniver} instance for chaining
+     * @param {IMessageProps} options Message content, type, duration, and other display options.
      * @example
      * ```ts
      * univerAPI.showMessage({
@@ -313,11 +311,22 @@ export interface IFUniverUIMixin {
     showMessage(options: IMessageProps): FUniver;
 
     /**
+     * Set the ribbon layout type.
+     * @param {RibbonType} ribbonType The ribbon layout type.
+     * @returns the {@link FUniver} instance for chaining
+     * @example
+     * ```ts
+     * univerAPI.setRibbonType('grid');
+     * ```
+     */
+    setRibbonType(ribbonType: RibbonType): FUniver;
+
+    /**
      * Set the visibility of a built-in UI part.
      * @param {BuiltInUIPart} key the built-in UI part
      * @param {boolean} visible the visibility
      * @returns the {@link FUniver} instance for chaining
-     * example
+     * @example
      * ```ts
      * // Hide header, footer, and toolbar
      * univerAPI.setUIVisible(univerAPI.Enum.BuiltInUIPart.HEADER, false)
@@ -356,7 +365,7 @@ export interface IFUniverUIMixin {
      * univerAPI.registerUIPart(univerAPI.Enum.BuiltInUIPart.CUSTOM_HEADER, () => React.createElement('h1', null, 'Custom Header'));
      * ```
      */
-    registerUIPart(key: BuiltInUIPart, component: any): IDisposable;
+    registerUIPart(key: BuiltInUIPart, component: ComponentType): IDisposable;
 
     /**
      * Register an component.
@@ -365,8 +374,9 @@ export interface IFUniverUIMixin {
      * @param {IComponentOptions} [options] - The options of the component.
      * @returns {IDisposable} The disposable object.
      * @example
-     * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * ```tsx
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Register a range loading component
      * const RangeLoading = () => {
@@ -469,13 +479,9 @@ export class FUniverUIMixin extends FUniver implements IFUniverUIMixin {
         return this._injector.createInstance(FSubmenu, submenuItem);
     }
 
-    override openSiderbar(params: ISidebarMethodOptions): IDisposable {
+    override openSidebar(params: ISidebarMethodOptions): IDisposable {
         const sideBarService = this._injector.get(ISidebarService);
         return sideBarService.open(params);
-    }
-
-    override openSidebar(params: ISidebarMethodOptions): IDisposable {
-        return this.openSiderbar(params);
     }
 
     override openDialog(dialog: IDialogPartMethodOptions): IDisposable {
@@ -499,6 +505,12 @@ export class FUniverUIMixin extends FUniver implements IFUniverUIMixin {
         return this;
     }
 
+    override setRibbonType(ribbonType: RibbonType): FUniver {
+        const configService = this._injector.get(IConfigService);
+        configService.setConfig(UI_PLUGIN_CONFIG_KEY, { ribbonType }, { merge: true });
+        return this;
+    }
+
     override setUIVisible(ui: BuiltInUIPart, visible: boolean): FUniver {
         const uiPartService = this._injector.get(IUIPartsService);
         uiPartService.setUIVisible(ui, visible);
@@ -510,19 +522,19 @@ export class FUniverUIMixin extends FUniver implements IFUniverUIMixin {
         return uiPartService.isUIVisible(ui);
     }
 
-    override registerUIPart(key: BuiltInUIPart, component: any): IDisposable {
+    override registerUIPart(key: BuiltInUIPart, component: ComponentType): IDisposable {
         const uiPartService = this._injector.get(IUIPartsService);
         return uiPartService.registerComponent(key, () => connectInjector(component, this._injector));
     }
 
-    override registerComponent(name: string, component: any, options?: IComponentOptions): IDisposable {
+    override registerComponent(name: string, component: ComponentType, options?: IComponentOptions): IDisposable {
         const componentManager = this._injector.get(ComponentManager);
         return this.disposeWithMe(componentManager.register(name, component, options));
     }
 
     override setCurrent(unitId: string): void {
         const rendererManagerService = this._injector.get(IRenderManagerService);
-        const renderUnit = rendererManagerService.getRenderById(unitId);
+        const renderUnit = rendererManagerService.getRenderUnitById(unitId);
         if (!renderUnit) {
             throw new Error('Unit not found');
         }
@@ -540,6 +552,5 @@ export class FUniverUIMixin extends FUniver implements IFUniverUIMixin {
 
 FUniver.extend(FUniverUIMixin);
 declare module '@univerjs/core/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FUniver extends IFUniverUIMixin { }
 }

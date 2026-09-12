@@ -16,8 +16,17 @@
 
 import type { ICommandInfo } from '@univerjs/core';
 import type { ISetArrayFormulaDataMutationParams } from '../commands/mutations/set-array-formula-data.mutation';
-import type { ISetFormulaCalculationStartMutation, ISetFormulaDependencyCalculationMutation, ISetFormulaStringBatchCalculationMutation, ISetQueryFormulaDependencyAllMutation, ISetQueryFormulaDependencyMutation } from '../commands/mutations/set-formula-calculation.mutation';
-import type { IFormulaDependencyTreeJson, IFormulaDependentsAndInRangeResults } from '../engine/dependency/dependency-tree';
+import type {
+    ISetFormulaCalculationStartMutation,
+    ISetFormulaDependencyCalculationMutation,
+    ISetFormulaStringBatchCalculationMutation,
+    ISetQueryFormulaDependencyAllMutation,
+    ISetQueryFormulaDependencyMutation,
+} from '../commands/mutations/set-formula-calculation.mutation';
+import type {
+    IFormulaDependencyTreeJson,
+    IFormulaDependentsAndInRangeResults,
+} from '../engine/dependency/dependency-tree';
 import type { IFormulaDirtyData } from '../services/current-data.service';
 import type { IAllRuntimeData } from '../services/runtime.service';
 import { Disposable, ICommandService, Inject } from '@univerjs/core';
@@ -95,10 +104,21 @@ export class CalculateController extends Disposable {
         );
     }
 
-    private async _calculate(
-        formulaDirtyData: Partial<IFormulaDirtyData>
-    ) {
-        const { forceCalculation: forceCalculate = false, dirtyRanges = [], dirtyNameMap = {}, dirtyDefinedNameMap = {}, dirtyUnitFeatureMap = {}, dirtyUnitOtherFormulaMap = {}, clearDependencyTreeCache = {}, maxIteration = DEFAULT_CYCLE_REFERENCE_COUNT, rowData, isCalculateTreeModel = false } = formulaDirtyData;
+    private async _calculate(formulaDirtyData: Partial<IFormulaDirtyData>) {
+        const {
+            forceCalculation: forceCalculate = false,
+            dirtyRanges = [],
+            dirtyNameMap = {},
+            dirtyDefinedNameMap = {},
+            dirtySuperTableMap = {},
+            dirtyUnitFeatureMap = {},
+            dirtyUnitOtherFormulaMap = {},
+            clearDependencyTreeCache = {},
+            maxIteration = DEFAULT_CYCLE_REFERENCE_COUNT,
+            rowData,
+            externalReferences,
+            isCalculateTreeModel = false,
+        } = formulaDirtyData;
 
         const formulaData = this._formulaDataModel.getFormulaData();
         const arrayFormulaCellData = this._formulaDataModel.getArrayFormulaCellData();
@@ -113,12 +133,14 @@ export class CalculateController extends Disposable {
             dirtyRanges,
             dirtyNameMap,
             dirtyDefinedNameMap,
+            dirtySuperTableMap,
             dirtyUnitFeatureMap,
             dirtyUnitOtherFormulaMap,
             clearDependencyTreeCache,
             maxIteration,
             isCalculateTreeModel,
             rowData,
+            externalReferences,
         });
     }
 
@@ -265,7 +287,15 @@ export class CalculateController extends Disposable {
     }
 
     private async _applyResult(data: IAllRuntimeData) {
-        const { unitData, unitOtherData, arrayFormulaRange, arrayFormulaCellData, clearArrayFormulaCellData, arrayFormulaEmbedded, imageFormulaData, dependencyTreeModelData } = data;
+        const {
+            unitData,
+            unitOtherData,
+            arrayFormulaRange,
+            arrayFormulaCellData,
+            clearArrayFormulaCellData,
+            arrayFormulaEmbedded,
+            imageFormulaData,
+        } = data;
 
         if (!unitData) {
             this._applyTreeResult(data);

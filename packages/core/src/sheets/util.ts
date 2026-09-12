@@ -22,9 +22,11 @@ import { DEFAULT_EMPTY_DOCUMENT_VALUE } from '../common/const';
 import { BuildTextUtils, DocumentDataModel } from '../docs';
 import { TextX } from '../docs/data-model/text-x/text-x';
 import { convertTextRotation } from '../docs/data-model/utils';
-import { Rectangle } from '../shared';
+import { createParagraphId } from '../docs/paragraph-id';
+import { createSectionId } from '../docs/section-break-id';
+import { Rectangle, Tools } from '../shared';
 import { HorizontalAlign, VerticalAlign, WrapStrategy } from '../types/enum';
-import { CustomRangeType } from '../types/interfaces';
+import { CustomRangeType, DocumentFlavor } from '../types/interfaces';
 
 export interface IFontLocale {
     fontList: string[];
@@ -79,7 +81,10 @@ export function createDocumentModelWithStyle(content: string, textStyle: ITextSt
         cellValueType,
     } = config;
 
-    const { t: marginTop, r: marginRight, b: marginBottom, l: marginLeft } = paddingData || DEFAULT_PADDING_DATA;
+    const marginTop = paddingData?.t ?? DEFAULT_PADDING_DATA.t;
+    const marginRight = paddingData?.r ?? DEFAULT_PADDING_DATA.r;
+    const marginBottom = paddingData?.b ?? DEFAULT_PADDING_DATA.b;
+    const marginLeft = paddingData?.l ?? DEFAULT_PADDING_DATA.l;
     const { vertexAngle, centerAngle } = convertTextRotation(textRotation);
     const documentData: IDocumentData = {
         id: 'd',
@@ -95,24 +100,32 @@ export function createDocumentModelWithStyle(content: string, textStyle: ITextSt
             paragraphs: [
                 {
                     startIndex: contentLength,
+                    paragraphId: createParagraphId(new Set()),
                     paragraphStyle: {
                         horizontalAlign,
                     },
                 },
             ],
             sectionBreaks: [{
+                sectionId: createSectionId(new Set()),
                 startIndex: contentLength + 1,
             }],
         },
         documentStyle: {
+            textStyle: Tools.deepClone(textStyle),
+            defaultParagraphStyle: {
+                horizontalAlign,
+            },
             pageSize: {
                 width: Number.POSITIVE_INFINITY,
                 height: Number.POSITIVE_INFINITY,
             },
+            documentFlavor: DocumentFlavor.UNSPECIFIED,
             marginTop,
             marginBottom,
             marginRight,
             marginLeft,
+            paragraphLineGapDefault: 0,
             renderConfig: {
                 horizontalAlign,
                 verticalAlign,

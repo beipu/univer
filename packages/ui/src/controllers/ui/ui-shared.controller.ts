@@ -17,7 +17,8 @@
 import type { IDisposable, Injector, IUniverInstanceService, LifecycleService } from '@univerjs/core';
 import type { IRenderManagerService } from '@univerjs/engine-render';
 import type { ILayoutService } from '../../services/layout/layout.service';
-import { Disposable, isInternalEditorID, LifecycleStages, LifecycleUnreachableError } from '@univerjs/core';
+import { Disposable, isInternalEditorID, LifecycleStages, LifecycleUnreachableError, Quantity } from '@univerjs/core';
+import { IWorkbenchService } from '../../services/workbench/workbench.service';
 
 const STEADY_TIMEOUT = 3000;
 
@@ -54,6 +55,11 @@ export abstract class SingleUnitUIController extends Disposable {
     }
 
     protected _bootstrapWorkbench() {
+        const initialSkeleton = this._injector.get(IWorkbenchService, Quantity.OPTIONAL)?.acquireSkeleton();
+        if (initialSkeleton) {
+            this.disposeWithMe(initialSkeleton);
+        }
+
         this.disposeWithMe(this.bootstrap(async (contentElement, containerElement) => {
             if (this._layoutService) {
                 this.disposeWithMe(this._layoutService.registerRootContainerElement(containerElement));
@@ -68,6 +74,7 @@ export abstract class SingleUnitUIController extends Disposable {
                     for (const [key] of allRenders) {
                         if (this._changeRenderUnit(key, contentElement)) break;
                     }
+                    requestAnimationFrame(() => requestAnimationFrame(() => initialSkeleton?.dispose()));
 
                     // Render as focus shifts.
                     this.disposeWithMe(this._instanceService.focused$.subscribe((unit) => {
@@ -102,17 +109,30 @@ export abstract class SingleUnitUIController extends Disposable {
 
     private _currentRenderId: string | null = null;
     private _changeRenderUnit(rendererId: string, contentElement: HTMLElement): boolean {
-        if (this._currentRenderId === rendererId) return false;
+        const renderer = this._renderManagerService.getRenderUnitById(rendererId);
+        if (
+            !renderer ||
+            !renderer.unitId ||
+            renderer.isMainScene === false ||
+            isInternalEditorID(renderer.unitId)
+        ) {
+            return false;
+        }
 
-        const renderer = this._renderManagerService.getRenderById(rendererId)!;
-        if (!renderer || !renderer.unitId || isInternalEditorID(renderer.unitId)) return false;
+        const canvas = renderer.engine.getCanvasElement();
+        const isCurrentRenderer = this._currentRenderId === rendererId;
+        if (isCurrentRenderer && contentElement.contains(canvas)) return false;
 
-        const currentRenderer = this._currentRenderId
-            ? this._renderManagerService.getRenderById(this._currentRenderId)
-            : null;
-        currentRenderer?.deactivate();
-        currentRenderer?.engine.unmount();
-        renderer.engine.mount(contentElement);
+        if (!isCurrentRenderer) {
+            const currentRenderer = this._currentRenderId
+                ? this._renderManagerService.getRenderUnitById(this._currentRenderId)
+                : null;
+            currentRenderer?.deactivate();
+            currentRenderer?.engine.unmount();
+        }
+        if (!contentElement.contains(canvas)) {
+            renderer.engine.mount(contentElement);
+        }
         renderer.activate();
         this._currentRenderId = rendererId;
         return true;

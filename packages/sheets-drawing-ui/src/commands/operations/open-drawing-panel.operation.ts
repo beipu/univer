@@ -15,8 +15,9 @@
  */
 
 import type { IAccessor, ICommand } from '@univerjs/core';
-import { CommandType, ICommandService, IUniverInstanceService, LocaleService } from '@univerjs/core';
-import { SetDrawingSelectedOperation } from '@univerjs/drawing';
+import type { LocaleKey } from '../../locale/types';
+import { CommandType, DrawingTypeEnum, ICommandService, IUniverInstanceService, LocaleService } from '@univerjs/core';
+import { IDrawingManagerService, SetDrawingSelectedOperation } from '@univerjs/drawing';
 import { getSheetCommandTarget } from '@univerjs/sheets';
 import { ISidebarService } from '@univerjs/ui';
 import { COMPONENT_SHEET_DRAWING_PANEL } from '../../views/sheet-image-panel/component-name';
@@ -32,7 +33,7 @@ export const SidebarSheetDrawingOperation: ICommand = {
         const sidebarService = accessor.get(ISidebarService);
         const localeService = accessor.get(LocaleService);
         const univerInstanceService = accessor.get(IUniverInstanceService);
-        // const drawingManagerService = accessor.get(IDrawingManagerService);
+        const drawingManagerService = accessor.get(IDrawingManagerService);
         const commandService = accessor.get(ICommandService);
 
         const target = getSheetCommandTarget(univerInstanceService);
@@ -41,17 +42,21 @@ export const SidebarSheetDrawingOperation: ICommand = {
         switch (params.value) {
             case 'open':
                 sidebarService.open({
-                    header: { title: localeService.t('sheetImage.panel.title') },
+                    id: COMPONENT_SHEET_DRAWING_PANEL,
+                    header: { title: localeService.t<LocaleKey>('sheets-drawing-ui.panel.title') },
                     children: { label: COMPONENT_SHEET_DRAWING_PANEL },
                     onClose: () => {
-                        commandService.syncExecuteCommand(SetDrawingSelectedOperation.id, []);
+                        const focusedDrawings = drawingManagerService.getFocusDrawings();
+                        if (focusedDrawings.length === 1 && focusedDrawings[0].drawingType === DrawingTypeEnum.DRAWING_IMAGE) {
+                            commandService.syncExecuteCommand(SetDrawingSelectedOperation.id, []);
+                        }
                     },
                     width: 360,
                 });
                 break;
             case 'close':
             default:
-                sidebarService.close();
+                sidebarService.close(COMPONENT_SHEET_DRAWING_PANEL);
                 break;
         }
         return true;

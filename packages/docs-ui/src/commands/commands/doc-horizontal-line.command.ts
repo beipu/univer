@@ -15,11 +15,13 @@
  */
 
 import type { ICommand, ITextRangeParam } from '@univerjs/core';
-import { CommandType, DashStyleType, ICommandService } from '@univerjs/core';
-import { BreakLineCommand } from './break-line.command';
+import { CommandType, DashStyleType, ICommandService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import { DocContentInsertService } from '@univerjs/docs';
+import { BreakLineCommand, BreakLineInsertionMode } from './break-line.command';
 import { getCurrentParagraph } from './util';
 
 interface IHorizontalCommandParams {
+    insertionMode?: BreakLineInsertionMode;
     insertRange?: ITextRangeParam;
 }
 
@@ -40,6 +42,7 @@ export const HorizontalLineCommand: ICommand<IHorizontalCommandParams> = {
                 width: 1,
                 dashStyle: DashStyleType.SOLID,
             },
+            insertionMode: params?.insertionMode,
             textRange: params?.insertRange,
         });
     },
@@ -50,6 +53,23 @@ export const InsertHorizontalLineBellowCommand: ICommand<IHorizontalCommandParam
     type: CommandType.COMMAND,
     handler: (accessor) => {
         const commandService = accessor.get(ICommandService);
+        const doc = accessor.get(IUniverInstanceService).getCurrentUnitOfType(UniverInstanceType.UNIVER_DOC);
+        let contentInsertRange: ReturnType<DocContentInsertService['consumeInsertRange']> = null;
+        try {
+            contentInsertRange = accessor.get(DocContentInsertService).consumeInsertRange(doc?.getUnitId());
+        } catch {
+            contentInsertRange = null;
+        }
+        if (contentInsertRange) {
+            return commandService.syncExecuteCommand(HorizontalLineCommand.id, {
+                insertionMode: BreakLineInsertionMode.InsertGap,
+                insertRange: {
+                    startOffset: contentInsertRange.startOffset,
+                    endOffset: contentInsertRange.endOffset,
+                },
+            });
+        }
+
         const paragraph = getCurrentParagraph(accessor);
         if (!paragraph) {
             return false;

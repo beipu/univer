@@ -16,7 +16,7 @@
 
 import type { OperatorFunction } from 'rxjs';
 import type { IDisposable } from '../common/di';
-import { BehaviorSubject, debounceTime, map, Observable, ReplaySubject, take, tap } from 'rxjs';
+import { BehaviorSubject, debounceTime, map, Observable, ReplaySubject, take, takeWhile, tap } from 'rxjs';
 
 type CallbackFn<T extends readonly unknown[]> = (cb: (...args: T) => void) => IDisposable;
 
@@ -41,20 +41,7 @@ export function fromCallback<T extends readonly unknown[]>(callback: CallbackFn<
  */
 export function takeAfter<T>(callback: (value: T) => boolean) {
     return function complateAfter(source: Observable<T>) {
-        return new Observable<T>((subscriber) => {
-            source.subscribe({
-                next: (v) => {
-                    subscriber.next(v);
-                    if (callback(v)) {
-                        subscriber.complete();
-                    }
-                },
-                complete: () => subscriber.complete(),
-                error: (error) => subscriber.error(error),
-            });
-
-            return () => subscriber.unsubscribe();
-        });
+        return source.pipe(takeWhile((value) => !callback(value), true));
     };
 }
 
@@ -80,7 +67,12 @@ export function afterTime(ms: number): Observable<void> {
 export function convertObservableToBehaviorSubject<T>(observable: Observable<T>, initValue: T): BehaviorSubject<T> {
     const subject = new BehaviorSubject(initValue);
 
-    observable.subscribe(subject);
+    const subscription = observable.subscribe(subject);
+    const originalComplete = subject.complete.bind(subject);
+    subject.complete = () => {
+        subscription.unsubscribe();
+        originalComplete();
+    };
 
     return subject;
 }

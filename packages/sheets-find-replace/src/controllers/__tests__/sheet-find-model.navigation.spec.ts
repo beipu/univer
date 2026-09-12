@@ -15,10 +15,9 @@
  */
 
 import type { IFindQuery } from '@univerjs/find-replace';
-import { FindBy, FindDirection, FindScope } from '@univerjs/find-replace';
+import { CloseFindDialogOperation, FindBy, FindDirection, FindScope } from '@univerjs/find-replace';
 import { Subject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
-
 import { SheetFindModel, SheetsFindReplaceController } from '../sheet-find-replace.controller';
 
 describe('SheetFindModel navigation', () => {
@@ -35,7 +34,7 @@ describe('SheetFindModel navigation', () => {
             getCurrent: () => null,
         };
 
-        const renderManagerService = { getRenderById: vi.fn(() => null) };
+        const renderManagerService = { getRenderUnitById: vi.fn(() => null) };
         const commandService = { executeCommand: vi.fn(), onCommandExecuted: vi.fn(() => ({ dispose: vi.fn() })) };
         const contextService = { setContextValue: vi.fn() };
         const themeService = { getColorFromTheme: vi.fn(() => '#fff') };
@@ -71,6 +70,7 @@ describe('SheetFindModel navigation', () => {
             findString: 'a',
             caseSensitive: false,
             matchesTheWholeCell: false,
+            matchesTheWholeWord: false,
             findDirection: FindDirection.ROW,
             findScope: FindScope.SUBUNIT,
             findBy: FindBy.VALUE,
@@ -87,24 +87,28 @@ describe('SheetFindModel navigation', () => {
 describe('SheetsFindReplaceController', () => {
     it('should register provider and close on editor activated', () => {
         const injector = { createInstance: vi.fn(() => ({ dispose: vi.fn() })) };
-        const findReplaceController = { closePanel: vi.fn() };
         const subscribeContextValue$ = vi.fn(() => ({ pipe: () => ({ subscribe: (fn: any) => {
             fn(true);
             return { unsubscribe: vi.fn() };
         } }) }));
         const contextService = { subscribeContextValue$ };
-        const findReplaceService = { registerFindReplaceProvider: vi.fn(() => ({ dispose: vi.fn() })) };
-        const commandService = { registerCommand: vi.fn(() => ({ dispose: vi.fn() })) };
+        const findReplaceService = {
+            registerFindReplaceProvider: vi.fn(() => ({ dispose: vi.fn() })),
+            terminate: vi.fn(),
+        };
+        const commandService = {
+            executeCommand: vi.fn(() => Promise.resolve(true)),
+            registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
+        };
 
         new SheetsFindReplaceController(
             injector as any,
-            findReplaceController as any,
             contextService as any,
             findReplaceService as any,
             commandService as any
         );
 
-        expect(findReplaceController.closePanel).toHaveBeenCalledTimes(1);
+        expect(commandService.executeCommand).toHaveBeenCalledWith(CloseFindDialogOperation.id);
         // Do not call `dispose` here: the controller stores rx subscriptions in a DisposableCollection,
         // and our simplified stubs don't fully implement the IDisposable contract.
         expect(findReplaceService.registerFindReplaceProvider).toHaveBeenCalled();

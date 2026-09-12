@@ -17,9 +17,12 @@
 import type { Nullable, Workbook, Worksheet } from '@univerjs/core';
 import type { ISheetCommandSharedParams } from '@univerjs/sheets';
 import type { FilterModel, IFilterColumn, ISetSheetsFilterCriteriaCommandParams } from '@univerjs/sheets-filter';
-
 import { ICommandService, Inject, Injector } from '@univerjs/core';
-import { ClearSheetsFilterCriteriaCommand, RemoveSheetFilterCommand, SetSheetsFilterCriteriaCommand } from '@univerjs/sheets-filter';
+import {
+    ClearSheetsFilterCriteriaCommand,
+    RemoveSheetFilterCommand,
+    SetSheetsFilterCriteriaCommand,
+} from '@univerjs/sheets-filter';
 import { FRange } from '@univerjs/sheets/facade';
 
 /**
@@ -43,7 +46,8 @@ export class FFilter {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set some values of the range C1:F10
      * const fRange = fWorksheet.getRange('C1:F10');
@@ -88,12 +92,13 @@ export class FFilter {
 
     /**
      * Get the filter criteria of a column.
-     * @param {number} column - The column index.
+     * @param {number} column - The absolute, zero-based worksheet column index, not an index relative to the filter range.
      * @returns {Nullable<IFilterColumn>} The filter criteria of the column.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set some values of the range C1:F10
      * const fRange = fWorksheet.getRange('C1:F10');
@@ -139,12 +144,13 @@ export class FFilter {
 
     /**
      * Clear the filter criteria of a column.
-     * @param {number} column - The column index.
+     * @param {number} column - The absolute, zero-based worksheet column index, not an index relative to the filter range.
      * @returns {FFilter} The FFilter instance for chaining.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set some values of the range C1:F10
      * const fRange = fWorksheet.getRange('C1:F10');
@@ -197,13 +203,14 @@ export class FFilter {
 
     /**
      * Set the filter criteria of a column.
-     * @param {number} column - The column index.
+     * @param {number} column - The absolute, zero-based worksheet column index, not an index relative to the filter range.
      * @param {ISetSheetsFilterCriteriaCommandParams['criteria']} criteria - The new filter criteria.
      * @returns {FFilter} The FFilter instance for chaining.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set some values of the range C1:F10
      * const fRange = fWorksheet.getRange('C1:F10');
@@ -255,7 +262,8 @@ export class FFilter {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fFilter = fWorksheet.getFilter();
      * console.log(fFilter?.getRange().getA1Notation());
      * ```
@@ -271,7 +279,8 @@ export class FFilter {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set some values of the range C1:F10
      * const fRange = fWorksheet.getRange('C1:F10');
@@ -323,7 +332,8 @@ export class FFilter {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:D14');
      * let fFilter = fRange.createFilter();
      *

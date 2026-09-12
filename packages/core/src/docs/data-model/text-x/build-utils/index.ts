@@ -16,11 +16,31 @@
 
 import { addCustomDecorationTextX, deleteCustomDecorationTextX } from './custom-decoration';
 import { copyCustomRange, getCustomRangesInterestsWithSelection, isIntersecting } from './custom-range';
-import { addDrawing } from './drawings';
-import { changeParagraphBulletNestLevel, setParagraphBullet, setParagraphStyle, switchParagraphBullet, toggleChecklistParagraph } from './paragraph';
+import { addDrawing, removeDrawingReferences } from './drawings';
+import {
+    changeParagraphBulletNestLevel,
+    setParagraphBullet,
+    setParagraphStyle,
+    switchParagraphBullet,
+    toggleChecklistParagraph,
+} from './paragraph';
 import { fromPlainText, getPlainText, isEmptyDocument } from './parse';
-import { getParagraphsInRange, getParagraphsInRanges, isSegmentIntersects, makeSelection, normalizeSelection, transformParagraphs } from './selection';
-import { addCustomRangeTextX, deleteCustomRangeTextX, deleteSelectionTextX, replaceSelectionTextRuns, replaceSelectionTextX, retainSelectionTextX } from './text-x-utils';
+import {
+    getParagraphsInRange,
+    getParagraphsInRanges,
+    isSegmentIntersects,
+    makeSelection,
+    normalizeSelection,
+    transformParagraphs,
+} from './selection';
+import {
+    addCustomRangeTextX,
+    deleteCustomRangeTextX,
+    deleteSelectionTextX,
+    replaceSelectionTextRuns,
+    replaceSelectionTextX,
+    retainSelectionTextX,
+} from './text-x-utils';
 
 export class BuildTextUtils {
     static customRange = {
@@ -76,7 +96,35 @@ export class BuildTextUtils {
 
     static drawing = {
         add: addDrawing,
+        remove: removeDrawingReferences,
     };
 }
 
+export { getSingleDataStreamChange } from './data-stream-change';
+export type { IDataStreamChange } from './data-stream-change';
+export { getCustomBlockIdsInSelections } from './drawings';
+export {
+    getParagraphContentStartOffset,
+    getParagraphContentStartOffsets,
+    getParagraphFollowingBlockOffset,
+} from './paragraph';
+export {
+    containsInteriorInsertionOffset,
+    containsStreamIndex,
+    getBlockRangeInterval,
+    getColumnGroupRangeInterval,
+    getCustomBlockInterval,
+    getCustomRangeInterval,
+    getExclusiveRangeInterval,
+    getInclusiveRangeInterval,
+    getTableCellTokenInterval,
+    getTableRangeInterval,
+    getTableRowTokenInterval,
+    intersectsOperationalIntervals,
+    shiftExclusiveRangeOnDelete,
+    shiftExclusiveRangeOnInsert,
+    shiftInclusiveRangeOnDelete,
+    shiftInclusiveRangeOnInsert,
+} from './range-interval';
+export type { IDocOperationalInterval } from './range-interval';
 export type { IAddCustomRangeTextXParam, IDeleteCustomRangeParam, IReplaceSelectionTextXParams } from './text-x-utils';

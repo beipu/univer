@@ -15,14 +15,28 @@
  */
 
 import type { Nullable } from '../../shared';
-import type { IDocumentBody, IDocumentData, IDocumentRenderConfig, IDocumentStyle, IDrawings, IListData } from '../../types/interfaces/i-document-data';
+import type { ITextRangeParam } from '../../sheets/typedef';
+import type { LocaleType } from '../../types/enum';
+import type {
+    IDocumentBody,
+    IDocumentData,
+    IDocumentRenderConfig,
+    IDocumentStyle,
+    IDrawings,
+    IListData,
+} from '../../types/interfaces/i-document-data';
 import type { IPaddingData } from '../../types/interfaces/i-style-data';
 import type { JSONXActions } from './json-x/json-x';
 import { BehaviorSubject } from 'rxjs';
+import { isInternalEditorID } from '../../common/const';
+import { mergeWith } from '../../common/lodash';
 import { UnitModel, UniverInstanceType } from '../../common/unit';
-import { generateRandomId, Tools } from '../../shared/tools';
+import { generateRandomId } from '../../shared/random-id';
+import { Tools } from '../../shared/tools';
+import { createSectionId } from '../section-break-id';
+import { calculateDocumentStatistics } from './document-statistics';
 import { getEmptySnapshot } from './empty-snapshot';
-import { JSONX } from './json-x/json-x';
+import { JSON1, JSONX } from './json-x/json-x';
 import { PRESET_LIST_TYPE } from './preset-list-type';
 import { getPlainText } from './text-x/build-utils/parse';
 import { getBodySlice, SliceBodyType } from './text-x/utils';
@@ -31,6 +45,76 @@ export const DEFAULT_DOC = {
     id: 'default_doc',
     documentStyle: {},
 };
+
+export interface IDocumentStatistics {
+    words: number;
+    charactersWithoutSpaces: number;
+    charactersWithSpaces: number;
+    paragraphs: number;
+    nonAsianWords: number;
+    asianCharactersAndKoreanWords: number;
+}
+
+export interface IDocumentStatisticsOptions {
+    locale?: LocaleType;
+    ranges?: Readonly<ITextRangeParam[]>;
+    signal?: AbortSignal;
+}
+
+function normalizeLegacyPageBreakSectionMetadata(body: IDocumentBody | undefined): IDocumentBody | undefined {
+    if (body?.dataStream == null || body.sectionBreaks == null) {
+        return body;
+    }
+
+    const compatibleSectionBreaks = body.sectionBreaks.filter(({ startIndex }) =>
+        body.dataStream[startIndex] === '\n' || startIndex <= 0 || body.dataStream[startIndex - 1] !== '\f'
+    );
+    const existingSectionIds = new Set<string>();
+    let didChange = compatibleSectionBreaks.length !== body.sectionBreaks.length;
+    const sectionBreaks = compatibleSectionBreaks.map((sectionBreak) => {
+        if (sectionBreak.sectionId && !existingSectionIds.has(sectionBreak.sectionId)) {
+            existingSectionIds.add(sectionBreak.sectionId);
+            return sectionBreak;
+        }
+
+        didChange = true;
+        return { ...sectionBreak, sectionId: createSectionId(existingSectionIds) };
+    });
+
+    return didChange ? { ...body, sectionBreaks } : body;
+}
+
+function createDocumentSnapshot(snapshot: Partial<IDocumentData>): IDocumentData {
+    if (snapshot.id != null && isInternalEditorID(snapshot.id)) {
+        return { ...DEFAULT_DOC, ...snapshot } as IDocumentData;
+    }
+
+    const defaultSnapshot = getEmptySnapshot(snapshot.id, snapshot.locale, snapshot.title, snapshot.documentStyle?.documentFlavor);
+
+    if (Tools.isEmptyObject(snapshot)) {
+        return defaultSnapshot;
+    }
+
+    const mergedSnapshot = mergeWith({}, defaultSnapshot, snapshot, (_objValue, srcValue, key) => {
+        if (Array.isArray(srcValue)) {
+            return srcValue;
+        }
+
+        if (key === 'body' && srcValue != null && typeof srcValue === 'object') {
+            return srcValue;
+        }
+    });
+
+    // Existing snapshots with a body must preserve the absence of document
+    // defaults. The renderer provides the legacy flavor fallback for them.
+    if (snapshot.body != null && snapshot.documentStyle?.defaultParagraphStyle === undefined) {
+        delete mergedSnapshot.documentStyle.defaultParagraphStyle;
+    }
+
+    mergedSnapshot.body = normalizeLegacyPageBreakSectionMetadata(mergedSnapshot.body);
+
+    return mergedSnapshot;
+}
 
 interface IDrawingUpdateConfig {
     left: number;
@@ -50,11 +134,12 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
     override name$ = this._name$.asObservable();
 
     protected snapshot: IDocumentData;
+    private _mutationRevision = 0;
 
     constructor(snapshot: Partial<IDocumentData>) {
         super();
 
-        this.snapshot = { ...DEFAULT_DOC, ...snapshot };
+        this.snapshot = createDocumentSnapshot(snapshot);
         this._name$.next(this.snapshot.title ?? 'No Title');
     }
 
@@ -72,6 +157,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
 
     setName(name: string) {
         this.snapshot.title = name;
+        this._markMutation();
         this._name$.next(name);
     }
 
@@ -94,6 +180,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
     resetDrawing(drawings: IDrawings, drawingsOrder: string[]) {
         this.snapshot.drawings = drawings;
         this.snapshot.drawingsOrder = drawingsOrder;
+        this._markMutation();
     }
 
     getBody() {
@@ -129,6 +216,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
                 ...config,
             };
         }
+        this._markMutation();
     }
 
     getDocumentStyle() {
@@ -144,6 +232,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
                 ...config,
             };
         }
+        this._markMutation();
     }
 
     updateDocumentDataMargin(data: IPaddingData) {
@@ -165,6 +254,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
         if (r != null) {
             documentStyle.marginRight = r;
         }
+        this._markMutation();
     }
 
     updateDocumentDataPageSize(width?: number, height?: number) {
@@ -175,7 +265,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
                 width: width ?? Number.POSITIVE_INFINITY,
                 height: height ?? Number.POSITIVE_INFINITY,
             };
-
+            this._markMutation();
             return;
         }
 
@@ -186,6 +276,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
         if (height !== undefined) {
             documentStyle.pageSize.height = height;
         }
+        this._markMutation();
     }
 
     updateDrawing(id: string, config: IDrawingUpdateConfig) {
@@ -204,6 +295,7 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
 
         objectTransform.positionH.posOffset = left;
         objectTransform.positionV.posOffset = top;
+        this._markMutation();
     }
 
     setZoomRatio(zoomRatio: number = 1) {
@@ -214,10 +306,12 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
         } else {
             this.snapshot.settings.zoomRatio = zoomRatio;
         }
+        this._markMutation();
     }
 
     setDisabled(disabled: boolean) {
         this.snapshot.disabled = disabled;
+        this._markMutation();
     }
 
     getDisabled() {
@@ -227,6 +321,14 @@ class DocumentDataModelSimple extends UnitModel<IDocumentData, UniverInstanceTyp
     getTitle() {
         return this.snapshot.title;
     }
+
+    getMutationRevision(): number {
+        return this._mutationRevision;
+    }
+
+    protected _markMutation(): void {
+        this._mutationRevision++;
+    }
 }
 
 export class DocumentDataModel extends DocumentDataModelSimple {
@@ -235,6 +337,7 @@ export class DocumentDataModel extends DocumentDataModelSimple {
     headerModelMap: Map<string, DocumentDataModel> = new Map();
 
     footerModelMap: Map<string, DocumentDataModel> = new Map();
+    noteModelMap: Map<string, DocumentDataModel> = new Map();
     change$ = new BehaviorSubject<number>(0);
 
     constructor(snapshot: Partial<IDocumentData>) {
@@ -257,6 +360,8 @@ export class DocumentDataModel extends DocumentDataModelSimple {
         this.footerModelMap.forEach((footer) => {
             footer.dispose();
         });
+        this.noteModelMap.forEach((note) => note.dispose());
+        this.noteModelMap.clear();
 
         this._name$.complete();
     }
@@ -287,23 +392,30 @@ export class DocumentDataModel extends DocumentDataModelSimple {
             throw new Error('Cannot reset a document model with a different unit id!');
         }
 
-        this.snapshot = { ...DEFAULT_DOC, ...snapshot };
+        this.snapshot = createDocumentSnapshot(snapshot);
         this._initializeHeaderFooterModel();
+        this._markMutation();
         this.change$.next(this.change$.value + 1);
     }
 
-    getSelfOrHeaderFooterModel(segmentId?: string) {
-        if (segmentId != null) {
-            if (this.headerModelMap.has(segmentId)) {
-                return this.headerModelMap.get(segmentId)!;
-            }
-
-            if (this.footerModelMap.has(segmentId)) {
-                return this.footerModelMap.get(segmentId)!;
-            }
+    getSelfOrHeaderFooterModel(segmentId?: string): DocumentDataModel | null {
+        if (segmentId === null || segmentId === undefined || segmentId === '') {
+            return this;
         }
 
-        return this as DocumentDataModel;
+        if (this.headerModelMap.has(segmentId)) {
+            return this.headerModelMap.get(segmentId)!;
+        }
+
+        if (this.footerModelMap.has(segmentId)) {
+            return this.footerModelMap.get(segmentId)!;
+        }
+
+        if (this.noteModelMap.has(segmentId)) {
+            return this.noteModelMap.get(segmentId)!;
+        }
+
+        return null;
     }
 
     override getUnitId() {
@@ -315,7 +427,24 @@ export class DocumentDataModel extends DocumentDataModelSimple {
             return;
         }
 
+        const previousNotes = this.snapshot.notes;
+        const changedNotes = new Set<string>();
+        let changedInheritedNoteStyles = false;
+        const cursor = JSON1.type.readCursor(actions);
+        cursor.traverse(null, () => {
+            const path = cursor.getPath();
+            if (path[0] === 'notes' && typeof path[1] === 'string') {
+                changedNotes.add(path[1]);
+            }
+            if (path[0] === 'styles' || path[0] === 'documentStyle') {
+                changedInheritedNoteStyles = true;
+            }
+        });
         this.snapshot = JSONX.apply(this.snapshot, actions) as unknown as IDocumentData;
+        this._markMutation();
+        if (changedInheritedNoteStyles || previousNotes !== this.snapshot.notes || changedNotes.size > 0) {
+            this._initializeNoteModels(changedInheritedNoteStyles ? undefined : previousNotes, changedNotes);
+        }
 
         // FIXME: @JOCS, ANY better solution to find action that create or delete header/footer?
         if (actions?.some((a) => Array.isArray(a) && (a?.[0] === 'headers' || a?.[0] === 'footers'))) {
@@ -339,6 +468,7 @@ export class DocumentDataModel extends DocumentDataModelSimple {
     }
 
     private _initializeHeaderFooterModel() {
+        this._initializeNoteModels();
         const { headers, footers } = this.getSnapshot();
 
         if (headers) {
@@ -358,6 +488,32 @@ export class DocumentDataModel extends DocumentDataModelSimple {
         }
     }
 
+    private _initializeNoteModels(previousNotes?: IDocumentData['notes'], changedNotes?: ReadonlySet<string>): void {
+        for (const [id, model] of this.noteModelMap) {
+            if (changedNotes?.has(id) || previousNotes?.[id] !== this.snapshot.notes?.[id] || !previousNotes?.[id]) {
+                model.dispose();
+                this.noteModelMap.delete(id);
+            }
+        }
+        for (const [id, note] of Object.entries(this.snapshot.notes ?? {})) {
+            if (this.noteModelMap.has(id)) {
+                continue;
+            }
+            const model = new DocumentDataModel({
+                ...note,
+                id: this.getUnitId(),
+                documentStyle: this.snapshot.documentStyle,
+                styles: this.snapshot.styles,
+            });
+            this.noteModelMap.set(id, model);
+        }
+    }
+
+    override updateDocumentStyle(config: IDocumentStyle) {
+        super.updateDocumentStyle(config);
+        this._initializeNoteModels();
+    }
+
     override updateDocumentId(unitId: string) {
         super.updateDocumentId(unitId);
 
@@ -366,5 +522,9 @@ export class DocumentDataModel extends DocumentDataModelSimple {
 
     getPlainText() {
         return getPlainText(this.getBody()?.dataStream ?? '');
+    }
+
+    getStatistics(options: IDocumentStatisticsOptions = {}): Promise<IDocumentStatistics> {
+        return calculateDocumentStatistics(this.getBody()?.dataStream ?? '', options);
     }
 }

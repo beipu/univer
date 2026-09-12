@@ -14,29 +14,32 @@
  * limitations under the License.
  */
 
-import type { IAccessor, IMutation } from '@univerjs/core';
-import { CommandType, IUniverInstanceService } from '@univerjs/core';
+import type { IAccessor, IMutation, Workbook } from '@univerjs/core';
+import { CommandType, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
 import { getSheetMutationTarget } from '../commands/utils/target-util';
 
 export interface ISetWorksheetNameMutationParams {
     name: string;
+    /** The worksheet name before the rename. */
+    oldName?: string;
     unitId: string;
     subUnitId: string;
 }
 
-export const SetWorksheetNameMutationFactory = (
+export const SetWorksheetNameUndoMutationFactory = (
     accessor: IAccessor,
     params: ISetWorksheetNameMutationParams
 ): ISetWorksheetNameMutationParams => {
     const target = getSheetMutationTarget(accessor.get(IUniverInstanceService), params);
     if (!target) {
-        throw new Error('[SetWorksheetNameMutationFactory]: worksheet is null error!');
+        throw new Error('[SetWorksheetNameUndoMutationFactory]: worksheet is null error!');
     }
 
     const { worksheet } = target;
     return {
         unitId: params.unitId,
         name: worksheet.getName(),
+        oldName: params.name,
         subUnitId: worksheet.getSheetId(),
     };
 };
@@ -45,7 +48,7 @@ export const SetWorksheetNameMutation: IMutation<ISetWorksheetNameMutationParams
     id: 'sheet.mutation.set-worksheet-name',
     type: CommandType.MUTATION,
     handler: (accessor, params) => {
-        const universheet = accessor.get(IUniverInstanceService).getUniverSheetInstance(params.unitId);
+        const universheet = accessor.get(IUniverInstanceService).getUnit<Workbook>(params.unitId, UniverInstanceType.UNIVER_SHEET);
 
         if (universheet == null) {
             return false;

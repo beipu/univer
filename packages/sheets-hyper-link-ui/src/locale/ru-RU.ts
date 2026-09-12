@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Редактировать ссылку',
             addTitle: 'Вставить ссылку',
             label: 'Метка',
             type: 'Тип',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'Вставить ссылку',
         },
+        permission: {
+            hyperLinkErr: 'У вас нет разрешения на вставку ссылки.',
+        },
         message: {
             noSheet: 'Целевой лист был удален',
             refError: 'Недопустимый диапазон',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'Ссылка скопирована в буфер обмена',
         },
         popup: {
+            title: 'Гиперссылка',
+            open: 'Открыть ссылку',
             copy: 'Копировать ссылку',
             edit: 'Редактировать ссылку',
             cancel: 'Отменить ссылку',

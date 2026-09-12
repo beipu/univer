@@ -18,14 +18,36 @@ import type { IDisposable, Nullable, Workbook } from '@univerjs/core';
 import type { ImageIoService } from '@univerjs/drawing';
 import type { BaseObject, Scene } from '@univerjs/engine-render';
 import type { ISheetFloatDom } from '@univerjs/sheets-drawing';
-import { DrawingTypeEnum, FOCUSING_COMMON_DRAWINGS, ICommandService, IContextService, IImageIoService, Inject, Injector, IUniverInstanceService, LocaleService, RxDisposable, UniverInstanceType } from '@univerjs/core';
+import type { LocaleKey } from '../locale/types';
+import {
+    DrawingTypeEnum,
+    FOCUSING_COMMON_DRAWINGS,
+    ICommandService,
+    IContextService,
+    IImageIoService,
+    Inject,
+    IUniverInstanceService,
+    LocaleService,
+    RxDisposable,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { MessageType } from '@univerjs/design';
 import { IDrawingManagerService, SetDrawingSelectedOperation } from '@univerjs/drawing';
-import { COMPONENT_IMAGE_POPUP_MENU, ImageCropperObject, ImageResetSizeOperation, OpenImageCropOperation } from '@univerjs/drawing-ui';
+import {
+    COMPONENT_IMAGE_POPUP_MENU,
+    ImageCropperObject,
+    ImageResetSizeOperation,
+    OpenImageCropOperation,
+} from '@univerjs/drawing-ui';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { RemoveSheetDrawingCommand } from '@univerjs/sheets-drawing';
 import { SheetCanvasPopManagerService } from '@univerjs/sheets-ui';
-import { IMessageService } from '@univerjs/ui';
+import {
+    FloatingObjectToolbarPosition,
+    IMenuManagerService,
+    IMessageService,
+    MenuItemType,
+} from '@univerjs/ui';
 import { FlipSheetDrawingCommand } from '../commands/commands/flip-drawings.command';
 import { EditSheetDrawingOperation } from '../commands/operations/edit-sheet-drawing.operation';
 
@@ -33,16 +55,16 @@ export class DrawingPopupMenuController extends RxDisposable {
     private _initImagePopupMenu = new Set<string>();
 
     constructor(
-        @Inject(Injector) private _injector: Injector,
-        @Inject(LocaleService) private readonly _localeService: LocaleService,
-        @IDrawingManagerService private readonly _drawingManagerService: IDrawingManagerService,
-        @Inject(SheetCanvasPopManagerService) private readonly _canvasPopManagerService: SheetCanvasPopManagerService,
-        @IRenderManagerService private readonly _renderManagerService: IRenderManagerService,
+        @Inject(LocaleService) protected readonly _localeService: LocaleService,
+        @IDrawingManagerService protected readonly _drawingManagerService: IDrawingManagerService,
+        @Inject(SheetCanvasPopManagerService) protected readonly _canvasPopManagerService: SheetCanvasPopManagerService,
+        @IRenderManagerService protected readonly _renderManagerService: IRenderManagerService,
         @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
-        @IMessageService private readonly _messageService: IMessageService,
-        @IContextService private readonly _contextService: IContextService,
+        @IMessageService protected readonly _messageService: IMessageService,
+        @IMenuManagerService private readonly _menuManagerService: IMenuManagerService,
+        @IContextService protected readonly _contextService: IContextService,
         @IImageIoService private readonly _ioService: ImageIoService,
-        @ICommandService private readonly _commandService: ICommandService
+        @ICommandService protected readonly _commandService: ICommandService
     ) {
         super();
 
@@ -66,7 +88,7 @@ export class DrawingPopupMenuController extends RxDisposable {
                 messageDisposable = this._messageService.show({
                     id: MESSAGE_ID,
                     type: MessageType.Loading,
-                    content: `${this._localeService.t('uploadLoading.loading')}: ${status}`,
+                    content: `${this._localeService.t<LocaleKey>('sheets-drawing-ui.uploadLoading.loading')}: ${status}`,
                     duration: 0,
                 });
             } else if (status === 0) {
@@ -109,7 +131,7 @@ export class DrawingPopupMenuController extends RxDisposable {
     }
 
     private _popupMenuListener(unitId: string) {
-        const scene = this._renderManagerService.getRenderById(unitId)?.scene;
+        const scene = this._renderManagerService.getRenderUnitById(unitId)?.scene;
         if (!scene) {
             return;
         }
@@ -118,50 +140,11 @@ export class DrawingPopupMenuController extends RxDisposable {
             return;
         }
 
-        let singletonPopupDisposer: IDisposable;
+        let singletonPopupDisposer: IDisposable | undefined;
         this.disposeWithMe(transformer.createControl$.subscribe(() => {
-            this._contextService.setContextValue(FOCUSING_COMMON_DRAWINGS, true);
-
-            if (this._hasCropObject(scene)) {
-                return;
-            }
-
-            const selectedObjects = transformer.getSelectedObjectMap();
-            if (selectedObjects.size > 1) {
-                singletonPopupDisposer?.dispose();
-                return;
-            }
-
-            const object = selectedObjects.values().next().value as Nullable<BaseObject>;
-            if (!object) {
-                return;
-            }
-
-            const oKey = object.oKey;
-            const drawingParam = this._drawingManagerService.getDrawingOKey(oKey);
-            if (!drawingParam) {
-                return;
-            }
-
-            const { unitId, subUnitId, drawingId, drawingType } = drawingParam;
-            // drawingParam should be  ICanvasFloatDom, use for disable popup dialog
-            const data = (drawingParam as ISheetFloatDom).data as Record<string, boolean>;
-            if (data && data.disablePopup) {
-                return;
-            }
-
             singletonPopupDisposer?.dispose();
-            const menus = this._canvasPopManagerService.getFeatureMenu(unitId, subUnitId, drawingId, drawingType);
-            singletonPopupDisposer = this.disposeWithMe(this._canvasPopManagerService.attachPopupToObject(object, {
-                componentKey: COMPONENT_IMAGE_POPUP_MENU,
-                direction: 'horizontal',
-                offset: [2, 0],
-                extraProps: {
-                    menuItems: menus || this._getImageMenuItems(unitId, subUnitId, drawingId, drawingType),
-                },
-            }));
-        })
-        );
+            singletonPopupDisposer = this._createPopup(scene, transformer);
+        }));
         this.disposeWithMe(
             transformer.clearControl$.subscribe(() => {
                 singletonPopupDisposer?.dispose();
@@ -183,50 +166,113 @@ export class DrawingPopupMenuController extends RxDisposable {
         );
     }
 
+    private _createPopup(scene: Scene, transformer: ReturnType<Scene['getTransformerByCreate']>): IDisposable | undefined {
+        this._contextService.setContextValue(FOCUSING_COMMON_DRAWINGS, true);
+
+        if (this._hasCropObject(scene)) {
+            return;
+        }
+
+        const selectedObjects = transformer.getSelectedObjectMap();
+        if (selectedObjects.size > 1) {
+            return;
+        }
+
+        const object = selectedObjects.values().next().value as Nullable<BaseObject>;
+        if (!object) {
+            return;
+        }
+
+        const drawingParam = this._drawingManagerService.getDrawingOKey(object.oKey);
+        if (!drawingParam || drawingParam.drawingType === DrawingTypeEnum.DRAWING_SHAPE) {
+            return;
+        }
+
+        const { unitId, subUnitId, drawingId, drawingType } = drawingParam;
+        const data = (drawingParam as ISheetFloatDom).data as Record<string, unknown> | undefined;
+        if (data && (data.disablePopup || (data.version === 1 && typeof data.embedId === 'string'))) {
+            return;
+        }
+
+        const menus = this._canvasPopManagerService.getFeatureMenu(unitId, subUnitId, drawingId, drawingType);
+        const menuItems = [
+            ...(menus || this._getImageMenuItems(unitId, subUnitId, drawingId, drawingType)),
+            ...this._getFloatingObjectMenuItems(),
+        ];
+
+        return this.disposeWithMe(this._canvasPopManagerService.attachPopupToObject(object, {
+            componentKey: COMPONENT_IMAGE_POPUP_MENU,
+            constrainToCanvas: true,
+            direction: this._localeService.getDirection() === 'rtl' ? 'left' : 'horizontal',
+            offset: [2, 0],
+            extraProps: {
+                menuItems,
+            },
+        }));
+    }
+
     private _getImageMenuItems(unitId: string, subUnitId: string, drawingId: string, drawingType: number) {
         return [
             {
-                label: 'image-popup.edit',
+                label: 'sheets-drawing-ui.image-popup.edit',
                 index: 0,
                 commandId: EditSheetDrawingOperation.id,
                 commandParams: { unitId, subUnitId, drawingId },
                 disable: drawingType === DrawingTypeEnum.DRAWING_DOM,
             },
             {
-                label: 'image-popup.delete',
+                label: 'sheets-drawing-ui.image-popup.delete',
                 index: 1,
                 commandId: RemoveSheetDrawingCommand.id,
                 commandParams: { unitId, drawings: [{ unitId, subUnitId, drawingId }] },
                 disable: false,
             },
             {
-                label: 'image-popup.crop',
+                label: 'sheets-drawing-ui.image-popup.crop',
                 index: 2,
                 commandId: OpenImageCropOperation.id,
                 commandParams: { unitId, subUnitId, drawingId },
                 disable: drawingType === DrawingTypeEnum.DRAWING_DOM,
             },
             {
-                label: 'image-popup.flipH',
+                label: 'sheets-drawing-ui.image-popup.flipH',
                 index: 2,
                 commandId: FlipSheetDrawingCommand.id,
                 commandParams: { unitId, flipH: true, drawings: [{ unitId, subUnitId, drawingId }] },
                 disable: drawingType === DrawingTypeEnum.DRAWING_DOM,
             },
             {
-                label: 'image-popup.flipV',
+                label: 'sheets-drawing-ui.image-popup.flipV',
                 index: 2,
                 commandId: FlipSheetDrawingCommand.id,
                 commandParams: { unitId, flipV: true, drawings: [{ unitId, subUnitId, drawingId }] },
                 disable: drawingType === DrawingTypeEnum.DRAWING_DOM,
             },
             {
-                label: 'image-popup.reset',
+                label: 'sheets-drawing-ui.image-popup.reset',
                 index: 3,
                 commandId: ImageResetSizeOperation.id,
                 commandParams: [{ unitId, subUnitId, drawingId }],
                 disable: drawingType === DrawingTypeEnum.DRAWING_DOM,
             },
         ];
+    }
+
+    private _getFloatingObjectMenuItems() {
+        return this._menuManagerService
+            .getFlatMenuByPositionKey(FloatingObjectToolbarPosition.SHEET)
+            .flatMap(({ item }, index) => {
+                if (!item || item.type !== MenuItemType.BUTTON || !item.title) {
+                    return [];
+                }
+
+                return [{
+                    label: item.title,
+                    index: 100 + index,
+                    commandId: item.commandId ?? item.id,
+                    commandParams: typeof item.params === 'function' ? item.params() : item.params,
+                    disable: false,
+                }];
+            });
     }
 }

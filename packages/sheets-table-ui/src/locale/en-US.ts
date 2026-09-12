@@ -15,10 +15,11 @@
  */
 
 const locale = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Table',
         selectRange: 'Select Table Range',
         rename: 'Rename Table',
+        renamePlaceholder: 'Enter table name',
         updateRange: 'Update Table Range',
         tableRangeWithMergeError: 'Table range cannot overlap with merged cells',
         tableRangeWithOtherTableError: 'Table range cannot overlap with other tables',
@@ -36,9 +37,17 @@ const locale = {
         footer: 'Footer',
         firstLine: 'First Line',
         secondLine: 'Second Line',
-        columnPrefix: 'Column',
-        tablePrefix: 'Table',
         tableNameError: 'Table name cannot contain spaces, cannot start with a number, and cannot be identical to an existing table name',
+        columnMenu: {
+            'insert-left': 'Insert 1 table column left',
+            'insert-right': 'Insert 1 table column right',
+            delete: 'Delete table column',
+        },
+
+        sort: {
+            'sort-asc': 'Ascending',
+            'sort-desc': 'Descending',
+        },
 
         insert: {
             main: 'Insert Table',
@@ -129,12 +138,20 @@ const locale = {
             },
         },
         filter: {
+            title: 'Filter',
             'by-values': 'By Values',
+            'by-colors': 'By Colors',
             'by-conditions': 'By Conditions',
+            back: 'Back',
+            resize: 'Resize',
+            'filter-by-cell-fill-color': 'Cell fill color',
+            'filter-by-cell-text-color': 'Cell text color',
+            'filter-by-color-none': 'This column contains only one color',
             'clear-filter': 'Clear Filter',
             cancel: 'Cancel',
             confirm: 'Confirm',
             'search-placeholder': 'Use space to separate keywords',
+            'input-values-placeholder': 'Input Values',
             'select-all': 'Select All',
         },
     },

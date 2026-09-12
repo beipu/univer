@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
+import type { ILayoutService } from '../../../services/layout/layout.service';
 import type { IValueOption } from '../../../services/menu/menu';
+import type { IMenuManagerService } from '../../../services/menu/menu-manager.service';
 import { Popup } from '@univerjs/design';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { IContextMenuHostService } from '../../../services/contextmenu/contextmenu-host.service';
@@ -33,7 +35,10 @@ export interface IAnchoredContextMenuProps {
     anchorRect: IContextMenuAnchorRect | null;
     menuType: string;
     anchorVertical?: 'top' | 'bottom';
+    autoFocus?: boolean;
     menuOffset?: number;
+    menuManagerService?: IMenuManagerService;
+    layoutService?: ILayoutService;
     onRequestClose: () => void;
     onOptionSelect?: (option: IValueOption) => void;
 }
@@ -45,7 +50,10 @@ export function AnchoredContextMenu(props: IAnchoredContextMenuProps) {
         anchorRect,
         menuType,
         anchorVertical = 'bottom',
+        autoFocus,
         menuOffset = 0,
+        menuManagerService,
+        layoutService,
         onRequestClose,
         onOptionSelect,
     } = props;
@@ -55,6 +63,7 @@ export function AnchoredContextMenu(props: IAnchoredContextMenuProps) {
     const menuSessionVersionRef = useRef(0);
     const visibleRef = useRef(visible);
     const menuTypeRef = useRef(menuType);
+    const focusReturnTargetRef = useRef<HTMLElement | null>(null);
 
     useEffect(() => {
         onRequestCloseRef.current = onRequestClose;
@@ -79,10 +88,32 @@ export function AnchoredContextMenu(props: IAnchoredContextMenuProps) {
 
     useLayoutEffect(() => {
         if (visible) {
+            const ownerDocument = contentRef.current?.ownerDocument ?? document;
+            const activeElement = ownerDocument.activeElement;
+            const isFocusInMenu = activeElement !== null
+                && (contentRef.current?.contains(activeElement)
+                    || !!activeElement.closest(`[${CONTEXT_MENU_SUBMENU_PORTAL_ATTR}]`));
+            const HTMLElementConstructor = ownerDocument.defaultView?.HTMLElement;
+
+            if (!isFocusInMenu) {
+                focusReturnTargetRef.current = HTMLElementConstructor && activeElement instanceof HTMLElementConstructor
+                    ? activeElement
+                    : null;
+            }
             contextMenuHostService.activateMenu(hostId);
             return;
         }
 
+        const ownerDocument = contentRef.current?.ownerDocument ?? document;
+        const activeElement = ownerDocument.activeElement;
+        const isFocusInMenu = activeElement !== null
+            && (contentRef.current?.contains(activeElement)
+                || !!activeElement.closest(`[${CONTEXT_MENU_SUBMENU_PORTAL_ATTR}]`));
+        const focusReturnTarget = focusReturnTargetRef.current;
+        if (isFocusInMenu && focusReturnTarget?.isConnected) {
+            focusReturnTarget.focus();
+        }
+        focusReturnTargetRef.current = null;
         contextMenuHostService.deactivateMenu(hostId);
     }, [contextMenuHostService, hostId, visible]);
 
@@ -160,8 +191,13 @@ export function AnchoredContextMenu(props: IAnchoredContextMenuProps) {
             <section ref={contentRef}>
                 {menuType && (
                     <ContextMenuPanel
+                        key={menuSessionVersionRef.current}
                         menuType={menuType}
+                        autoFocus={autoFocus}
+                        menuManagerService={menuManagerService}
+                        layoutService={layoutService}
                         menuSessionVersion={menuSessionVersionRef.current}
+                        onCancel={onRequestClose}
                         onOptionSelect={onOptionSelect}
                     />
                 )}

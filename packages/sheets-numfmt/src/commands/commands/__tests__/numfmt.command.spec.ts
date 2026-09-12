@@ -29,6 +29,7 @@ import {
     Plugin,
     RANGE_TYPE,
     RedoCommand,
+    RegionService,
     UndoCommand,
     Univer,
     UniverInstanceType,
@@ -42,7 +43,6 @@ import {
     SheetsSelectionsService,
 } from '@univerjs/sheets';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
 import { getCurrencyFormat } from '../../../base/const/currency-symbols';
 import { AddDecimalCommand } from '../add-decimal.command';
 import { SetCurrencyCommand } from '../set-currency.command';
@@ -82,6 +82,8 @@ function createWorkbookData(): IWorkbookData {
                         2: { v: 12, t: CellValueType.NUMBER },
                         3: { v: 0.375, t: CellValueType.NUMBER },
                         4: { v: 8, t: CellValueType.NUMBER },
+                        5: { v: 1e21, t: CellValueType.NUMBER },
+                        6: { v: 1.2345e31, t: CellValueType.NUMBER },
                     },
                     1: {
                         0: { v: 1.23, t: CellValueType.NUMBER, s: 'twoDecimals' },
@@ -195,6 +197,104 @@ describe('Sheets numfmt commands', () => {
         expect(numfmtService.getValue('test', 'sheet1', 0, 1)).toBeNull();
     });
 
+    it('only allows general, text, and scientific formats for scientific notation numeric values', async () => {
+        await expect(commandService.executeCommand(SetNumfmtCommand.id, {
+            values: [{ row: 0, col: 5, pattern: '0.00' }],
+        })).resolves.toBe(false);
+        expect(numfmtService.getValue('test', 'sheet1', 0, 5)).toBeNull();
+
+        await expect(commandService.executeCommand(SetNumfmtCommand.id, {
+            values: [{ row: 0, col: 5, pattern: '0.00E+00' }],
+        })).resolves.toBe(true);
+        expect(numfmtService.getValue('test', 'sheet1', 0, 5)).toEqual({ pattern: '0.00E+00' });
+
+        await expect(commandService.executeCommand(SetNumfmtCommand.id, {
+            values: [{ row: 0, col: 5, pattern: DEFAULT_TEXT_FORMAT_EXCEL }],
+        })).resolves.toBe(true);
+        expect(numfmtService.getValue('test', 'sheet1', 0, 5)).toEqual({ pattern: DEFAULT_TEXT_FORMAT_EXCEL });
+
+        await expect(commandService.executeCommand(SetNumfmtCommand.id, {
+            values: [{ row: 0, col: 5 }],
+        })).resolves.toBe(true);
+        expect(numfmtService.getValue('test', 'sheet1', 0, 5)).toBeNull();
+    });
+
+    it('adds decimals to general scientific notation numeric values with a scientific format', async () => {
+        selectionService.addSelections([
+            {
+                range: { startRow: 0, startColumn: 5, endRow: 0, endColumn: 5, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+        ]);
+
+        await expect(commandService.executeCommand(AddDecimalCommand.id)).resolves.toBe(true);
+
+        expect(numfmtService.getValue('test', 'sheet1', 0, 5)).toEqual({ pattern: '0.000E+00' });
+    });
+
+    it('adds decimals based on the current mantissa decimals for general scientific notation numeric values', async () => {
+        selectionService.addSelections([
+            {
+                range: { startRow: 0, startColumn: 6, endRow: 0, endColumn: 6, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+        ]);
+
+        await expect(commandService.executeCommand(AddDecimalCommand.id)).resolves.toBe(true);
+
+        expect(numfmtService.getValue('test', 'sheet1', 0, 6)).toEqual({ pattern: '0.00000E+00' });
+    });
+
+    it('adds decimals to mixed general numbers without forcing regular numbers into scientific format', async () => {
+        selectionService.addSelections([
+            {
+                range: { startRow: 0, startColumn: 0, endRow: 0, endColumn: 0, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+            {
+                range: { startRow: 0, startColumn: 6, endRow: 0, endColumn: 6, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+        ]);
+
+        await expect(commandService.executeCommand(AddDecimalCommand.id)).resolves.toBe(true);
+
+        expect(numfmtService.getValue('test', 'sheet1', 0, 0)).toEqual({ pattern: '0.00000' });
+        expect(numfmtService.getValue('test', 'sheet1', 0, 6)).toEqual({ pattern: '0.00000E+00' });
+    });
+
+    it('subtracts decimals from general scientific notation numeric values with a scientific format', async () => {
+        selectionService.addSelections([
+            {
+                range: { startRow: 0, startColumn: 5, endRow: 0, endColumn: 5, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+        ]);
+
+        await expect(commandService.executeCommand(SubtractDecimalCommand.id)).resolves.toBe(true);
+
+        expect(numfmtService.getValue('test', 'sheet1', 0, 5)).toEqual({ pattern: '0.0E+00' });
+    });
+
+    it('subtracts decimals based on the current mantissa decimals for general scientific notation numeric values', async () => {
+        selectionService.addSelections([
+            {
+                range: { startRow: 0, startColumn: 6, endRow: 0, endColumn: 6, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+        ]);
+
+        await expect(commandService.executeCommand(SubtractDecimalCommand.id)).resolves.toBe(true);
+
+        expect(numfmtService.getValue('test', 'sheet1', 0, 6)).toEqual({ pattern: '0.000E+00' });
+    });
+
     it('adds and subtracts decimals based on selections and existing formats', async () => {
         selectionService.addSelections([
             {
@@ -220,6 +320,20 @@ describe('Sheets numfmt commands', () => {
         expect(numfmtService.getValue('test', 'sheet1', 1, 0)).toEqual({ pattern: '0.00' });
     });
 
+    it('subtracts decimals from raw numeric cells when no number format exists yet', async () => {
+        selectionService.addSelections([
+            {
+                range: { startRow: 0, startColumn: 0, endRow: 0, endColumn: 0, rangeType: RANGE_TYPE.NORMAL },
+                primary: null,
+                style: null,
+            },
+        ]);
+
+        await expect(commandService.executeCommand(SubtractDecimalCommand.id)).resolves.toBe(true);
+
+        expect(numfmtService.getValue('test', 'sheet1', 0, 0)).toEqual({ pattern: '0' });
+    });
+
     it('applies percent and currency formats to current selections', async () => {
         selectionService.addSelections([
             {
@@ -240,9 +354,10 @@ describe('Sheets numfmt commands', () => {
             },
         ]);
 
+        get(RegionService).setRegion(LocaleType.FR_FR);
         await expect(commandService.executeCommand(SetCurrencyCommand.id)).resolves.toBe(true);
         expect(numfmtService.getValue('test', 'sheet1', 0, 4)).toEqual({
-            pattern: getCurrencyFormat(LocaleType.ZH_CN),
+            pattern: getCurrencyFormat(LocaleType.FR_FR),
         });
     });
 

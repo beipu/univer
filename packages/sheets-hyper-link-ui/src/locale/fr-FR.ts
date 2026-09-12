@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Modifier le lien',
             addTitle: 'Insérer un lien',
             label: 'Titre',
             type: 'Type',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'Insérer un lien',
         },
+        permission: {
+            hyperLinkErr: 'Vous n’avez pas l’autorisation d’insérer un lien.',
+        },
         message: {
             noSheet: 'La feuille cible a été supprimée',
             refError: 'Plage invalide',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'Lien copié dans le presse-papiers',
         },
         popup: {
+            title: 'Lien hypertexte',
+            open: 'Ouvrir le lien',
             copy: 'Copier le lien',
             edit: 'Modifier le lien',
             cancel: 'Annuler le lien',

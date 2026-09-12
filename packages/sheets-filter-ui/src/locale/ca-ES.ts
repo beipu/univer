@@ -17,22 +17,29 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-filter': {
+    'sheets-filter-ui': {
         toolbar: {
             'smart-toggle-filter-tooltip': 'Alterna el filtre',
             'clear-filter-criteria': 'Neteja les condicions del filtre',
             're-calc-filter-conditions': 'Recalcula les condicions del filtre',
         },
-        command: {
-            'not-valid-filter-range': 'L’interval seleccionat només té una fila i no és vàlid per filtrar.',
-        },
         shortcut: {
             'smart-toggle-filter': 'Alterna el filtre',
+        },
+        permission: {
+            filterErr: 'No teniu permís per utilitzar el filtre.',
         },
         panel: {
             'clear-filter': 'Neteja el filtre',
             cancel: 'Cancel·la',
             confirm: 'Confirma',
+            mobile: {
+                resize: 'Redimensiona el tauler de filtre',
+                back: 'Enrere',
+                column: 'Columna {0}',
+                'previous-column': 'Columna anterior',
+                'next-column': 'Columna següent',
+            },
             'by-values': 'Per valors',
             'by-colors': 'Per colors',
             'filter-by-cell-fill-color': 'Filtra per color de fons de la cel·la',
@@ -67,9 +74,6 @@ const locale: typeof enUS = {
             between: 'Entre',
             'not-between': 'No entre',
             custom: 'Personalitzat',
-        },
-        msg: {
-            'filter-header-forbidden': 'No pots moure la fila de capçalera d’un filtre.',
         },
         date: {
             1: 'Gener',

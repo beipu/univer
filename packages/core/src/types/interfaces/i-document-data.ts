@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
+import type { ImageSourceType } from '../../services/image-io/image-io.service';
+import type { IResources } from '../../services/resource-manager/type';
 import type { ISize } from '../../shared/shape';
 import type { BooleanNumber, CellValueType, HorizontalAlign, LocaleType, TextDirection, VerticalAlign, WrapStrategy } from '../enum';
 import type { IDrawingParam } from './i-drawing';
 import type { IMention } from './i-mention';
-import type { IColorStyle, IStyleBase } from './i-style-data';
+import type { IColorStyle, IGlowEffect, IShadowEffect, IStyleBase } from './i-style-data';
 
 // Attention: all dimensional units, unless otherwise stated, refer to pt，1 pt = 1 / 72 in
 /**
@@ -32,10 +34,15 @@ export interface IDocumentData extends IReferenceSource {
     locale?: LocaleType;
     title?: string;
     body?: IDocumentBody; // Rich text.
+    /** Independent rich-text segments addressed by footnote or endnote references in the main body. */
+    notes?: Record<string, IDocumentNote>;
+    noteSettings?: INoteSettings;
     documentStyle: IDocumentStyle;
+    /** OOXML-compatible named document styles keyed by stable style id. */
+    styles?: IDocStyles;
     settings?: IDocumentSettings;
     // The type of data depends on how the plug-in is defined
-    resources?: Array<{ id?: string; name: string; data: string }>;
+    resources?: IResources;
     disabled?: boolean;
 }
 
@@ -52,6 +59,63 @@ export interface IReferenceSource {
 export interface IDocumentSettings {
     zoomRatio?: number;
 }
+
+/** Settings inherit from the document into each section; absent values do not reset inheritance. */
+export interface IFootnoteProperties {
+    position?: 'pageBottom' | 'beneathText';
+    /** OOXML ST_NumberFormat name, shared by the import/export and numbering engines. */
+    numberFormat?: string;
+    startNumber?: number;
+    restart?: 'continuous' | 'eachSect' | 'eachPage';
+    /** Zero matches the body section's column count. */
+    columnCount?: number;
+}
+
+export interface IFootnoteSettings extends IFootnoteProperties {
+    separator?: IDocumentBody;
+    continuationSeparator?: IDocumentBody;
+    continuationNotice?: IDocumentBody;
+}
+
+export type DocumentNoteType = 'footnote' | 'endnote';
+
+export interface IEndnoteProperties extends Omit<IFootnoteProperties, 'position' | 'restart' | 'columnCount'> {
+    position?: 'docEnd' | 'sectEnd';
+    restart?: 'continuous' | 'eachSect';
+}
+
+export interface IEndnoteSettings extends IEndnoteProperties {
+    separator?: IDocumentBody;
+    continuationSeparator?: IDocumentBody;
+    continuationNotice?: IDocumentBody;
+}
+
+export interface INoteSettings {
+    footnote?: IFootnoteSettings;
+    endnote?: IEndnoteSettings;
+}
+
+export interface INoteProperties {
+    footnote?: IFootnoteProperties;
+    endnote?: IEndnoteProperties;
+}
+
+/** Notes have editable content, but no independent page setup or nested notes. */
+export interface IDocumentNote {
+    noteId: string;
+    type: DocumentNoteType;
+    body: IDocumentBody;
+    tableSource?: ITables;
+    drawings?: IDrawings;
+    drawingsOrder?: string[];
+    lists?: ILists;
+    /** Custom marks do not consume a number in the automatic sequence. */
+    customMark?: string;
+    /** Style of the generated note marker; it does not affect text inserted at body offset zero. */
+    referenceTextStyle?: ITextStyle;
+}
+
+export type IFootnoteCustomRange = ICustomRange<{ noteId: string }>;
 
 /**
  * Set of headers
@@ -121,6 +185,13 @@ export interface IDocStyles {
 export interface IDocumentBody {
     dataStream: string;
 
+    /**
+     * UTF-16 offsets of soft page-break tokens (`\f`) produced by the layout engine that last
+     * saved the source document. Renderers may honor them for traditional/paginated fidelity;
+     * exporters must keep them soft rather than converting them to authored page breaks.
+     */
+    renderedPageBreaks?: number[];
+
     textRuns?: ITextRun[]; // textRun style，interaction
 
     paragraphs?: IParagraph[]; // paragraph
@@ -129,7 +200,23 @@ export interface IDocumentBody {
 
     customBlocks?: ICustomBlock[]; // customBlock user-defined block through plug-in
 
+    /**
+     * Opaque DOCX runs represented by custom-block sentinels for lossless round-trip.
+     * They participate in text offsets like regular custom blocks but are not rendered as drawings.
+     */
+    docxRawCustomBlocks?: ICustomBlock[];
+
+    /** Opaque DOCX XML anchored at a document offset for lossless round-trip. */
+    docxRawBlocks?: IDocxRawBlock[];
+
+    /** Document ranges excluded from generated DOCX content because their raw XML is preserved separately. */
+    docxExportExcludedRanges?: IDocxExportExcludedRange[];
+
     tables?: ICustomTable[]; // Table
+
+    columnGroups?: ICustomColumnGroup[]; // ColumnGroup
+
+    blockRanges?: IDocumentBlockRange[]; // Generic structured block range, e.g. callout, quote, code.
 
     // tableOfContents?: { [index: number]: ITableOfContent }; // tableOfContents
     // links?: { [index: number]: IHyperlink }; // links
@@ -145,12 +232,25 @@ export interface IDocumentBody {
     payloads?: Record<string, string>;
 }
 
+/**
+ * The top-level block types in a document body.
+ * These block types are used to represent the structure of the document and can be used to identify different sections or elements within the document.
+ */
+export enum DocumentBlockType {
+    PARAGRAPH = 'paragraph',
+    BLOCK_RANGE = 'blockRange',
+    TABLE = 'table',
+    CUSTOM_BLOCK = 'customBlock',
+    COLUMN_GROUP = 'columnGroup',
+}
+
 export interface IDocStyle {
     name: string;
-    basedOn: string;
-    link: string;
+    basedOn?: string;
+    link?: string;
     type: DocStyleType;
-    textStyle: ITextStyle;
+    textStyle?: ITextStyle;
+    paragraphStyle?: IParagraphStyle;
 }
 
 export enum DocStyleType {
@@ -163,7 +263,7 @@ export enum DocStyleType {
 /**
  * Properties of doc footer
  */
-export interface IFooterData {
+export interface IFooterData extends IReferenceSource {
     footerId: string;
     body: IDocumentBody;
 }
@@ -171,7 +271,7 @@ export interface IFooterData {
 /**
  * Properties of doc header
  */
-export interface IHeaderData {
+export interface IHeaderData extends IReferenceSource {
     headerId: string;
     body: IDocumentBody;
 }
@@ -194,11 +294,13 @@ export interface INestingLevel {
     //  <prefix>%[nestingLevel]<suffix>
     glyphFormat: string; // https://developers.google.com/docs/api/reference/rest/v1/documents#nestinglevel，ms word lvlText
     textStyle?: ITextStyle;
-    startNumber: number;
+    startNumber: number; // zero-based offset; 0 renders the first ordered item as 1
 
     // Union field glyph_kind can be only one of the following:
     glyphType?: ListGlyphType; // ordered list string is to support custom rules https://developers.google.com/docs/api/reference/rest/v1/documents#glyphtype， ms numFmt: GlyphType
     glyphSymbol?: string; // the tag of the unordered list
+    /** Display all numbered placeholders as decimal values, matching Word's w:isLgl. */
+    isLegal?: boolean;
     // End of list of possible types for union field glyph_kind.
 }
 
@@ -313,10 +415,14 @@ export enum BulletAlignment {
 // }
 
 export interface IMargin {
-    marginTop?: number; // marginTop
-    marginBottom?: number; // marginBottom
-    marginRight?: number; // marginRight
-    marginLeft?: number; // marginLeft
+    /** Top page margin in 96-DPI layout pixels. */
+    marginTop?: number;
+    /** Bottom page margin in 96-DPI layout pixels. */
+    marginBottom?: number;
+    /** Right page margin in 96-DPI layout pixels. */
+    marginRight?: number;
+    /** Left page margin in 96-DPI layout pixels. */
+    marginLeft?: number;
 }
 
 export interface ITableOfContent {}
@@ -333,7 +439,9 @@ export interface IHyperlink {
 export interface ITextRun {
     // ct?: string; // content
     // len: number;
+    /** Inclusive character index of the first styled character. */
     st: number;
+    /** Exclusive character boundary after the last styled character. */
     ed: number;
     sId?: string; // styleID
     ts?: ITextStyle; // textStyle
@@ -344,7 +452,9 @@ export interface ITextRun {
  * Block element, link like, disabled to self nested
  */
 export interface ICustomRange<T extends Record<string, any> = Record<string, any>> {
+    /** Inclusive index of the first character covered by this annotation. */
     startIndex: number;
+    /** Inclusive index of the last character covered by this annotation. */
     endIndex: number;
     rangeId: string;
     rangeType: CustomRangeType | number;
@@ -363,6 +473,21 @@ export type IHyperLinkCustomRange = ICustomRange<{ url: string }>;
 
 export type IMentionCustomRange = ICustomRange<IMention>;
 
+export enum DocumentBlockRangeType {
+    CALLOUT = 'callout',
+    QUOTE = 'quote',
+    CODE = 'code',
+}
+
+export interface IDocumentBlockRange {
+    /** Inclusive index that must point at a `BLOCK_START` sentinel. */
+    startIndex: number;
+    /** Inclusive index that must point at the matching `BLOCK_END` sentinel. */
+    endIndex: number;
+    blockId: string;
+    blockType: DocumentBlockRangeType;
+}
+
 export enum CustomRangeType {
     HYPERLINK,
     FIELD, // 17.16 Fields and Hyperlinks
@@ -372,18 +497,42 @@ export enum CustomRangeType {
     CUSTOM,
     MENTION,
     UNI_FORMULA,
+    FOOTNOTE,
+    ENDNOTE,
 
     DELTED = 9999,
+}
+
+export enum DocxBreakType {
+    COLUMN = 'column',
+    TEXT_WRAPPING = 'textWrapping',
 }
 
 /**
  * Custom Block
  */
 export interface ICustomBlock {
+    /** Index that must point at exactly one `CUSTOM_BLOCK` sentinel. */
     startIndex: number;
     blockType?: BlockType;
     // A unique ID associated with a custom block.
     blockId: string;
+
+    /** Original DOCX run XML retained by the exchange layer for lossless round-trip. */
+    docxRawXml?: string;
+
+    /** Original DOCX text style retained by the exchange layer for lossless round-trip. */
+    docxExportTs?: ITextStyle;
+}
+
+export interface IDocxRawBlock {
+    startIndex: number;
+    xml: string;
+}
+
+export interface IDocxExportExcludedRange {
+    start: number;
+    end: number;
 }
 
 export enum CustomDecorationType {
@@ -392,7 +541,9 @@ export enum CustomDecorationType {
 }
 
 export interface ICustomDecoration {
+    /** Inclusive index of the first decorated character. */
     startIndex: number;
+    /** Inclusive index of the last decorated character. */
     endIndex: number;
     id: string;
     type: CustomDecorationType;
@@ -428,14 +579,17 @@ export enum DocumentFlavor {
  */
 export interface IDocStyleBase extends IMargin {
     pageNumberStart?: number; // pageNumberStart
-    pageSize?: ISize; // pageSize
+    /** Page size in 96-DPI layout pixels. */
+    pageSize?: ISize;
 
     pageOrient?: PageOrientType;
 
     documentFlavor?: DocumentFlavor; // DocumentFlavor: TRADITIONAL, MODERN
 
-    marginHeader?: number; // marginHeader
-    marginFooter?: number; // marginFooter
+    /** Distance from the page edge to the header, in 96-DPI layout pixels. */
+    marginHeader?: number;
+    /** Distance from the page edge to the footer, in 96-DPI layout pixels. */
+    marginFooter?: number;
 
     renderConfig?: IDocumentRenderConfig;
 }
@@ -444,6 +598,12 @@ export interface IDocumentLayout {
 
     defaultTabStop?: number; // 17.15.1.25 defaultTabStop (Distance Between Automatic Tab Stops)   0.5 in  = 36pt，this value should be converted to the default font size when exporting
     characterSpacingControl?: characterSpacingControlType; // characterSpacingControl 17.18.7 ST_CharacterSpacing (Character-Level Whitespace Compression Settings)，default compressPunctuation
+    /** Use the legacy East Asian Word layout rules stored as OOXML `useFELayout`. */
+    useFELayout?: BooleanNumber;
+    /** OOXML `splitPgBreakAndParaMark`: move a trailing paragraph mark after a manual page break. */
+    splitPageBreakAndParagraphMark?: BooleanNumber;
+    /** Align automatic line height inside tables to the active document line grid. */
+    adjustLineHeightInTable?: BooleanNumber;
     paragraphLineGapDefault?: number; // paragraphLineGapDefault default line spacing
     spaceWidthEastAsian?: BooleanNumber; // add space between east asian and English
 
@@ -463,6 +623,13 @@ export enum GridType {
 
 export interface IDocumentStyle extends IDocStyleBase, IDocumentLayout, IHeaderAndFooterBase {
     textStyle?: ITextStyle; // default style for text
+    defaultParagraphStyle?: IDocumentDefaultParagraphStyle; // default style inherited by paragraphs
+    background?: IDocumentBackground; // Page background image.
+}
+
+export interface IDocumentBackground {
+    source?: string;
+    sourceType?: ImageSourceType;
 }
 
 /**
@@ -490,9 +657,13 @@ export interface IDocumentRenderConfig {
     cellValueType?: CellValueType; // sheet cell type, In a spreadsheet cell, without any alignment settings applied, text should be left-aligned, numbers should be right-aligned, and Boolean values should be center-aligned.
     isRenderStyle?: BooleanNumber; // Whether to render the style(textRuns), used in formula bar editor. the default value is TRUE.
     zeroWidthParagraphBreak?: BooleanNumber; // Whether to render the paragraph \r to zero width. the default value is false.
+    shapeTextOpticalVerticalAlign?: BooleanNumber; // Align shape text by visible glyph bounds instead of the font line box.
 }
 
 export interface ISectionBreakBase {
+    noteProperties?: INoteProperties;
+    /** Defer section-end notes to the next section that does not suppress them. */
+    suppressEndnotes?: boolean;
     // docGrid (Document Grid), open xml $17.6.5
     charSpace?: number; // charSpace
     linePitch?: number; // linePitch
@@ -511,6 +682,8 @@ export interface ISectionBreakBase {
  * Properties of section break
  */
 export interface ISectionBreak extends IDocStyleBase, ISectionBreakBase, IHeaderAndFooterBase {
+    /** Stable identity of the section-break metadata entry. */
+    sectionId: string;
     startIndex: number;
 }
 
@@ -520,9 +693,10 @@ export interface ISectionBreak extends IDocStyleBase, ISectionBreakBase, IHeader
 export enum SectionType {
     SECTION_TYPE_UNSPECIFIED, // The section type is unspecified.
     CONTINUOUS, // The section starts immediately after the last paragraph of the previous section.
+    NEXT_COLUMN, // The section starts in the next column, or on the next page when no column remains.
     NEXT_PAGE, // The section starts on the next page.
-    EVEN_PAGE, // The section starts on the next page.
-    ODD_PAGE, // The section starts on the next page.
+    EVEN_PAGE, // The section starts on the next even-numbered page.
+    ODD_PAGE, // The section starts on the next odd-numbered page.
 }
 
 /**
@@ -547,13 +721,18 @@ export enum TextDirectionType {
  * Properties of section column
  */
 export interface ISectionColumnProperties {
+    /** Column width in 96-DPI layout pixels. */
     width: number;
+    /** Trailing space after the column in 96-DPI layout pixels. */
     paddingEnd: number;
 }
 
 export interface IParagraph {
     // elements: IElement[]; // elements
     startIndex: number;
+    paragraphId: string;
+    /** Optional stable named-style reference. Direct paragraph style has higher precedence. */
+    styleId?: string;
     paragraphStyle?: IParagraphStyle; // paragraphStyle
     bullet?: IBullet; // bullet
     // dIds?: string[]; // drawingIds drawingId
@@ -614,6 +793,10 @@ export interface IBullet {
     listType: string; // listType orderList or bulletList etc.
     listId: string; // listId
     nestingLevel: number; // nestingLevel
+    startNumber?: number; // zero-based start number for a restarted ordered-list sequence
+    image?: {
+        source: string;
+    }; // Image used as the list marker.
     textStyle?: ITextStyle; // textStyle
 }
 
@@ -630,9 +813,9 @@ export interface IBullet {
 export interface IDocDrawingBase extends IDrawingParam {
     drawingId: string;
 
-    title: string;
+    title?: string;
 
-    description: string;
+    description?: string;
 
     // embeddedObjectBorder?: IDocsBorder;
 
@@ -641,6 +824,12 @@ export interface IDocDrawingBase extends IDrawingParam {
     layoutType: PositionedObjectLayoutType;
 
     behindDoc?: BooleanNumber; // wrapNone
+    /** Keeps the anchor constrained to its containing table cell when enabled. */
+    layoutInCell?: BooleanNumber;
+    /** Allows this floating object to overlap other floating objects. */
+    allowOverlap?: BooleanNumber;
+    /** WordprocessingML stacking order for anchored objects. */
+    relativeHeight?: number;
     start?: number[]; // wrapPolygon
     lineTo?: number[][]; // wrapPolygon
     wrapText?: WrapTextType; // wrapSquare | wrapThrough | wrapTight
@@ -661,15 +850,25 @@ export enum WrapTextType {
 }
 
 /**
- * The possible layouts of a [PositionedObject]
+ * Controls how a positioned object participates in document text layout.
+ *
+ * `WRAP_NONE` does not by itself determine whether the object is in front of or behind text. Drawing data uses
+ * `behindDoc` for that stacking choice.
  */
 export enum PositionedObjectLayoutType {
+    /** Places the object in the text flow like a character and lets it affect the containing line's metrics. */
     INLINE,
+    /** Floats the object without reflowing text. The object and text can overlap. */
     WRAP_NONE,
+    /** Floats the object and wraps text around the custom polygon defined by its wrap path. */
     WRAP_POLYGON,
+    /** Floats the object and wraps text around its rectangular bounds. */
     WRAP_SQUARE,
+    /** Floats the object and allows text to flow through eligible open regions in its wrap contour. */
     WRAP_THROUGH,
+    /** Floats the object and wraps text closely around its contour instead of its rectangular bounds. */
     WRAP_TIGHT,
+    /** Floats the object in a horizontal band, leaving text only above and below it. */
     WRAP_TOP_AND_BOTTOM,
 }
 
@@ -681,6 +880,10 @@ export interface IDocDrawingPosition {
     positionH: IObjectPositionH;
     positionV: IObjectPositionV;
     angle: number;
+    /** Horizontal flip persisted with the document drawing transform. */
+    flipX?: boolean;
+    /** Vertical flip persisted with the document drawing transform. */
+    flipY?: boolean;
     // Union field properties can be only one of the following:
     // shapeProperties?: IShapeProperties;
     // chartProperties?: IChartProperties;
@@ -701,11 +904,73 @@ export interface IChartProperties {}
 /**
  * Properties of text style
  */
+export type DocTextFillType = 'none' | 'solid' | 'gradient' | 'picture';
+
+export type DocTextFillGradientType = 'linear' | 'radial' | 'angular' | 'diamond';
+
+export type DocTextFillPictureMode = 'stretch' | 'tile';
+
+export interface IDocTextFillGradientStop {
+    /**
+     * Offset in percent. Values in the 0-1 range are also accepted by renderers
+     * for compatibility and normalized to percent.
+     */
+    offset: number;
+    color: string;
+    opacity?: number;
+}
+
+export interface IDocTextFill {
+    /**
+     * Hidden renderer-level text fill. Normal document UI does not expose it,
+     * but rich-text renderers honor it when present on a run style.
+     */
+    type: DocTextFillType;
+    color?: string;
+    opacity?: number;
+    gradient?: {
+        type?: DocTextFillGradientType;
+        angle?: number;
+        stops?: IDocTextFillGradientStop[];
+    };
+    picture?: {
+        source?: string;
+        sourceType?: ImageSourceType;
+        opacity?: number;
+        mode?: DocTextFillPictureMode;
+        scaleX?: number;
+        scaleY?: number;
+        offsetX?: number;
+        offsetY?: number;
+    };
+}
+
+export interface IDocTextOutline {
+    color?: string;
+    width?: number;
+}
+
 export interface ITextStyle extends IStyleBase {
     // bo?: BaselineOffset; // BaselineOffset, sup, sub
-    sc?: number; // spacing
+    sc?: number; // character spacing in points
     pos?: number; // position
     sa?: number; // scale
+    textFill?: IDocTextFill;
+    textOutline?: IDocTextOutline;
+    /**
+     * DrawingML-style glow around the rendered glyphs.
+     *
+     * This is primarily intended for embedded rich text such as Shape text. A standalone document product may
+     * preserve and render the value without exposing dedicated authoring controls.
+     */
+    glow?: IGlowEffect;
+    /**
+     * DrawingML-style outer shadow around the rendered glyphs.
+     *
+     * This is primarily intended for embedded rich text such as Shape text. A standalone document product may
+     * preserve and render the value without exposing dedicated authoring controls.
+     */
+    outerShadow?: IShadowEffect;
 }
 
 export interface IIndentStart {
@@ -717,6 +982,12 @@ export interface IIndentStart {
 }
 
 /**
+ * Vertical alignment of text runs inside a paragraph line box.
+ * This is the normalized form of DrawingML `fontAlgn`.
+ */
+export type ParagraphFontAlign = 'auto' | 'top' | 'center' | 'baseline' | 'bottom';
+
+/**
  * Properties of paragraph style
  */
 export interface IParagraphStyle extends IParagraphProperties {
@@ -724,9 +995,21 @@ export interface IParagraphStyle extends IParagraphProperties {
     textStyle?: ITextStyle; // paragraph textStyle
 }
 
+/**
+ * Paragraph properties that may be inherited from the document defaults.
+ * Paragraph identity and named/text styles have their own inheritance mechanisms.
+ */
+export type IDocumentDefaultParagraphStyle = Omit<IParagraphStyle, 'headingId' | 'namedStyleType' | 'textStyle'>;
+
 export interface IParagraphProperties extends IIndentStart {
     headingId?: string; // headingId
     namedStyleType?: NamedStyleType; // namedStyleType
+    defaultTabStop?: number; // Distance between automatic tab stops for this paragraph.
+    /** Whether East Asian kinsoku line-breaking rules apply to this paragraph. */
+    eastAsianLineBreak?: BooleanNumber;
+    /** Whether punctuation may hang outside the paragraph text bounds. */
+    hangingPunctuation?: BooleanNumber;
+    fontAlign?: ParagraphFontAlign;
     horizontalAlign?: HorizontalAlign; // Horizontal alignment
     lineSpacing?: number; // lineSpacing 17.3.1.33 spacing (Spacing Between Lines and Above/Below Paragraph)
     direction?: TextDirection; // direction
@@ -734,15 +1017,63 @@ export interface IParagraphProperties extends IIndentStart {
     snapToGrid?: BooleanNumber; // snapToGrid 17.3.2.34 snapToGrid (Use Document Grid Settings For Inter-Character Spacing)
     spaceAbove?: INumberUnit; // spaceAbove before beforeLines (Spacing Above Paragraph)
     spaceBelow?: INumberUnit; // spaceBelow after afterLines (Spacing Below Paragraph)
+    /** Whether the layout engine should derive paragraph-before spacing from the active compatibility policy. */
+    beforeAutoSpacing?: BooleanNumber;
+    /** Whether the layout engine should derive paragraph-after spacing from the active compatibility policy. */
+    afterAutoSpacing?: BooleanNumber;
+    /** Suppresses spacing between consecutive paragraphs that share the same named style. */
+    contextualSpacing?: BooleanNumber;
     borderBetween?: IParagraphBorder; // borderBetween
     borderTop?: IParagraphBorder; // borderTop
     borderBottom?: IParagraphBorder; // borderBottom
     borderLeft?: IParagraphBorder; // borderLeft
     borderRight?: IParagraphBorder; // borderRight
-    keepLines?: BooleanNumber; // 17.3.1.14 keepLines (Keep All Lines On One Page)
-    keepNext?: BooleanNumber; // 17.3.1.15 keepNext (Keep Paragraph With Next Paragraph)
+    /**
+     * Keeps all measured lines of this paragraph on one physical page when they fit.
+     *
+     * `undefined` inherits, `TRUE` enables, and an explicit `FALSE` disables an
+     * inherited value. An oversized paragraph still splits after starting on a
+     * fresh page. This Word-compatible pagination rule is rendered only by
+     * Traditional Docs.
+     *
+     * OOXML: 17.3.1.14 `keepLines`.
+     */
+    keepLines?: BooleanNumber;
+    /**
+     * Keeps this paragraph with the following paragraph when they fit together.
+     *
+     * Consecutive `TRUE` values form a bounded keep chain. Set the final
+     * paragraph to `FALSE` when it must terminate an inherited or authored chain.
+     * `undefined` inherits. This Word-compatible pagination rule is rendered only
+     * by Traditional Docs.
+     *
+     * OOXML: 17.3.1.15 `keepNext`.
+     */
+    keepNext?: BooleanNumber;
+    /**
+     * Starts this paragraph on the next physical page unless it is already at a
+     * page boundary.
+     *
+     * `undefined` inherits, `TRUE` enables, and an explicit `FALSE` disables an
+     * inherited value. Use a Section Break instead when the following content
+     * also needs different page geometry, columns, headers, or footers. This
+     * Word-compatible pagination rule is rendered only by Traditional Docs.
+     *
+     * OOXML: 17.3.1.23 `pageBreakBefore`.
+     */
+    pageBreakBefore?: BooleanNumber;
     wordWrap?: BooleanNumber; // 17.3.1.45 wordWrap (Allow Line Breaking At Character Level)
-    widowControl?: BooleanNumber; // 17.3.1.44 widowControl (Allow First/Last Line to Display on a Separate Page)
+    /**
+     * Avoids leaving a single measured first or last line on a separate page
+     * when the paragraph can be adjusted without violating stronger keep rules.
+     *
+     * `undefined` inherits, `TRUE` enables, and an explicit `FALSE` disables an
+     * inherited value. This Word-compatible pagination rule is rendered only by
+     * Traditional Docs.
+     *
+     * OOXML: 17.3.1.44 `widowControl`.
+     */
+    widowControl?: BooleanNumber;
     shading?: IShading; // shading
     suppressHyphenation?: BooleanNumber; // 17.3.1.34 suppressAutoHyphens (Suppress Hyphenation for Paragraph)
 }
@@ -819,6 +1150,7 @@ export enum DashStyleType {
 export interface ITabStop {
     offset: number; // offset
     alignment: TabStopAlignment; // alignment
+    leader?: TabStopLeader; // leader drawn between the preceding text and this tab stop
 }
 
 /**
@@ -829,6 +1161,16 @@ export enum TabStopAlignment {
     START, // The tab stop is aligned to the start of the line. This is the default.
     CENTER, // The tab stop is aligned to the center of the line.
     END, // The tab stop is aligned to the end of the line.
+}
+
+export enum TabStopLeader {
+    TAB_STOP_LEADER_UNSPECIFIED,
+    NONE,
+    DOT,
+    HYPHEN,
+    UNDERSCORE,
+    HEAVY,
+    MIDDLE_DOT,
 }
 
 /**
@@ -878,10 +1220,51 @@ export enum TableTextWrapType {
 }
 
 export interface ICustomTable {
+    /** Inclusive index that must point at a `TABLE_START` sentinel. */
     startIndex: number;
+    /** Exclusive boundary immediately after the matching `TABLE_END` sentinel. */
     endIndex: number;
     // A unique ID associated with a table.
     tableId: string;
+}
+
+export interface ICustomColumnGroup {
+    /** Inclusive index that must point at a `COLUMN_GROUP_START` sentinel. */
+    startIndex: number;
+    /** Inclusive index that must point at the matching `COLUMN_GROUP_END` sentinel. */
+    endIndex: number;
+    // A unique ID associated with a column group.
+    columnGroupId: string;
+    columns?: IColumn[];
+    gap?: INumberUnit;
+    layout?: ColumnLayoutType;
+    responsive?: ColumnResponsiveType;
+    version?: number;
+}
+
+export enum ColumnLayoutType {
+    FIXED = 'fixed',
+    AUTO = 'auto',
+}
+
+export enum ColumnResponsiveType {
+    STACK = 'stack',
+    SHRINK = 'shrink',
+}
+
+export interface IColumnGroup {
+    columnGroupId: string;
+    columns: IColumn[];
+    gap: INumberUnit;
+    layout: ColumnLayoutType;
+    responsive: ColumnResponsiveType;
+    version?: number;
+}
+
+export interface IColumn {
+    columnId: string;
+    widthRatio: number;
+    minWidth?: INumberUnit;
 }
 
 /**
@@ -918,7 +1301,7 @@ export enum TableRowHeightRule {
     EXACT,
 }
 
-export interface ITableColumn { // 合并拆分列，HTML 合并单元格
+export interface ITableColumn { // Merge/split columns, HTML merge cells
     size: IWidthInTableSize;
 }
 
@@ -931,7 +1314,15 @@ export interface ITableRowSize {
  * Properties of row of table
  */
 export interface ITableRow {
+    /**
+     * Rows do not persist stream offsets. Their ordinal position must match the
+     * corresponding `TABLE_ROW_START`/`TABLE_ROW_END` pair in `dataStream`.
+     */
     tableCells: ITableCell[]; // tableCells
+    /** Number of table-grid columns omitted before the first cell in this row. */
+    gridBefore?: number;
+    /** Number of table-grid columns omitted after the last cell in this row. */
+    gridAfter?: number;
     // If omitted, then the table row shall automatically resize its height to the height required by its contents
     // (the equivalent of an hRule value of auto)
     trHeight: ITableRowSize; // 17.4.80 trHeight (Table Row Height)
@@ -944,6 +1335,10 @@ export interface ITableRow {
  * Properties of table cell
  */
 export interface ITableCell {
+    /**
+     * Cells do not persist stream offsets. Their ordinal position must match the
+     * corresponding `TABLE_CELL_START`/`TABLE_CELL_END` pair in the row stream.
+     */
     margin?: ITableCellMargin; // margin
     rowSpan?: number; // rowSpan
     columnSpan?: number; // columnSpan

@@ -14,20 +14,27 @@
  * limitations under the License.
  */
 
+import type { LocaleKey } from '../../locale/types';
 import type { ByColorsModel, ByConditionsModel, ByValuesModel } from '../../services/sheets-filter-panel.service';
 import { ICommandService, LocaleService } from '@univerjs/core';
 import { Button, Segmented } from '@univerjs/design';
 import { FilterBy, SheetsFilterService } from '@univerjs/sheets-filter';
 import { SheetsUIPart } from '@univerjs/sheets-ui';
 import { ComponentContainer, useComponentsOfPart, useDependency, useObservable } from '@univerjs/ui';
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { of } from 'rxjs';
 import { ChangeFilterByOperation, CloseFilterPanelOperation } from '../../commands/operations/sheets-filter.operation';
-import { SheetsFilterPanelService } from '../../services/sheets-filter-panel.service';
+import { ISheetsFilterPanelService } from '../../services/sheets-filter-panel.service';
 import { FilterByColor } from './SheetsFilterByColorsPanel';
 import { FilterByCondition } from './SheetsFilterByConditionsPanel';
 import { FilterByValue } from './SheetsFilterByValuesPanel';
 import { FilterSyncSwitch } from './SheetsFilterSyncSwitch';
+
+const FILTER_BY_OPTIONS: Array<{ label: LocaleKey; value: FilterBy }> = [
+    { label: 'sheets-filter-ui.panel.by-values', value: FilterBy.VALUES },
+    { label: 'sheets-filter-ui.panel.by-colors', value: FilterBy.COLORS },
+    { label: 'sheets-filter-ui.panel.by-conditions', value: FilterBy.CONDITIONS },
+];
 
 /**
  * This Filter Panel component is used to filter the data in the sheet.
@@ -35,14 +42,14 @@ import { FilterSyncSwitch } from './SheetsFilterSyncSwitch';
  * @returns React element
  */
 export function FilterPanel() {
-    const sheetsFilterPanelService = useDependency(SheetsFilterPanelService);
+    const sheetsFilterPanelService = useDependency(ISheetsFilterPanelService);
     const localeService = useDependency(LocaleService);
     const commandService = useDependency(ICommandService);
 
     const filterBy = useObservable(sheetsFilterPanelService.filterBy$, undefined, true);
     const filterByModel = useObservable(sheetsFilterPanelService.filterByModel$, undefined, false);
     const canApply = useObservable(() => filterByModel?.canApply$ || of(false), undefined, false, [filterByModel]);
-    const items = useFilterByOptions(localeService);
+    const items = FILTER_BY_OPTIONS.map((option) => ({ ...option, label: localeService.t(option.label) }));
 
     // only can disable clear when there is no criteria
     const clearFilterDisabled = !useObservable(sheetsFilterPanelService.hasCriteria$);
@@ -75,7 +82,7 @@ export function FilterPanel() {
             data-u-comp="sheets-filter-panel"
             className={`
               univer-box-border univer-flex univer-max-h-[500px] univer-w-[400px] univer-flex-col univer-rounded-lg
-              univer-bg-white univer-p-4 univer-shadow-lg
+              univer-bg-gray-0 univer-p-4 univer-shadow-lg
               dark:!univer-border-gray-600 dark:!univer-bg-gray-700
             `}
         >
@@ -115,26 +122,18 @@ export function FilterPanel() {
                 `}
             >
                 <Button variant="link" onClick={onClearCriteria} disabled={clearFilterDisabled}>
-                    {localeService.t('sheets-filter.panel.clear-filter')}
+                    {localeService.t<LocaleKey>('sheets-filter-ui.panel.clear-filter')}
                 </Button>
                 <span className="univer-flex univer-gap-2">
                     <Button variant="default" onClick={onCancel}>
-                        {localeService.t('sheets-filter.panel.cancel')}
+                        {localeService.t<LocaleKey>('sheets-filter-ui.panel.cancel')}
                     </Button>
                     <Button disabled={!canApply} variant="primary" onClick={onApply}>
-                        {localeService.t('sheets-filter.panel.confirm')}
+                        {localeService.t<LocaleKey>('sheets-filter-ui.panel.confirm')}
                     </Button>
                 </span>
             </div>
         </div>
     );
 }
-
-function useFilterByOptions(localeService: LocaleService) {
-    const locale = localeService.getCurrentLocale();
-    return useMemo(() => [
-        { label: localeService.t('sheets-filter.panel.by-values'), value: FilterBy.VALUES },
-        { label: localeService.t('sheets-filter.panel.by-colors'), value: FilterBy.COLORS },
-        { label: localeService.t('sheets-filter.panel.by-conditions'), value: FilterBy.CONDITIONS },
-    ], [locale, localeService]);
-}
+export const FILTER_PANEL_POPUP_KEY = 'FILTER_PANEL_POPUP';

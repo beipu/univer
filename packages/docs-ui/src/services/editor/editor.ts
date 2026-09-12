@@ -14,12 +14,26 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, ICommandService, IDocumentData, IDocumentStyle, Injector, IPosition, IUndoRedoService, IUniverInstanceService, Nullable } from '@univerjs/core';
+import type {
+    DocumentDataModel,
+    ICommandService,
+    IDocumentData,
+    Injector,
+    IPosition,
+    IUndoRedoService,
+    IUniverInstanceService,
+    Nullable,
+} from '@univerjs/core';
 import type { DocSelectionManagerService } from '@univerjs/docs';
-import type { IDocSelectionInnerParam, IRender, ISuccinctDocRangeParam, ITextRangeWithStyle } from '@univerjs/engine-render';
+import type {
+    IDocSelectionInnerParam,
+    IRender,
+    ISuccinctDocRangeParam,
+    ITextRangeWithStyle,
+} from '@univerjs/engine-render';
 import type { Observable } from 'rxjs';
 import type { IEditorInputConfig } from '../selection/doc-selection-render.service';
-import { Disposable, isInternalEditorID, UniverInstanceType } from '@univerjs/core';
+import { createParagraphId, createSectionId, Disposable, isInternalEditorID, UniverInstanceType } from '@univerjs/core';
 import { DocSkeletonManagerService } from '@univerjs/docs';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { KeyCode } from '@univerjs/ui';
@@ -84,10 +98,13 @@ export interface IEditorStateParams extends Partial<IPosition> {
 
 export interface IEditorCanvasStyle {
     fontSize?: number;
+    backgroundColor?: string;
 }
 
 export interface IEditorConfigParams {
     initialSnapshot: IDocumentData;
+    /** Keep the globally focused unit on the editor's host while this editor receives input focus. */
+    preserveHostFocus?: boolean;
     cancelDefaultResizeListener?: boolean;
     canvasStyle?: IEditorCanvasStyle;
     // A Boolean attribute which, if present, indicates that the editor should automatically have focus.
@@ -233,14 +250,21 @@ export class Editor extends Disposable implements IEditor {
     }
 
     /**
-     * @deprecated use `IEditorService.focus` as instead. this is for internal usage.
+     * Focus the input element directly. This is for internal usage.
      */
     focus() {
-        const curDoc = this._univerInstanceService.getCurrentUnitForType(UniverInstanceType.UNIVER_DOC);
+        const curDoc = this._univerInstanceService.getCurrentUnitOfType(UniverInstanceType.UNIVER_DOC);
         const editorUnitId = this.getEditorId();
         // Step 1: set current editor to currentDocUnit.
         if (curDoc == null || curDoc.getUnitId() !== editorUnitId) {
             this._univerInstanceService.setCurrentUnitForType(editorUnitId);
+        }
+
+        // Newly mounted inputs can receive focus before their first layout is published.
+        // Establish a logical caret without replacing an existing selection.
+        if (isInternalEditorID(editorUnitId) && this.getSelectionRanges().length === 0) {
+            const offset = Math.max(0, (this.getDocumentData().body?.dataStream.length ?? 2) - 2);
+            this.setSelectionRanges([{ startOffset: offset, endOffset: offset }], false);
         }
 
         // Step 2: Focus this input element.
@@ -249,7 +273,7 @@ export class Editor extends Disposable implements IEditor {
     }
 
     /**
-     * @deprecated use `IEditorService.blur` as instead. this is for internal usage.
+     * Blur the input element directly. This is for internal usage.
      */
     blur(): void {
         const docSelectionRenderService = this._param.render.with(DocSelectionRenderService);
@@ -329,10 +353,11 @@ export class Editor extends Disposable implements IEditor {
                 body: {
                     dataStream: `${text}\r\n`,
                     paragraphs: [{
-                        startIndex: 0,
+                        startIndex: text.length,
+                        paragraphId: createParagraphId(new Set()),
                     }],
                     customRanges: [],
-                    sectionBreaks: [],
+                    sectionBreaks: [{ sectionId: createSectionId(new Set()), startIndex: text.length + 1 }],
                     tables: [],
                     textRuns: [],
                 },
@@ -356,28 +381,35 @@ export class Editor extends Disposable implements IEditor {
         return this._undoRedoService.clearUndoRedo(editorUnitId);
     }
 
-    override dispose(): void {
-        const docDataModel = this._getDocDataModel();
+    override dispose(disposeDocument = true): void {
+        if (this._disposed) {
+            return;
+        }
 
-        docDataModel?.dispose();
-    }
+        super.dispose();
+        this._change$.complete();
+        this._input$.complete();
+        this._paste$.complete();
+        this._focus$.complete();
+        this._blur$.complete();
+        this._selectionChange$.complete();
 
-    /**
-     * @deprecated use getEditorId.
-     */
-    get editorUnitId() {
-        return this._param.editorUnitId;
-    }
-
-    /**
-     * @deprecated @TODO: @JOCS remove this in the future.
-     */
-    get params() {
-        return this._param;
+        // Rebinding a registered editor transfers its document to the next container.
+        if (disposeDocument) {
+            this._getDocDataModel()?.dispose();
+        }
     }
 
     get cancelDefaultResizeListener() {
         return this._param.cancelDefaultResizeListener;
+    }
+
+    getRenderConfig() {
+        return {
+            canvasStyle: this._param.canvasStyle ?? {},
+            scrollBar: this._param.scrollBar,
+            ...(this._param.backScrollOffset === undefined ? {} : { backScrollOffset: this._param.backScrollOffset }),
+        };
     }
 
     get render() {
@@ -401,61 +433,12 @@ export class Editor extends Disposable implements IEditor {
     }
 
     getSkeleton() {
-        const skeleton = this._injector.get(IRenderManagerService).getRenderById(this._getEditorId())?.with(DocSkeletonManagerService).getSkeleton();
+        const skeleton = this._injector.get(IRenderManagerService).getRenderUnitById(this._getEditorId())?.with(DocSkeletonManagerService).getSkeleton();
         return skeleton;
     }
 
     isSheetEditor() {
         return isInternalEditorID(this._getEditorId());
-    }
-
-    /**
-     * @deprecated use getDocumentData.
-     */
-    getValue() {
-        const docDataModel = this._getDocDataModel()!;
-        const value = docDataModel.getBody()?.dataStream || '';
-        return value.replace(/\r\n/g, '').replace(/\n/g, '').replace(/\n/g, '');
-    }
-
-    /**
-     * @deprecated use getDocumentData.
-     */
-    getBody() {
-        const docDataModel = this._getDocDataModel()!;
-        return docDataModel.getBody();
-    }
-
-    /**
-     * @deprecated.
-     */
-    update(param: Partial<IEditorOptions>) {
-        this._param = {
-            ...this._param,
-            ...param,
-        };
-    }
-
-    /**
-     * @deprecated.
-     */
-    updateCanvasStyle() {
-        const docDataModel = this._getDocDataModel();
-        if (docDataModel == null) {
-            return;
-        }
-
-        const documentStyle: IDocumentStyle = {};
-
-        if (this._param.canvasStyle?.fontSize) {
-            if (documentStyle.textStyle == null) {
-                documentStyle.textStyle = {};
-            }
-
-            documentStyle.textStyle.fs = this._param.canvasStyle.fontSize;
-        }
-
-        docDataModel.updateDocumentStyle(documentStyle);
     }
 
     private _getDocDataModel() {

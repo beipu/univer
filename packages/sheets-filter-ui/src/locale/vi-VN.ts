@@ -17,22 +17,29 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-filter': {
+    'sheets-filter-ui': {
         toolbar: {
             'smart-toggle-filter-tooltip': 'Lọc',
             'clear-filter-criteria': 'Xóa điều kiện lọc',
             're-calc-filter-conditions': 'Tính toán lại',
         },
-        command: {
-            'not-valid-filter-range': 'Khu vực được chọn chỉ có một hàng, không thể lọc',
-        },
         shortcut: {
             'smart-toggle-filter': 'Chuyển đổi lọc',
+        },
+        permission: {
+            filterErr: 'Bạn không có quyền sử dụng bộ lọc.',
         },
         panel: {
             'clear-filter': 'Xóa lọc',
             cancel: 'Hủy bỏ',
             confirm: 'Xác nhận',
+            mobile: {
+                resize: 'Thay đổi kích thước bảng lọc',
+                back: 'Quay lại',
+                column: 'Cột {0}',
+                'previous-column': 'Cột trước',
+                'next-column': 'Cột tiếp theo',
+            },
             'by-values': 'Theo giá trị',
             'by-colors': 'Theo màu sắc',
             'filter-by-cell-fill-color': 'Lọc theo màu nền ô',
@@ -67,9 +74,6 @@ const locale: typeof enUS = {
             between: 'Giữa',
             'not-between': 'Không giữa',
             custom: 'Tùy chỉnh',
-        },
-        msg: {
-            'filter-header-forbidden': 'Không thể di chuyển hàng đầu lọc',
         },
         date: {
             1: 'Tháng 1',

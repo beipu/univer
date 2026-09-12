@@ -14,35 +14,61 @@
  * limitations under the License.
  */
 
-import type { IAccessor } from '@univerjs/core';
-import { IUniverInstanceService } from '@univerjs/core';
-import { describe, expect, it, vi } from 'vitest';
+import type { IWorkbookData } from '@univerjs/core';
+import { BooleanNumber, LocaleType } from '@univerjs/core';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     SetGridlinesColorMutation,
     SetGridlinesColorUndoMutationFactory,
 } from '../set-gridlines-color.mutation';
 import { SetWorksheetHideMutation, SetWorksheetHideMutationFactory } from '../set-worksheet-hide.mutation';
-import { SetWorksheetNameMutation, SetWorksheetNameMutationFactory } from '../set-worksheet-name.mutation';
+import { SetWorksheetNameMutation, SetWorksheetNameUndoMutationFactory } from '../set-worksheet-name.mutation';
+import {
+    SetWorksheetRowAutoHeightMutation,
+    SetWorksheetRowAutoHeightMutationFactory,
+    SetWorksheetRowHeightMutation,
+    SetWorksheetRowHeightMutationFactory,
+    SetWorksheetRowIsAutoHeightMutation,
+    SetWorksheetRowIsAutoHeightMutationFactory,
+} from '../set-worksheet-row-height.mutation';
+import { createCommandTestBed } from './create-command-test-bed';
 
-function createAccessor(instanceService: unknown): IAccessor {
-    return {
-        get: (token: unknown) => {
-            if (token === IUniverInstanceService) {
-                return instanceService as never;
-            }
-            return null as never;
+const WORKBOOK_DATA: IWorkbookData = {
+    id: 'unit-1',
+    appVersion: '3.0.0-alpha',
+    locale: LocaleType.EN_US,
+    name: 'Test workbook',
+    styles: {},
+    sheetOrder: ['sheet-1'],
+    sheets: {
+        'sheet-1': {
+            id: 'sheet-1',
+            name: 'old-name',
+            hidden: BooleanNumber.TRUE,
+            rowCount: 100,
+            columnCount: 20,
+            defaultRowHeight: 19,
+            cellData: {},
+            rowData: {
+                1: { h: 24, ia: BooleanNumber.TRUE, ah: 28 },
+                2: {},
+            },
         },
-        has: () => true,
-    } as unknown as IAccessor;
-}
+    },
+};
 
 describe('worksheet meta mutations', () => {
+    let testBed: ReturnType<typeof createCommandTestBed>;
+
+    beforeEach(() => {
+        testBed = createCommandTestBed(WORKBOOK_DATA);
+    });
+
+    afterEach(() => testBed.univer.dispose());
+
     it('SetGridlinesColorUndoMutationFactory should read current sheet and throw on null sheet', () => {
-        const goodAccessor = createAccessor({
-            getUniverSheetInstance: vi.fn(() => ({})),
-        });
         expect(
-            SetGridlinesColorUndoMutationFactory(goodAccessor, {
+            SetGridlinesColorUndoMutationFactory(testBed, {
                 unitId: 'unit-1',
                 subUnitId: 'sheet-1',
                 color: '#ff0000',
@@ -53,12 +79,9 @@ describe('worksheet meta mutations', () => {
             color: '#ff0000',
         });
 
-        const badAccessor = createAccessor({
-            getUniverSheetInstance: vi.fn(() => null),
-        });
         expect(() =>
-            SetGridlinesColorUndoMutationFactory(badAccessor, {
-                unitId: 'unit-1',
+            SetGridlinesColorUndoMutationFactory(testBed, {
+                unitId: 'missing',
                 subUnitId: 'sheet-1',
                 color: '#ff0000',
             })
@@ -66,33 +89,19 @@ describe('worksheet meta mutations', () => {
     });
 
     it('SetGridlinesColorMutation should set color and return false when target missing', () => {
-        const worksheetConfig: { gridlinesColor?: string } = {};
-        const worksheet = {
-            getConfig: () => worksheetConfig,
-            getSheetId: () => 'sheet-1',
-        };
-        const workbook = {
-            getSheetBySheetId: vi.fn(() => worksheet),
-            getUnitId: () => 'unit-1',
-        };
-        const accessor = createAccessor({
-            getUnit: vi.fn(() => workbook),
-        });
+        const worksheet = testBed.sheet.getSheetBySheetId('sheet-1')!;
         expect(
-            SetGridlinesColorMutation.handler(accessor, {
+            SetGridlinesColorMutation.handler(testBed, {
                 unitId: 'unit-1',
                 subUnitId: 'sheet-1',
                 color: '#00ff00',
             })
         ).toBe(true);
-        expect(worksheetConfig.gridlinesColor).toBe('#00ff00');
+        expect(worksheet.getConfig().gridlinesColor).toBe('#00ff00');
 
-        const badAccessor = createAccessor({
-            getUnit: vi.fn(() => null),
-        });
         expect(
-            SetGridlinesColorMutation.handler(badAccessor, {
-                unitId: 'unit-1',
+            SetGridlinesColorMutation.handler(testBed, {
+                unitId: 'missing',
                 subUnitId: 'sheet-1',
                 color: '#00ff00',
             })
@@ -100,96 +109,39 @@ describe('worksheet meta mutations', () => {
     });
 
     it('SetWorksheetHide mutation factory and handler should cover true/false paths', () => {
-        const worksheetConfig: { hidden?: number } = {};
-        const worksheet = {
-            getConfig: () => worksheetConfig,
-            getSheetId: () => 'sheet-1',
-            isSheetHidden: () => 1,
-        };
-        const workbook = {
-            getSheetBySheetId: vi.fn(() => worksheet),
-        };
-
-        const accessor = createAccessor({
-            getUnit: vi.fn(() => workbook),
-            getUniverSheetInstance: vi.fn(() => workbook),
-        });
+        const worksheet = testBed.sheet.getSheetBySheetId('sheet-1')!;
 
         expect(
-            SetWorksheetHideMutationFactory(accessor, {
+            SetWorksheetHideMutationFactory(testBed, {
                 unitId: 'unit-1',
                 subUnitId: 'sheet-1',
-                hidden: 0,
+                hidden: BooleanNumber.FALSE,
             })
         ).toEqual({
-            hidden: 1,
+            hidden: BooleanNumber.TRUE,
             unitId: 'unit-1',
             subUnitId: 'sheet-1',
         });
 
         expect(
-            SetWorksheetHideMutation.handler(accessor, {
+            SetWorksheetHideMutation.handler(testBed, {
                 unitId: 'unit-1',
                 subUnitId: 'sheet-1',
-                hidden: 0,
+                hidden: BooleanNumber.FALSE,
             })
         ).toBe(true);
-        expect(worksheetConfig.hidden).toBe(0);
-
-        const noWorkbookAccessor = createAccessor({
-            getUniverSheetInstance: vi.fn(() => null),
-        });
-        expect(
-            SetWorksheetHideMutation.handler(noWorkbookAccessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                hidden: 0,
-            })
-        ).toBe(false);
-
-        const noSheetAccessor = createAccessor({
-            getUniverSheetInstance: vi.fn(() => ({
-                getSheetBySheetId: vi.fn(() => null),
-            })),
-        });
-        expect(
-            SetWorksheetHideMutation.handler(noSheetAccessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                hidden: 0,
-            })
-        ).toBe(false);
-
-        const badFactoryAccessor = createAccessor({
-            getUnit: vi.fn(() => null),
-        });
-        expect(() =>
-            SetWorksheetHideMutationFactory(badFactoryAccessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                hidden: 0,
-            })
-        ).toThrowError('[SetWorksheetHideMutationFactory]: worksheet is null error!');
+        expect(worksheet.getConfig().hidden).toBe(BooleanNumber.FALSE);
+        expect(SetWorksheetHideMutation.handler(testBed, { unitId: 'missing', subUnitId: 'sheet-1', hidden: BooleanNumber.FALSE })).toBe(false);
+        expect(SetWorksheetHideMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'missing', hidden: BooleanNumber.FALSE })).toBe(false);
+        expect(() => SetWorksheetHideMutationFactory(testBed, { unitId: 'missing', subUnitId: 'sheet-1', hidden: BooleanNumber.FALSE }))
+            .toThrowError('[SetWorksheetHideMutationFactory]: worksheet is null error!');
     });
 
     it('SetWorksheetName mutation factory and handler should cover true/false paths', () => {
-        const worksheetConfig: { name?: string } = {};
-        const worksheet = {
-            getConfig: () => worksheetConfig,
-            getSheetId: () => 'sheet-1',
-            getName: () => 'old-name',
-        };
-        const workbook = {
-            getSheetBySheetId: vi.fn(() => worksheet),
-        };
-
-        const accessor = createAccessor({
-            getUnit: vi.fn(() => workbook),
-            getUniverSheetInstance: vi.fn(() => workbook),
-        });
+        const worksheet = testBed.sheet.getSheetBySheetId('sheet-1')!;
 
         expect(
-            SetWorksheetNameMutationFactory(accessor, {
+            SetWorksheetNameUndoMutationFactory(testBed, {
                 unitId: 'unit-1',
                 subUnitId: 'sheet-1',
                 name: 'new-name',
@@ -198,50 +150,59 @@ describe('worksheet meta mutations', () => {
             unitId: 'unit-1',
             subUnitId: 'sheet-1',
             name: 'old-name',
+            oldName: 'new-name',
         });
 
-        expect(
-            SetWorksheetNameMutation.handler(accessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                name: 'new-name',
-            })
-        ).toBe(true);
-        expect(worksheetConfig.name).toBe('new-name');
+        expect(SetWorksheetNameMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'sheet-1', name: 'new-name' })).toBe(true);
+        expect(worksheet.getConfig().name).toBe('new-name');
+        expect(SetWorksheetNameMutation.handler(testBed, { unitId: 'missing', subUnitId: 'sheet-1', name: 'new-name' })).toBe(false);
+        expect(SetWorksheetNameMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'missing', name: 'new-name' })).toBe(false);
+        expect(() => SetWorksheetNameUndoMutationFactory(testBed, { unitId: 'missing', subUnitId: 'sheet-1', name: 'new-name' }))
+            .toThrowError('[SetWorksheetNameUndoMutationFactory]: worksheet is null error!');
+    });
 
-        const noWorkbookAccessor = createAccessor({
-            getUniverSheetInstance: vi.fn(() => null),
-        });
-        expect(
-            SetWorksheetNameMutation.handler(noWorkbookAccessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                name: 'new-name',
-            })
-        ).toBe(false);
+    it('row height mutations should update height, auto-height flag, and measured auto height', () => {
+        const worksheet = testBed.sheet.getSheetBySheetId('sheet-1')!;
+        const manager = worksheet.getRowManager();
+        const ranges = [{ startRow: 1, endRow: 2, startColumn: 0, endColumn: 3 }];
 
-        const noSheetAccessor = createAccessor({
-            getUniverSheetInstance: vi.fn(() => ({
-                getSheetBySheetId: vi.fn(() => null),
-            })),
+        expect(SetWorksheetRowHeightMutationFactory({ unitId: 'unit-1', subUnitId: 'sheet-1', ranges, rowHeight: 40 }, worksheet)).toEqual({
+            unitId: 'unit-1',
+            subUnitId: 'sheet-1',
+            ranges,
+            rowHeight: { 1: 24, 2: 19 },
         });
-        expect(
-            SetWorksheetNameMutation.handler(noSheetAccessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                name: 'new-name',
-            })
-        ).toBe(false);
+        expect(SetWorksheetRowHeightMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'sheet-1', ranges, rowHeight: { 1: 31, 2: null } })).toBe(true);
+        expect(manager.getRow(1)?.h).toBe(31);
+        expect(manager.getRow(2)?.h).toBeUndefined();
+        expect(SetWorksheetRowHeightMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'sheet-1', ranges, rowHeight: 33 })).toBe(true);
+        expect(manager.getRow(1)?.h).toBe(33);
+        expect(manager.getRow(2)?.h).toBe(33);
 
-        const badFactoryAccessor = createAccessor({
-            getUnit: vi.fn(() => null),
+        expect(SetWorksheetRowIsAutoHeightMutationFactory({ unitId: 'unit-1', subUnitId: 'sheet-1', ranges, autoHeightInfo: BooleanNumber.FALSE }, worksheet)).toEqual({
+            unitId: 'unit-1',
+            subUnitId: 'sheet-1',
+            ranges,
+            autoHeightInfo: { 1: BooleanNumber.TRUE, 2: undefined },
         });
-        expect(() =>
-            SetWorksheetNameMutationFactory(badFactoryAccessor, {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                name: 'new-name',
-            })
-        ).toThrowError('[SetWorksheetNameMutationFactory]: worksheet is null error!');
+        expect(SetWorksheetRowIsAutoHeightMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'sheet-1', ranges, autoHeightInfo: { 1: BooleanNumber.FALSE, 2: null } })).toBe(true);
+        expect(manager.getRow(1)?.ia).toBe(BooleanNumber.FALSE);
+        expect(manager.getRow(2)?.ia).toBeUndefined();
+        expect(SetWorksheetRowIsAutoHeightMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'sheet-1', ranges, autoHeightInfo: BooleanNumber.TRUE })).toBe(true);
+        expect(manager.getRow(1)?.ia).toBe(BooleanNumber.TRUE);
+        expect(manager.getRow(2)?.ia).toBe(BooleanNumber.TRUE);
+
+        expect(SetWorksheetRowAutoHeightMutationFactory({ unitId: 'unit-1', subUnitId: 'sheet-1', rowsAutoHeightInfo: [{ row: 1, autoHeight: 50 }, { row: 2, autoHeight: 60 }] }, worksheet)).toEqual({
+            unitId: 'unit-1',
+            subUnitId: 'sheet-1',
+            rowsAutoHeightInfo: [{ row: 1, autoHeight: 28 }, { row: 2, autoHeight: 19 }],
+        });
+        expect(SetWorksheetRowAutoHeightMutation.handler(testBed, { unitId: 'unit-1', subUnitId: 'sheet-1', rowsAutoHeightInfo: [{ row: 1, autoHeight: 51 }, { row: 3, autoHeight: 61 }] })).toBe(true);
+        expect(manager.getRow(1)?.ah).toBe(51);
+        expect(manager.getRow(3)?.ah).toBe(61);
+
+        expect(SetWorksheetRowHeightMutation.handler(testBed, { unitId: 'missing', subUnitId: 'sheet-1', ranges, rowHeight: 20 })).toBe(false);
+        expect(SetWorksheetRowIsAutoHeightMutation.handler(testBed, { unitId: 'missing', subUnitId: 'sheet-1', ranges, autoHeightInfo: BooleanNumber.TRUE })).toBe(false);
+        expect(SetWorksheetRowAutoHeightMutation.handler(testBed, { unitId: 'missing', subUnitId: 'sheet-1', rowsAutoHeightInfo: [] })).toBe(false);
     });
 });

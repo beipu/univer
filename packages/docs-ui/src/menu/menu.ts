@@ -14,22 +14,25 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, IAccessor, PresetListType } from '@univerjs/core';
+import type { DocumentDataModel, IAccessor, ITextRangeParam, Nullable } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { IMenuButtonItem, IMenuItem, IMenuSelectorItem } from '@univerjs/ui';
-import type { Subscription } from 'rxjs';
+import type { LocaleKey } from '../locale/types';
 import {
     BaselineOffset,
     BooleanNumber,
     BuildTextUtils,
     DEFAULT_STYLES,
-    DOCS_ZEN_EDITOR_UNIT_ID_KEY,
+    DocumentBlockRangeType,
     DocumentFlavor,
     HorizontalAlign,
     ICommandService,
+    IPermissionService,
     IUniverInstanceService,
     NAMED_STYLE_MAP,
     NamedStyleType,
+    PresetListType,
+    SectionType,
     ThemeService,
     Tools,
     UniverInstanceType,
@@ -37,13 +40,16 @@ import {
 import {
     DocSelectionManagerService,
     DocSkeletonManagerService,
+    getDocumentPermissionValue,
     RichTextEditingMutation,
     SetTextSelectionsOperation,
 } from '@univerjs/docs';
 import { DocumentEditArea, IRenderManagerService } from '@univerjs/engine-render';
+import { UnitAction } from '@univerjs/protocol';
 import {
     COLOR_PICKER_COMPONENT,
     COMMON_LABEL_COMPONENT,
+    EMOJI_PICKER_COMPONENT,
     FONT_FAMILY_COMPONENT,
     FONT_FAMILY_ITEM_COMPONENT,
     FONT_SIZE_COMPONENT,
@@ -52,21 +58,74 @@ import {
     HEADING_ITEM_COMPONENT,
     HEADING_LIST,
     MenuItemType,
+    SYMBOL_PICKER_COMPONENT,
 } from '@univerjs/ui';
 
-import { combineLatest, map, Observable } from 'rxjs';
+import { combineLatest, distinctUntilChanged, map, Observable, of, shareReplay, startWith } from 'rxjs';
 import { OpenHeaderFooterPanelCommand } from '../commands/commands/doc-header-footer.command';
 import { HorizontalLineCommand } from '../commands/commands/doc-horizontal-line.command';
-import { getStyleInTextRange, ResetInlineFormatTextBackgroundColorCommand, SetInlineFormatBoldCommand, SetInlineFormatCommand, SetInlineFormatFontFamilyCommand, SetInlineFormatFontSizeCommand, SetInlineFormatItalicCommand, SetInlineFormatStrikethroughCommand, SetInlineFormatSubscriptCommand, SetInlineFormatSuperscriptCommand, SetInlineFormatTextBackgroundColorCommand, SetInlineFormatTextColorCommand, SetInlineFormatUnderlineCommand } from '../commands/commands/inline-format.command';
+import {
+    getStyleInTextRange,
+    ResetInlineFormatTextBackgroundColorCommand,
+    ResetInlineFormatTextColorCommand,
+    SetInlineFormatBoldCommand,
+    SetInlineFormatCommand,
+    SetInlineFormatFontFamilyCommand,
+    SetInlineFormatFontSizeCommand,
+    SetInlineFormatItalicCommand,
+    SetInlineFormatStrikethroughCommand,
+    SetInlineFormatSubscriptCommand,
+    SetInlineFormatSuperscriptCommand,
+    SetInlineFormatTextBackgroundColorCommand,
+    SetInlineFormatTextColorCommand,
+    SetInlineFormatUnderlineCommand,
+} from '../commands/commands/inline-format.command';
+import { InsertSpecialCharacterCommand } from '../commands/commands/insert-special-character.command';
 import { BulletListCommand, CheckListCommand, OrderListCommand } from '../commands/commands/list.command';
-import { AlignCenterCommand, AlignJustifyCommand, AlignLeftCommand, AlignOperationCommand, AlignRightCommand } from '../commands/commands/paragraph-align.command';
+import {
+    AlignCenterCommand,
+    AlignJustifyCommand,
+    AlignLeftCommand,
+    AlignOperationCommand,
+    AlignRightCommand,
+} from '../commands/commands/paragraph-align.command';
 import { SetParagraphNamedStyleCommand } from '../commands/commands/set-heading.command';
-import { SwitchDocModeCommand } from '../commands/commands/switch-doc-mode.command';
+import { CreateDocTableCommand } from '../commands/commands/table/doc-table-create.command';
 import { DocCreateTableOperation } from '../commands/operations/doc-create-table.operation';
+import {
+    InsertDocumentColumnBreakOperation,
+    InsertDocumentSectionBreakOperation,
+} from '../commands/operations/insert-break.operation';
 import { DocOpenPageSettingCommand } from '../commands/operations/open-page-setting.operation';
 import { getCommandSkeleton } from '../commands/util';
-import { BULLET_LIST_TYPE_COMPONENT, ORDER_LIST_TYPE_COMPONENT } from '../components/list-type-picker';
+import { IDocEmbedRuntimeFocusCoordinator } from '../services/doc-embed-integration.service';
 import { DocMenuStyleService } from '../services/doc-menu-style.service';
+import { BULLET_LIST_TYPE_COMPONENT, ORDER_LIST_TYPE_COMPONENT } from '../views/list-type-picker/index';
+
+export function shouldSuppressDocMenuStateRefresh(accessor: IAccessor): boolean {
+    let univerInstanceService: IUniverInstanceService;
+    let focusCoordinator: IDocEmbedRuntimeFocusCoordinator;
+
+    try {
+        univerInstanceService = accessor.get(IUniverInstanceService);
+    } catch (error) {
+        if (isInjectorDisposedError(error)) {
+            return true;
+        }
+
+        throw error;
+    }
+
+    try {
+        focusCoordinator = accessor.get(IDocEmbedRuntimeFocusCoordinator);
+    } catch {
+        return false;
+    }
+
+    const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+    const unitId = docDataModel?.getUnitId();
+    return focusCoordinator.shouldSuppressHostInteraction(unitId);
+}
 
 function getInsertTableHiddenObservable(
     accessor: IAccessor
@@ -75,7 +134,11 @@ function getInsertTableHiddenObservable(
     const renderManagerService = accessor.get(IRenderManagerService);
 
     return new Observable((subscriber) => {
+        let editAreaSubscription: { unsubscribe: () => void } | null = null;
         const subscription = univerInstanceService.focused$.subscribe((unitId) => {
+            editAreaSubscription?.unsubscribe();
+            editAreaSubscription = null;
+
             if (unitId == null) {
                 return subscriber.next(true);
             }
@@ -85,23 +148,76 @@ function getInsertTableHiddenObservable(
                 return subscriber.next(true);
             }
 
-            const currentRender = renderManagerService.getRenderById(unitId);
+            const currentRender = renderManagerService.getRenderUnitById(unitId);
             if (currentRender == null) {
                 return subscriber.next(true);
             }
 
             const viewModel = currentRender.with(DocSkeletonManagerService).getViewModel();
 
-            viewModel.editAreaChange$.subscribe((editArea) => {
+            editAreaSubscription = viewModel.editAreaChange$.subscribe((editArea) => {
                 subscriber.next(editArea === DocumentEditArea.HEADER || editArea === DocumentEditArea.FOOTER);
             });
         });
 
-        return () => subscription.unsubscribe();
+        return () => {
+            editAreaSubscription?.unsubscribe();
+            subscription.unsubscribe();
+        };
     });
 }
 
-function getHeaderFooterMenuHiddenObservable(
+export function disableMenuWhenHeaderFooterEditing(accessor: IAccessor): Observable<boolean> {
+    const univerInstanceService = accessor.get(IUniverInstanceService);
+    const renderManagerService = accessor.get(IRenderManagerService);
+
+    return new Observable((subscriber) => {
+        let editAreaSubscription: { unsubscribe: () => void } | null = null;
+        let lastDisabled: boolean | undefined;
+
+        const emit = (disabled: boolean) => {
+            if (disabled !== lastDisabled) {
+                lastDisabled = disabled;
+                subscriber.next(disabled);
+            }
+        };
+
+        const emitByUnit = (unitId?: string | null | void) => {
+            editAreaSubscription?.unsubscribe();
+            editAreaSubscription = null;
+
+            if (!unitId || univerInstanceService.getUnitType(unitId) !== UniverInstanceType.UNIVER_DOC) {
+                emit(true);
+                return;
+            }
+
+            const currentRender = renderManagerService.getRenderUnitById(unitId);
+            const skeletonManager = currentRender?.with(DocSkeletonManagerService);
+            const viewModel = skeletonManager?.getViewModel();
+            if (!viewModel) {
+                emit(true);
+                return;
+            }
+
+            const emitDisabled = (editArea?: Nullable<DocumentEditArea>) => {
+                const currentEditArea = editArea ?? viewModel.getEditArea();
+                emit(currentEditArea === DocumentEditArea.HEADER || currentEditArea === DocumentEditArea.FOOTER);
+            };
+
+            emitDisabled();
+            editAreaSubscription = viewModel.editAreaChange$.subscribe(emitDisabled);
+        };
+
+        const focusedSubscription = univerInstanceService.focused$.subscribe(emitByUnit);
+
+        return () => {
+            editAreaSubscription?.unsubscribe();
+            focusedSubscription.unsubscribe();
+        };
+    });
+}
+
+function getTraditionalDocMenuHiddenObservable(
     accessor: IAccessor
 ): Observable<boolean> {
     const univerInstanceService = accessor.get(IUniverInstanceService);
@@ -126,20 +242,16 @@ function getHeaderFooterMenuHiddenObservable(
             if (unitId == null) {
                 return subscriber.next(true);
             }
-            const docDataModel = univerInstanceService.getUniverDocInstance(unitId);
+            const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
             const documentFlavor = docDataModel?.getSnapshot().documentStyle.documentFlavor;
 
             subscriber.next(documentFlavor !== DocumentFlavor.TRADITIONAL);
         });
 
-        const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
-
-        if (docDataModel == null) {
-            return subscriber.next(true);
-        }
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
 
         const documentFlavor = docDataModel?.getSnapshot().documentStyle.documentFlavor;
-        subscriber.next(documentFlavor !== DocumentFlavor.TRADITIONAL);
+        subscriber.next(docDataModel == null || documentFlavor !== DocumentFlavor.TRADITIONAL);
 
         return () => {
             subscription0.dispose();
@@ -174,7 +286,7 @@ function getTableDisabledObservable(accessor: IAccessor): Observable<boolean> {
                 return;
             }
 
-            const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
+            const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
 
             if (docDataModel == null) {
                 subscriber.next(true);
@@ -217,8 +329,9 @@ function getTableDisabledObservable(accessor: IAccessor): Observable<boolean> {
 
 export function disableMenuWhenNoDocRange(accessor: IAccessor): Observable<boolean> {
     const docSelectionManagerService = accessor.get(DocSelectionManagerService);
+    const univerInstanceService = accessor.get(IUniverInstanceService);
 
-    return new Observable((subscriber) => {
+    const selectionDisabled$ = new Observable<boolean>((subscriber) => {
         const subscription = docSelectionManagerService.textSelection$.subscribe((selection) => {
             if (selection == null) {
                 subscriber.next(true);
@@ -232,24 +345,134 @@ export function disableMenuWhenNoDocRange(accessor: IAccessor): Observable<boole
                 return;
             }
 
+            const document = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+            const codeBlockRanges = document?.getBody()?.blockRanges?.filter((range) => range.blockType === DocumentBlockRangeType.CODE) ?? [];
+            if (codeBlockRanges.some((blockRange) => textRanges.some((range) => (
+                Math.max(range.startOffset, blockRange.startIndex) <= Math.min(range.endOffset, blockRange.endIndex)
+            )))) {
+                subscriber.next(true);
+                return;
+            }
+
             subscriber.next(false);
         });
 
         return () => subscription.unsubscribe();
     });
+
+    return combineLatest([selectionDisabled$, disableMenuWithoutDocumentEditPermission(accessor)]).pipe(
+        map(([selectionDisabled, permissionDisabled]) => selectionDisabled || permissionDisabled)
+    );
 }
 
-export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function disableMenuWithoutDocumentUnitPermission(accessor: IAccessor, action: UnitAction): Observable<boolean> {
+    const univerInstanceService = accessor.get(IUniverInstanceService);
+    const permissionService = accessor.get(IPermissionService);
+    return combineLatest([
+        univerInstanceService.getCurrentTypeOfUnit$<DocumentDataModel>(UniverInstanceType.UNIVER_DOC),
+        permissionService.permissionPointUpdate$.pipe(startWith(undefined)),
+    ]).pipe(map(([document]) => !document || !getDocumentPermissionValue(
+        permissionService,
+        document.getUnitId(),
+        document.getUnitId(),
+        action
+    )));
+}
+
+function disableMenuWithoutDocumentEditPermission(accessor: IAccessor): Observable<boolean> {
+    return disableMenuWithoutDocumentUnitPermission(accessor, UnitAction.Edit);
+}
+
+export const DOC_INSERT_EMOJI_MENU_ID = 'doc.menu.insert-emoji';
+export const DOC_INSERT_SYMBOL_MENU_ID = 'doc.menu.insert-symbol';
+
+export function EmojiPickerMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string, string, string> {
+    return {
+        id: DOC_INSERT_EMOJI_MENU_ID,
+        type: MenuItemType.SELECTOR,
+        icon: 'SmileIcon',
+        tooltip: 'ui.emojiPicker.emojis',
+        selectionsCommandId: InsertSpecialCharacterCommand.id,
+        selections: [{
+            label: {
+                name: EMOJI_PICKER_COMPONENT,
+                hoverable: false,
+                selectable: false,
+                props: { embedded: true },
+            },
+        }],
+        disabled$: disableMenuWhenNoDocRange(accessor),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+    };
+}
+
+export function SymbolPickerMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string, string, string> {
+    return {
+        id: DOC_INSERT_SYMBOL_MENU_ID,
+        type: MenuItemType.SELECTOR,
+        icon: 'SymbolsIcon',
+        tooltip: 'ui.emojiPicker.symbols',
+        selectionsCommandId: InsertSpecialCharacterCommand.id,
+        selections: [{
+            label: {
+                name: SYMBOL_PICKER_COMPONENT,
+                hoverable: false,
+                selectable: false,
+                props: { embedded: true },
+            },
+        }],
+        disabled$: disableMenuWhenNoDocRange(accessor),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+    };
+}
+
+export function isTextRangeInAnyBlockRange(document: Nullable<DocumentDataModel>, range: ITextRangeParam): boolean {
+    const blockRanges = document?.getBody()?.blockRanges ?? [];
+    const startOffset = range.startOffset;
+    const endOffset = range.collapsed ? range.startOffset : range.endOffset - 1;
+
+    return blockRanges.some((blockRange) => (
+        Math.max(startOffset, blockRange.startIndex) <= Math.min(endOffset, blockRange.endIndex)
+    ));
+}
+
+export function hideMenuWhenSelectionInBlockRange(accessor: IAccessor): Observable<boolean> {
+    const docSelectionManagerService = accessor.get(DocSelectionManagerService);
+    const univerInstanceService = accessor.get(IUniverInstanceService);
+
+    return new Observable((subscriber) => {
+        const calc = (selection?: { textRanges?: ITextRangeParam[]; unitId?: string }) => {
+            const currentSelection = (docSelectionManagerService as { __getCurrentSelection?: () => { unitId?: string } | null }).__getCurrentSelection?.();
+            const textRanges = selection?.textRanges ?? [...(docSelectionManagerService.getTextRanges() ?? [])];
+            const unitId = selection?.unitId ?? currentSelection?.unitId;
+            const document = unitId
+                ? univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC)
+                : univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+            subscriber.next(textRanges.some((range) => isTextRangeInAnyBlockRange(document, range)));
+        };
+
+        calc();
+        const subscription = docSelectionManagerService.textSelection$.subscribe((selection) => calc(selection));
+
+        return () => subscription.unsubscribe();
+    });
+}
+
+export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatBoldCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'BoldIcon',
-        title: 'Set bold',
-        tooltip: 'toolbar.bold',
+        title: 'docs-ui.toolbar.bold',
+        tooltip: 'docs-ui.toolbar.bold',
         activated$: new Observable<boolean>((subscriber) => {
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -278,17 +501,21 @@ export function BoldMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatItalicCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'ItalicIcon',
-        title: 'Set italic',
-        tooltip: 'toolbar.italic',
+        title: 'docs-ui.toolbar.italic',
+        tooltip: 'docs-ui.toolbar.italic',
         activated$: new Observable<boolean>((subscriber) => {
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -317,17 +544,21 @@ export function ItalicMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatUnderlineCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'UnderlineIcon',
-        title: 'Set underline',
-        tooltip: 'toolbar.underline',
+        title: 'docs-ui.toolbar.underline',
+        tooltip: 'docs-ui.toolbar.underline',
         activated$: new Observable<boolean>((subscriber) => {
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -356,17 +587,21 @@ export function UnderlineMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatStrikethroughCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'StrikethroughIcon',
-        title: 'Set strike through',
-        tooltip: 'toolbar.strikethrough',
+        title: 'docs-ui.toolbar.strikethrough',
+        tooltip: 'docs-ui.toolbar.strikethrough',
         activated$: new Observable<boolean>((subscriber) => {
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -395,16 +630,20 @@ export function StrikeThroughMenuItemFactory(accessor: IAccessor): IMenuButtonIt
     };
 }
 
-export function SubscriptMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function SubscriptMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatSubscriptCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'SubscriptIcon',
-        tooltip: 'toolbar.subscript',
+        tooltip: 'docs-ui.toolbar.subscript',
         activated$: new Observable<boolean>((subscriber) => {
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -433,16 +672,20 @@ export function SubscriptMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
     };
 }
 
-export function SuperscriptMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function SuperscriptMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatSuperscriptCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'SuperscriptIcon',
-        tooltip: 'toolbar.superscript',
+        tooltip: 'docs-ui.toolbar.superscript',
         activated$: new Observable<boolean>((subscriber) => {
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -471,12 +714,12 @@ export function SuperscriptMenuItemFactory(accessor: IAccessor): IMenuButtonItem
     };
 }
 
-export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string, string> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatFontFamilyCommand.id,
-        tooltip: 'toolbar.font',
+        tooltip: 'docs-ui.toolbar.font',
         type: MenuItemType.SELECTOR,
         label: {
             name: FONT_FAMILY_COMPONENT,
@@ -499,6 +742,10 @@ export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSel
             const defaultValue = DEFAULT_STYLES.ff;
 
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
 
                 if (textRun == null) {
@@ -526,13 +773,13 @@ export function FontFamilySelectorMenuItemFactory(accessor: IAccessor): IMenuSel
     };
 }
 
-export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<number> {
+export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, number> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetInlineFormatFontSizeCommand.id,
         type: MenuItemType.SELECTOR,
-        tooltip: 'toolbar.fontSize',
+        tooltip: 'docs-ui.toolbar.fontSize',
         label: {
             name: FONT_SIZE_COMPONENT,
             props: {
@@ -546,6 +793,10 @@ export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelec
         value$: new Observable((subscriber) => {
             const DEFAULT_SIZE = DEFAULT_STYLES.fs;
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const textRun = getFontStyleAtCursor(accessor);
                 if (textRun == null) {
                     subscriber.next(DEFAULT_SIZE);
@@ -572,13 +823,13 @@ export function FontSizeSelectorMenuItemFactory(accessor: IAccessor): IMenuSelec
     };
 }
 
-export function HeadingSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<number> {
+export function HeadingSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, NamedStyleType> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: SetParagraphNamedStyleCommand.id,
         type: MenuItemType.SELECTOR,
-        tooltip: 'toolbar.heading.tooltip',
+        tooltip: 'docs-ui.toolbar.heading.tooltip',
         label: {
             name: COMMON_LABEL_COMPONENT,
             props: {
@@ -598,6 +849,10 @@ export function HeadingSelectorMenuItemFactory(accessor: IAccessor): IMenuSelect
         value$: new Observable((subscriber) => {
             const DEFAULT_TYPE = NamedStyleType.NORMAL_TEXT;
             const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
                 const paragraph = getParagraphStyleAtCursor(accessor);
                 if (paragraph == null) {
                     subscriber.next(DEFAULT_TYPE);
@@ -625,14 +880,131 @@ export function HeadingSelectorMenuItemFactory(accessor: IAccessor): IMenuSelect
     };
 }
 
-export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string, string | undefined> {
+export const FLOAT_TEXT_STYLE_MENU_ID = 'doc.menu.float-text-style';
+export const FLOAT_TOOLBAR_MENU_POSITION = 'doc.menu.float-toolbar';
+
+const FLOAT_TEXT_STYLE_OPTIONS = [
+    {
+        icon: 'TextTypeIcon',
+        label: 'docs-ui.toolbar.heading.normal',
+        value: NamedStyleType.NORMAL_TEXT,
+    },
+    {
+        icon: 'H1Icon',
+        label: 'docs-ui.toolbar.heading.leading1',
+        value: NamedStyleType.HEADING_1,
+    },
+    {
+        icon: 'H2Icon',
+        label: 'docs-ui.toolbar.heading.leading2',
+        value: NamedStyleType.HEADING_2,
+    },
+    {
+        icon: 'H3Icon',
+        label: 'docs-ui.toolbar.heading.leading3',
+        value: NamedStyleType.HEADING_3,
+    },
+    {
+        icon: 'H4Icon',
+        label: 'docs-ui.toolbar.heading.leading4',
+        value: NamedStyleType.HEADING_4,
+    },
+    {
+        icon: 'H5Icon',
+        label: 'docs-ui.toolbar.heading.leading5',
+        value: NamedStyleType.HEADING_5,
+    },
+    {
+        id: OrderListCommand.id,
+        icon: 'OrderIcon',
+        label: 'docs-ui.toolbar.order',
+        value: PresetListType.ORDER_LIST,
+    },
+    {
+        id: BulletListCommand.id,
+        icon: 'UnorderIcon',
+        label: 'docs-ui.toolbar.unorder',
+        value: PresetListType.BULLET_LIST,
+    },
+    {
+        id: CheckListCommand.id,
+        icon: 'TodoListDoubleIcon',
+        label: 'docs-ui.toolbar.checklist',
+        value: PresetListType.CHECK_LIST,
+    },
+];
+
+function normalizeFloatingTextStyleValue(paragraph: ReturnType<typeof getParagraphStyleAtCursor>): string | number {
+    const listType = paragraph?.bullet?.listType;
+
+    if (listType?.startsWith(PresetListType.ORDER_LIST)) {
+        return PresetListType.ORDER_LIST;
+    }
+
+    if (listType?.startsWith(PresetListType.BULLET_LIST)) {
+        return PresetListType.BULLET_LIST;
+    }
+
+    if (listType === PresetListType.CHECK_LIST || listType === PresetListType.CHECK_LIST_CHECKED) {
+        return PresetListType.CHECK_LIST;
+    }
+
+    return paragraph?.paragraphStyle?.namedStyleType ?? NamedStyleType.NORMAL_TEXT;
+}
+
+export function FloatTextStyleMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string | number> {
+    const commandService = accessor.get(ICommandService);
+
+    return {
+        id: FLOAT_TEXT_STYLE_MENU_ID,
+        commandId: SetParagraphNamedStyleCommand.id,
+        type: MenuItemType.SELECTOR,
+        icon: of(''),
+        label: {
+            name: COMMON_LABEL_COMPONENT,
+            props: { selections: FLOAT_TEXT_STYLE_OPTIONS },
+        },
+        tooltip: 'docs-ui.toolbar.heading.tooltip',
+        selections: FLOAT_TEXT_STYLE_OPTIONS,
+        value$: new Observable((subscriber) => {
+            const calc = () => {
+                if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                    return;
+                }
+
+                subscriber.next(normalizeFloatingTextStyleValue(getParagraphStyleAtCursor(accessor)));
+            };
+
+            const disposable = commandService.onCommandExecuted((c) => {
+                const id = c.id;
+
+                if (
+                    id === SetTextSelectionsOperation.id ||
+                    id === SetParagraphNamedStyleCommand.id ||
+                    id === OrderListCommand.id ||
+                    id === BulletListCommand.id ||
+                    id === CheckListCommand.id
+                ) {
+                    calc();
+                }
+            });
+
+            calc();
+            return disposable.dispose;
+        }),
+        disabled$: disableMenuWhenNoDocRange(accessor),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+    };
+}
+
+export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string, string | undefined> {
     const commandService = accessor.get(ICommandService);
     const themeService = accessor.get(ThemeService);
 
     return {
         id: SetInlineFormatTextColorCommand.id,
         icon: 'FontColorDoubleIcon',
-        tooltip: 'toolbar.textColor.main',
+        tooltip: 'docs-ui.toolbar.textColor.main',
 
         type: MenuItemType.BUTTON_SELECTOR,
         selections: [
@@ -643,8 +1015,12 @@ export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSele
                     selectable: false,
                 },
                 value$: new Observable<string>((subscriber) => {
-                    const defaultValue = DEFAULT_STYLES.cl.rgb;
+                    const defaultValue = themeService.getColorFromTheme('gray.900');
                     const calc = () => {
+                        if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                            return;
+                        }
+
                         const textRun = getFontStyleAtCursor(accessor);
 
                         if (!textRun) {
@@ -672,6 +1048,10 @@ export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSele
 
             const disposable = commandService.onCommandExecuted((c) => {
                 if (c.id === SetInlineFormatTextColorCommand.id) {
+                    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                        return;
+                    }
+
                     const color = (c.params as { value: string }).value;
                     subscriber.next(color ?? defaultColor);
                 }
@@ -686,58 +1066,144 @@ export function TextColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSele
     };
 }
 
-export function HeaderFooterMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function HeaderFooterMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: OpenHeaderFooterPanelCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'HeaderFooterIcon',
-        tooltip: 'toolbar.headerFooter',
-        hidden$: combineLatest(getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY), getHeaderFooterMenuHiddenObservable(accessor), (one, two) => {
+        tooltip: 'docs-ui.toolbar.headerFooter',
+        hidden$: combineLatest(getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC), getTraditionalDocMenuHiddenObservable(accessor), (one, two) => {
             return one || two;
         }),
     };
+}
+
+export const DOC_BREAKS_MENU_ID = 'doc.menu.breaks';
+export const DOC_SECTION_BREAK_NEXT_PAGE_MENU_ID = 'doc.menu.section-break.next-page';
+export const DOC_SECTION_BREAK_CONTINUOUS_MENU_ID = 'doc.menu.section-break.continuous';
+export const DOC_SECTION_BREAK_NEXT_COLUMN_MENU_ID = 'doc.menu.section-break.next-column';
+export const DOC_SECTION_BREAK_EVEN_PAGE_MENU_ID = 'doc.menu.section-break.even-page';
+export const DOC_SECTION_BREAK_ODD_PAGE_MENU_ID = 'doc.menu.section-break.odd-page';
+
+export function BreaksMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
+    return {
+        id: DOC_BREAKS_MENU_ID,
+        type: MenuItemType.SUBITEMS,
+        icon: 'ColumnIcon',
+        tooltip: 'docs-ui.toolbar.breaks',
+        disabled$: disableMenuWhenNoDocRange(accessor),
+        hidden$: combineLatest(
+            getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+            getTraditionalDocMenuHiddenObservable(accessor),
+            (hidden, unsupported) => hidden || unsupported
+        ),
+    };
+}
+
+export function InsertColumnBreakMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return {
+        id: InsertDocumentColumnBreakOperation.id,
+        type: MenuItemType.BUTTON,
+        title: 'docs-ui.toolbar.columnBreak',
+        disabled$: disableMenuWhenNoDocRange(accessor),
+    };
+}
+
+function createSectionBreakMenuItem(
+    accessor: IAccessor,
+    id: string,
+    title: LocaleKey,
+    sectionType: SectionType
+): IMenuButtonItem<LocaleKey> {
+    return {
+        id,
+        commandId: InsertDocumentSectionBreakOperation.id,
+        params: { sectionType },
+        type: MenuItemType.BUTTON,
+        title,
+        disabled$: disableMenuWhenNoDocRange(accessor),
+    };
+}
+
+export function InsertNextPageSectionBreakMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return createSectionBreakMenuItem(accessor, DOC_SECTION_BREAK_NEXT_PAGE_MENU_ID, 'docs-ui.toolbar.sectionBreakNextPage', SectionType.NEXT_PAGE);
+}
+
+export function InsertContinuousSectionBreakMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return createSectionBreakMenuItem(accessor, DOC_SECTION_BREAK_CONTINUOUS_MENU_ID, 'docs-ui.toolbar.sectionBreakContinuous', SectionType.CONTINUOUS);
+}
+
+export function InsertNextColumnSectionBreakMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return createSectionBreakMenuItem(accessor, DOC_SECTION_BREAK_NEXT_COLUMN_MENU_ID, 'docs-ui.toolbar.sectionBreakNextColumn', SectionType.NEXT_COLUMN);
+}
+
+export function InsertEvenPageSectionBreakMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return createSectionBreakMenuItem(accessor, DOC_SECTION_BREAK_EVEN_PAGE_MENU_ID, 'docs-ui.toolbar.sectionBreakEvenPage', SectionType.EVEN_PAGE);
+}
+
+export function InsertOddPageSectionBreakMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return createSectionBreakMenuItem(accessor, DOC_SECTION_BREAK_ODD_PAGE_MENU_ID, 'docs-ui.toolbar.sectionBreakOddPage', SectionType.ODD_PAGE);
 }
 
 export const TableIcon = 'GridIcon';
 export const TABLE_MENU_ID = 'doc.menu.table';
 
-export function TableMenuFactory(accessor: IAccessor): IMenuItem {
+export function TableMenuFactory(accessor: IAccessor): IMenuItem<LocaleKey> {
     return {
         id: TABLE_MENU_ID,
         type: MenuItemType.SUBITEMS,
         icon: TableIcon,
-        tooltip: 'toolbar.table.main',
+        tooltip: 'docs-ui.toolbar.table.main',
         disabled$: getTableDisabledObservable(accessor),
-        // Do not show header footer menu and insert table at zen mode.
-        hidden$: combineLatest(getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY), getInsertTableHiddenObservable(accessor), (one, two) => {
+        hidden$: combineLatest(getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC), getInsertTableHiddenObservable(accessor), (one, two) => {
             return one || two;
         }),
     };
 }
 
-export function InsertTableMenuFactory(_accessor: IAccessor): IMenuButtonItem {
+export function InsertTableMenuFactory(_accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: DocCreateTableOperation.id,
-        title: 'toolbar.table.insert',
+        title: 'docs-ui.toolbar.table.insert',
         type: MenuItemType.BUTTON,
+        icon: TableIcon,
         hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
-export function AlignLeftMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function InsertDefaultTableMenuFactory(_accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    return {
+        id: DocCreateTableOperation.id,
+        commandId: CreateDocTableCommand.id,
+        params: {
+            rowCount: 3,
+            colCount: 5,
+        },
+        title: 'docs-ui.toolbar.table.insert',
+        type: MenuItemType.BUTTON,
+        icon: TableIcon,
+        hidden$: getMenuHiddenObservable(_accessor, UniverInstanceType.UNIVER_DOC),
+    };
+}
+
+export function AlignLeftMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: AlignLeftCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'LeftJustifyingIcon',
-        tooltip: 'toolbar.alignLeft',
+        tooltip: 'docs-ui.toolbar.alignLeft',
         disabled$: disableMenuWhenNoDocRange(accessor),
         activated$: new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
 
                 if (id === SetTextSelectionsOperation.id || id === AlignOperationCommand.id) {
+                    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                        return;
+                    }
+
                     const paragraph = getParagraphStyleAtCursor(accessor);
 
                     if (paragraph == null) {
@@ -754,23 +1220,27 @@ export function AlignLeftMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
 
             return disposable.dispose;
         }),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
-export function AlignCenterMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function AlignCenterMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: AlignCenterCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'HorizontallyIcon',
-        tooltip: 'toolbar.alignCenter',
+        tooltip: 'docs-ui.toolbar.alignCenter',
         activated$: new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
 
                 if (id === SetTextSelectionsOperation.id || id === AlignOperationCommand.id) {
+                    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                        return;
+                    }
+
                     const paragraph = getParagraphStyleAtCursor(accessor);
 
                     if (paragraph == null) {
@@ -788,23 +1258,27 @@ export function AlignCenterMenuItemFactory(accessor: IAccessor): IMenuButtonItem
             return disposable.dispose;
         }),
         disabled$: disableMenuWhenNoDocRange(accessor),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
-export function AlignRightMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function AlignRightMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: AlignRightCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'RightJustifyingIcon',
-        tooltip: 'toolbar.alignRight',
+        tooltip: 'docs-ui.toolbar.alignRight',
         activated$: new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
 
                 if (id === SetTextSelectionsOperation.id || id === AlignOperationCommand.id) {
+                    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                        return;
+                    }
+
                     const paragraph = getParagraphStyleAtCursor(accessor);
 
                     if (paragraph == null) {
@@ -822,23 +1296,27 @@ export function AlignRightMenuItemFactory(accessor: IAccessor): IMenuButtonItem 
             return disposable.dispose;
         }),
         disabled$: disableMenuWhenNoDocRange(accessor),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
-export function AlignJustifyMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function AlignJustifyMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
 
     return {
         id: AlignJustifyCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'AlignTextBothIcon',
-        tooltip: 'toolbar.alignJustify',
+        tooltip: 'docs-ui.toolbar.alignJustify',
         activated$: new Observable<boolean>((subscriber) => {
             const disposable = commandService.onCommandExecuted((c) => {
                 const id = c.id;
 
                 if (id === SetTextSelectionsOperation.id || id === AlignOperationCommand.id) {
+                    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                        return;
+                    }
+
                     const paragraph = getParagraphStyleAtCursor(accessor);
 
                     if (paragraph == null) {
@@ -856,18 +1334,84 @@ export function AlignJustifyMenuItemFactory(accessor: IAccessor): IMenuButtonIte
             return disposable.dispose;
         }),
         disabled$: disableMenuWhenNoDocRange(accessor),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
-export function HorizontalLineFactory(accessor: IAccessor): IMenuButtonItem {
+const HORIZONTAL_ALIGN_OPTIONS = [
+    {
+        id: AlignLeftCommand.id,
+        value: HorizontalAlign.LEFT,
+        label: 'docs-ui.toolbar.alignLeft',
+        icon: 'LeftJustifyingIcon',
+    },
+    {
+        id: AlignCenterCommand.id,
+        value: HorizontalAlign.CENTER,
+        label: 'docs-ui.toolbar.alignCenter',
+        icon: 'HorizontallyIcon',
+    },
+    {
+        id: AlignRightCommand.id,
+        value: HorizontalAlign.RIGHT,
+        label: 'docs-ui.toolbar.alignRight',
+        icon: 'RightJustifyingIcon',
+    },
+    {
+        id: AlignJustifyCommand.id,
+        value: HorizontalAlign.JUSTIFIED,
+        label: 'docs-ui.toolbar.alignJustify',
+        icon: 'AlignTextBothIcon',
+    },
+];
+
+export function AlignMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, HorizontalAlign, HorizontalAlign> {
+    const commandService = accessor.get(ICommandService);
+
+    const value$ = new Observable<HorizontalAlign>((subscriber) => {
+        const calc = () => {
+            if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                subscriber.next(HorizontalAlign.LEFT);
+                return;
+            }
+
+            const paragraph = getParagraphStyleAtCursor(accessor);
+
+            subscriber.next(paragraph?.paragraphStyle?.horizontalAlign ?? HorizontalAlign.LEFT);
+        };
+        const disposable = commandService.onCommandExecuted((c) => {
+            if (c.id === SetTextSelectionsOperation.id || c.id === AlignOperationCommand.id) {
+                calc();
+            }
+        });
+
+        calc();
+        return disposable.dispose;
+    }).pipe(
+        distinctUntilChanged(),
+        shareReplay({ bufferSize: 1, refCount: true })
+    );
+
+    return {
+        id: AlignOperationCommand.id,
+        type: MenuItemType.SELECTOR,
+        icon: value$.pipe(map((alignType) => HORIZONTAL_ALIGN_OPTIONS.find((option) => option.value === alignType)?.icon ?? 'LeftJustifyingIcon')),
+        tooltip: 'docs-ui.toolbar.alignLeft',
+        selections: HORIZONTAL_ALIGN_OPTIONS,
+        value$,
+        disabled$: disableMenuWhenNoDocRange(accessor),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+    };
+}
+
+export function HorizontalLineFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: HorizontalLineCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'ReduceIcon',
-        tooltip: 'toolbar.horizontalLine',
+        tooltip: 'docs-ui.toolbar.horizontalLine',
         disabled$: disableMenuWhenNoDocRange(accessor),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
     };
 }
 
@@ -875,50 +1419,49 @@ const listValueFactory$ = (accessor: IAccessor) => {
     return new Observable<PresetListType | undefined>((subscriber) => {
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
-        let textSubscription: Subscription | undefined;
         const subscription = univerInstanceService.focused$.subscribe((unitId) => {
-            textSubscription?.unsubscribe();
+            if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                return;
+            }
+
             if (unitId == null) {
                 return;
             }
 
-            const docDataModel = univerInstanceService.getUniverDocInstance(unitId);
+            const docDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
             if (docDataModel == null) {
                 return;
             }
 
-            textSubscription = docSelectionManagerService.textSelection$.subscribe(() => {
-                const docRanges = docSelectionManagerService.getDocRanges();
-                const range = docRanges.find((r) => r.isActive) ?? docRanges[0];
+            const docRanges = docSelectionManagerService.getDocRanges();
+            const range = docRanges.find((r) => r.isActive) ?? docRanges[0];
 
-                if (range) {
-                    const doc = docDataModel.getSelfOrHeaderFooterModel(range?.segmentId);
+            if (range) {
+                const doc = docDataModel.getSelfOrHeaderFooterModel(range?.segmentId);
 
-                    const paragraphs = BuildTextUtils.range.getParagraphsInRange(range, doc.getBody()?.paragraphs ?? [], doc.getBody()?.dataStream ?? '');
-                    let listType: string | undefined;
-                    if (paragraphs.every((p) => {
-                        if (!listType) {
-                            listType = p.bullet?.listType;
-                        }
-                        return p.bullet && p.bullet.listType === listType;
-                    })) {
-                        subscriber.next(listType as PresetListType);
-                        return;
+                const paragraphs = BuildTextUtils.range.getParagraphsInRange(range, doc?.getBody()?.paragraphs ?? [], doc?.getBody()?.dataStream ?? '');
+                let listType: string | undefined;
+                if (paragraphs.every((p) => {
+                    if (!listType) {
+                        listType = p.bullet?.listType;
                     }
+                    return p.bullet && p.bullet.listType === listType;
+                })) {
+                    subscriber.next(listType as PresetListType);
+                    return;
                 }
+            }
 
-                subscriber.next(undefined);
-            });
+            subscriber.next(undefined);
         });
 
         return () => {
             subscription.unsubscribe();
-            textSubscription?.unsubscribe();
         };
     });
 };
 
-export function OrderListMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<PresetListType, PresetListType | undefined> {
+export function OrderListMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, PresetListType | undefined, PresetListType | undefined> {
     return {
         id: OrderListCommand.id,
         type: MenuItemType.BUTTON_SELECTOR,
@@ -934,14 +1477,14 @@ export function OrderListMenuItemFactory(accessor: IAccessor): IMenuSelectorItem
             },
         ],
         icon: 'OrderIcon',
-        tooltip: 'toolbar.order',
+        tooltip: 'docs-ui.toolbar.order',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
         disabled$: disableMenuWhenNoDocRange(accessor),
         activated$: listValueFactory$(accessor).pipe(map((v) => Boolean(v && v.indexOf('ORDER_LIST') === 0))),
     };
 }
 
-export function BulletListMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<PresetListType, PresetListType | undefined> {
+export function BulletListMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, PresetListType | undefined, PresetListType | undefined> {
     return {
         id: BulletListCommand.id,
         type: MenuItemType.BUTTON_SELECTOR,
@@ -957,69 +1500,86 @@ export function BulletListMenuItemFactory(accessor: IAccessor): IMenuSelectorIte
             },
         ],
         icon: 'UnorderIcon',
-        tooltip: 'toolbar.unorder',
+        tooltip: 'docs-ui.toolbar.unorder',
         disabled$: disableMenuWhenNoDocRange(accessor),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
         activated$: listValueFactory$(accessor).pipe(map((v) => Boolean(v && v.indexOf('BULLET_LIST') === 0))),
     };
 }
 
-export function CheckListMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function CheckListMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: CheckListCommand.id,
         type: MenuItemType.BUTTON,
         icon: 'TodoListDoubleIcon',
-        tooltip: 'toolbar.checklist',
+        tooltip: 'docs-ui.toolbar.checklist',
         disabled$: disableMenuWhenNoDocRange(accessor),
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
         activated$: listValueFactory$(accessor).pipe(map((v) => Boolean(v && v.indexOf('CHECK_LIST') === 0))),
     };
 }
 
-export function DocSwitchModeMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
-    const commandService = accessor.get(ICommandService);
-    const univerInstanceService = accessor.get(IUniverInstanceService);
+// export function DocSwitchModeMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+//     const commandService = accessor.get(ICommandService);
+//     const univerInstanceService = accessor.get(IUniverInstanceService);
+
+//     return {
+//         id: SwitchDocModeCommand.id,
+//         type: MenuItemType.BUTTON,
+//         icon: 'KeyboardIcon',
+//         tooltip: 'docs-ui.toolbar.documentFlavor',
+//         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+//         activated$: new Observable<boolean>((subscriber) => {
+//             const subscription = commandService.onCommandExecuted((c) => {
+//                 if (c.id === RichTextEditingMutation.id) {
+//                     const instance = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+
+//                     subscriber.next(instance?.getSnapshot()?.documentStyle.documentFlavor === DocumentFlavor.MODERN);
+//                 }
+//             });
+
+//             const instance = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+
+//             subscriber.next(instance?.getSnapshot()?.documentStyle.documentFlavor === DocumentFlavor.MODERN);
+
+//             return () => subscription.dispose();
+//         }),
+//     };
+// }
+
+export function ResetTextColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    const themeService = accessor.get(ThemeService);
 
     return {
-        id: SwitchDocModeCommand.id,
+        id: ResetInlineFormatTextColorCommand.id,
+        commandId: SetInlineFormatTextColorCommand.id,
         type: MenuItemType.BUTTON,
-        icon: 'KeyboardIcon',
-        tooltip: 'toolbar.documentFlavor',
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC, undefined, DOCS_ZEN_EDITOR_UNIT_ID_KEY),
-        activated$: new Observable<boolean>((subscriber) => {
-            const subscription = commandService.onCommandExecuted((c) => {
-                if (c.id === RichTextEditingMutation.id) {
-                    const instance = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
-
-                    subscriber.next(instance?.getSnapshot()?.documentStyle.documentFlavor === DocumentFlavor.MODERN);
-                }
-            });
-
-            const instance = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
-
-            subscriber.next(instance?.getSnapshot()?.documentStyle.documentFlavor === DocumentFlavor.MODERN);
-
-            return () => subscription.dispose();
-        }),
+        title: 'docs-ui.toolbar.resetColor',
+        icon: 'NoColorDoubleIcon',
+        params: () => ({ value: themeService.getColorFromTheme('gray.900') }),
     };
 }
 
-export function ResetBackgroundColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function ResetBackgroundColorMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
+    const themeService = accessor.get(ThemeService);
+
     return {
         id: ResetInlineFormatTextBackgroundColorCommand.id,
+        commandId: SetInlineFormatTextBackgroundColorCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'toolbar.resetColor',
+        title: 'docs-ui.toolbar.resetColor',
         icon: 'NoColorDoubleIcon',
+        params: () => ({ value: themeService.getColorFromTheme('primary.600') }),
     };
 }
 
-export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string, string | undefined> {
+export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey, string, string | undefined> {
     const commandService = accessor.get(ICommandService);
     const themeService = accessor.get(ThemeService);
 
     return {
         id: SetInlineFormatTextBackgroundColorCommand.id,
-        tooltip: 'toolbar.fillColor.main',
+        tooltip: 'docs-ui.toolbar.fillColor.main',
         type: MenuItemType.BUTTON_SELECTOR,
         icon: 'PaintBucketDoubleIcon',
         selections: [
@@ -1030,8 +1590,13 @@ export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMe
                     selectable: false,
                 },
                 value$: new Observable<string>((subscriber) => {
-                    const defaultValue = DEFAULT_STYLES.bg.rgb;
+                    const defaultValue = themeService.getColorFromTheme('primary.600');
+
                     const calc = () => {
+                        if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                            return;
+                        }
+
                         const textRun = getFontStyleAtCursor(accessor);
 
                         if (!textRun) {
@@ -1060,6 +1625,10 @@ export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMe
 
             const disposable = commandService.onCommandExecuted((c) => {
                 if (c.id === SetInlineFormatTextBackgroundColorCommand.id) {
+                    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+                        return;
+                    }
+
                     const color = (c.params as { value: string }).value;
                     subscriber.next(color ?? defaultColor);
                 }
@@ -1074,11 +1643,26 @@ export function BackgroundColorSelectorMenuItemFactory(accessor: IAccessor): IMe
 }
 
 function getFontStyleAtCursor(accessor: IAccessor) {
-    const univerInstanceService = accessor.get(IUniverInstanceService);
-    const textSelectionService = accessor.get(DocSelectionManagerService);
-    const docMenuStyleService = accessor.get(DocMenuStyleService);
+    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+        return;
+    }
 
-    const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+    let univerInstanceService: IUniverInstanceService;
+    let textSelectionService: DocSelectionManagerService;
+    let docMenuStyleService: DocMenuStyleService;
+    try {
+        univerInstanceService = accessor.get(IUniverInstanceService);
+        textSelectionService = accessor.get(DocSelectionManagerService);
+        docMenuStyleService = accessor.get(DocMenuStyleService);
+    } catch (error) {
+        if (isInjectorDisposedError(error)) {
+            return;
+        }
+
+        throw error;
+    }
+
+    const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
     const docRanges = textSelectionService.getDocRanges();
     const activeRange = docRanges.find((r) => r.isActive) ?? docRanges[0];
 
@@ -1097,7 +1681,7 @@ function getFontStyleAtCursor(accessor: IAccessor) {
     }
 
     const { segmentId } = activeRange;
-    const body = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody();
+    const body = docDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody();
 
     if (body == null) {
         return {
@@ -1122,10 +1706,24 @@ function getFontStyleAtCursor(accessor: IAccessor) {
 }
 
 export function getParagraphStyleAtCursor(accessor: IAccessor) {
-    const univerInstanceService = accessor.get(IUniverInstanceService);
-    const textSelectionService = accessor.get(DocSelectionManagerService);
+    if (shouldSuppressDocMenuStateRefresh(accessor)) {
+        return;
+    }
 
-    const docDataModel = univerInstanceService.getCurrentUniverDocInstance();
+    let univerInstanceService: IUniverInstanceService;
+    let textSelectionService: DocSelectionManagerService;
+    try {
+        univerInstanceService = accessor.get(IUniverInstanceService);
+        textSelectionService = accessor.get(DocSelectionManagerService);
+    } catch (error) {
+        if (isInjectorDisposedError(error)) {
+            return;
+        }
+
+        throw error;
+    }
+
+    const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
 
     const docRanges = textSelectionService.getDocRanges();
     const activeRange = docRanges.find((r) => r.isActive) ?? docRanges[0];
@@ -1136,7 +1734,7 @@ export function getParagraphStyleAtCursor(accessor: IAccessor) {
 
     const { startOffset, segmentId } = activeRange;
 
-    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId).getBody()?.paragraphs;
+    const paragraphs = docDataModel.getSelfOrHeaderFooterModel(segmentId)?.getBody()?.paragraphs;
 
     if (paragraphs == null) {
         return;
@@ -1156,12 +1754,22 @@ export function getParagraphStyleAtCursor(accessor: IAccessor) {
     return null;
 }
 
-export function PageSettingMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+function isInjectorDisposedError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false;
+    }
+
+    return error.name === 'InjectorAlreadyDisposedError' ||
+        error.message.includes('Injector cannot be accessed after it was disposed');
+}
+
+export function PageSettingMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: DocOpenPageSettingCommand.id,
         type: MenuItemType.BUTTON,
-        icon: 'DocumentSettingIcon',
-        tooltip: 'toolbar.pageSetup',
+        icon: 'DocSettingIcon',
+        tooltip: 'docs-ui.toolbar.pageSetup',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_DOC),
+        disabled$: disableMenuWithoutDocumentEditPermission(accessor),
     };
 }

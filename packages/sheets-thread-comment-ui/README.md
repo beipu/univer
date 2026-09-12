@@ -1,96 +1,51 @@
 # @univerjs/sheets-thread-comment-ui
 
+[![npm version](https://img.shields.io/npm/v/@univerjs/sheets-thread-comment-ui?style=flat-square)](https://npmjs.com/package/@univerjs/sheets-thread-comment-ui)
+[![license](https://img.shields.io/npm/l/@univerjs/sheets-thread-comment-ui?style=flat-square)](https://npmjs.com/package/@univerjs/sheets-thread-comment-ui)
+[![downloads](https://img.shields.io/npm/dm/@univerjs/sheets-thread-comment-ui?style=flat-square)](https://npmjs.com/package/@univerjs/sheets-thread-comment-ui)
+
+`@univerjs/sheets-thread-comment-ui` adds thread comment UI integration for Univer Sheets.
+
 ## Package Overview
 
-| Package Name | UMD Namespace | Version | License | Downloads | Contains CSS | Contains i18n locales |
-| --- | --- | --- | --- | --- | :---: | :---: |
-| `@univerjs/sheets-thread-comment-ui` | `UniverSheetsThreadComment` | [![][npm-version-shield]][npm-version-link] | ![][npm-license-shield] | ![][npm-downloads-shield] | ⭕️ | ⭕️ |
+| Package | UMD global | CSS | Locales | Facade entry |
+| --- | --- | :---: | :---: | :---: |
+| `@univerjs/sheets-thread-comment-ui` | `UniverSheetsThreadCommentUi` | Yes | Yes | No |
 
-## Introduction
+## Installation
 
-`@univerjs/sheets-thread-comment-ui` provides the comment/annotation function of Univer Sheets.
+```sh
+pnpm add @univerjs/sheets-thread-comment-ui @univerjs/thread-comment-ui
+# or
+npm install @univerjs/sheets-thread-comment-ui @univerjs/thread-comment-ui
+```
+
+Keep all `@univerjs/*` packages on the same version.
 
 ## Usage
 
-### Installation
+```ts
+import { LocaleType, mergeLocales, Univer } from '@univerjs/core';
+import { UniverSheetsThreadCommentUIPlugin } from '@univerjs/sheets-thread-comment-ui';
+import SheetsThreadCommentUIEnUS from '@univerjs/sheets-thread-comment-ui/locale/en-US';
+import { UniverThreadCommentUIPlugin } from '@univerjs/thread-comment-ui';
+import ThreadCommentUIEnUS from '@univerjs/thread-comment-ui/locale/en-US';
+import '@univerjs/sheets-thread-comment-ui/lib/index.css';
+import '@univerjs/thread-comment-ui/lib/index.css';
 
-```shell
-# Use npm
-npm install @univerjs/sheets-thread-comment-ui
-
-# Use pnpm
-pnpm add @univerjs/sheets-thread-comment-ui
-```
-
-### Register the plugin
-
-```typescript
-import { UniverSheetsThreadCommentPlugin, IThreadCommentMentionDataService} from '@univerjs/sheets-thread-comment-ui';
-
-const mockUser = {
-    userID: 'mockId',
-    name: 'MockUser',
-    avatar: 'icon-url',
-    anonymous: false,
-    canBindAnonymous: false,
-};
-
-class CustomMentionDataService implements IThreadCommentMentionDataService {
-    trigger: string = '@';
-
-     // Get the common interface implementation of the mentioned user
-    async getMentions(search: string) {
-        return [
-            {
-                id: mockUser.userID,
-                label: mockUser.name,
-                type: 'user',
-                icon: mockUser.avatar,
-            },
-            {
-                id: '2',
-                label: 'User2',
-                type: 'user',
-                icon: mockUser.avatar,
-            },
-        ];
-    }
-}
-
-univer.registerPlugin(UniverSheetsThreadCommentPlugin);
-```
-
-### API
-```typescript
-import {
-    AddCommentCommand,
-    DeleteCommentCommand,
-    UpdateCommentCommand,
-    ResolveCommentCommand,
-    DeleteCommentTreeCommand,
-} from '@univerjs/sheets-thread-comment-ui';
-import type {
-    IAddCommentCommandParams,
-    IDeleteCommentCommandParams,
-    IResolveCommentCommandParams,
-    IUpdateCommentCommandParams,
-    IDeleteCommentTreeCommandParams,
-} from '@univerjs/sheets-thread-comment-ui';
-
-// Add comment by command
-const commandService = univer.__getInjector().get(ICommandService);
-
-commandService.executeCommand(AddCommentCommand.id, {
-    unitId: 'unitId',
-    subUnitId: 'subUnitId',
-    comment: {
-        // comment content
+const univer = new Univer({
+    locale: LocaleType.EN_US,
+    locales: {
+        [LocaleType.EN_US]: mergeLocales(SheetsThreadCommentUIEnUS, ThreadCommentUIEnUS),
     },
-} as IAddCommentCommandParams);
+});
+
+univer.registerPlugin(UniverThreadCommentUIPlugin);
+univer.registerPlugin(UniverSheetsThreadCommentUIPlugin);
 ```
 
-<!-- Links -->
-[npm-version-shield]: https://img.shields.io/npm/v/@univerjs/sheets-thread-comment-ui?style=flat-square
-[npm-version-link]: https://npmjs.com/package/@univerjs/sheets-thread-comment-ui
-[npm-license-shield]: https://img.shields.io/npm/l/@univerjs/sheets-thread-comment-ui?style=flat-square
-[npm-downloads-shield]: https://img.shields.io/npm/dm/@univerjs/sheets-thread-comment-ui?style=flat-square
+## Resources
+
+- [Documentation](https://docs.univer.ai)
+- [NPM package](https://npmjs.com/package/@univerjs/sheets-thread-comment-ui)
+- [GitHub repository](https://github.com/dream-num/univer)

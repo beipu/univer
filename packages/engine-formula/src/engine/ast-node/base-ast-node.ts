@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
-import type { Nullable } from '@univerjs/core';
+import type { DateSystem, Nullable } from '@univerjs/core';
 import type { ErrorType } from '../../basics/error-type';
-
 import type { FunctionVariantType } from '../reference-object/base-reference-object';
-
 import { AstNodePromiseType } from '../../basics/common';
 import { ErrorValueObject } from '../value-object/base-value-object';
 import { NodeType } from './node-type';
@@ -132,6 +130,10 @@ export class BaseAstNode {
         return this._valueObject;
     }
 
+    preservesLazyIfReferenceArray(_child: BaseAstNode): boolean {
+        return false;
+    }
+
     isCalculated() {
         return this._calculateState;
     }
@@ -140,7 +142,7 @@ export class BaseAstNode {
         this._calculateState = true;
     }
 
-    execute() {
+    execute(_dateSystem?: DateSystem) {
         /* abstract */
     }
 
@@ -148,7 +150,7 @@ export class BaseAstNode {
         /* abstract */
     }
 
-    async executeAsync(): Promise<AstNodePromiseType> {
+    async executeAsync(_dateSystem?: DateSystem): Promise<AstNodePromiseType> {
         /* abstract */
         return Promise.resolve(AstNodePromiseType.SUCCESS);
     }

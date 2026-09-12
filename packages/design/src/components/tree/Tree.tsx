@@ -15,7 +15,7 @@
  */
 
 import type { CSSProperties, ReactNode } from 'react';
-import { DropdownIcon } from '@univerjs/icons';
+import { DownIcon } from '@univerjs/icons';
 import { useEffect, useMemo, useState } from 'react';
 import { clsx } from '../../helper/clsx';
 import { Checkbox } from '../checkbox/Checkbox';
@@ -161,7 +161,7 @@ export function Tree(props: ITreeProps) {
                                 handleExpendItem(treeItem);
                             }}
                         >
-                            <DropdownIcon />
+                            <DownIcon />
                         </span>
                     )}
                     <Checkbox
@@ -198,7 +198,7 @@ export function Tree(props: ITreeProps) {
         <section
             className="
               univer-relative univer-select-none univer-text-gray-900
-              dark:!univer-text-white
+              dark:!univer-text-gray-0
             "
         >
             <div className="univer-m-0 univer-h-full univer-list-none univer-p-0" style={style}>

@@ -15,6 +15,7 @@
  */
 
 import type { ITableFilterItem } from '@univerjs/sheets-table';
+import type { LocaleKey } from '../../locale/types';
 import type { IConditionCompareTypeEnum, IConditionExpect, IConditionInfo, ITableConditionTypeEnumWithoutLogic } from './type';
 import { Injector, LocaleService } from '@univerjs/core';
 import { borderClassName, CascaderList, clsx, DatePicker, DateRangePicker, Dropdown, Input, InputNumber, Select } from '@univerjs/design';
@@ -82,9 +83,9 @@ export const SheetTableConditionPanel = (props: IConditionFilterProps) => {
 
     let selectType = '';
     if (conditionInfo.compare) {
-        selectType = `${localeService.t(`sheets-table.condition.${conditionInfo.type}`)} - ${localeService.t(`sheets-table.${conditionInfo.type}.compare.${conditionInfo.compare}`)}`;
+        selectType = `${localeService.t(`sheets-table-ui.condition.${conditionInfo.type}`)} - ${localeService.t(`sheets-table-ui.${conditionInfo.type}.compare.${conditionInfo.compare}`)}`;
     } else {
-        selectType = localeService.t(`sheets-table.condition.${conditionInfo.type}`);
+        selectType = localeService.t(`sheets-table-ui.condition.${conditionInfo.type}`);
     }
 
     const conditionDateOptions = getConditionDateSelect(injector, conditionInfo.compare as TableDateCompareTypeEnum);
@@ -108,11 +109,11 @@ export const SheetTableConditionPanel = (props: IConditionFilterProps) => {
                 <div
                     className={clsx(`
                       univer-box-border univer-flex univer-h-8 univer-w-full univer-items-center univer-justify-between
-                      univer-rounded-md univer-bg-white univer-px-2 univer-text-sm univer-transition-colors
+                      univer-rounded-md univer-bg-gray-0 univer-px-2 univer-text-sm univer-transition-colors
                       univer-duration-200
                       hover:univer-border-primary-600
                       focus:univer-border-primary-600 focus:univer-outline-none focus:univer-ring-2
-                      dark:!univer-bg-gray-700 dark:!univer-text-white
+                      dark:!univer-bg-gray-700 dark:!univer-text-gray-0
                     `, borderClassName)}
                 >
                     <span>
@@ -130,7 +131,7 @@ export const SheetTableConditionPanel = (props: IConditionFilterProps) => {
                             ? (
                                 <Input
                                     className="univer-w-full"
-                                    placeholder="请输入"
+                                    placeholder={localeService.t<LocaleKey>('sheets-table-ui.filter.input-values-placeholder')}
                                     value={conditionInfo.info.string}
                                     onChange={(v) => handleConditionInfo({ string: v })}
                                 />

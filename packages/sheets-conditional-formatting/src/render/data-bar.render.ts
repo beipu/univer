@@ -16,7 +16,7 @@
 
 import type { IRange, IScale } from '@univerjs/core';
 import type { SpreadsheetSkeleton, UniverRenderingContext } from '@univerjs/engine-render';
-import type { IDataBarCellData } from './type';
+import type { IConditionalFormattingRenderRangeResolver, IDataBarCellData } from './type';
 import { Range } from '@univerjs/core';
 import { FIX_ONE_PIXEL_BLUR_OFFSET, SheetExtension, SpreadsheetExtensionRegistry } from '@univerjs/engine-render';
 
@@ -36,10 +36,15 @@ const stringifyRange = (range: IRange) => {
 export class DataBar extends SheetExtension {
     private _paddingRightAndLeft = 2;
     private _paddingTopAndBottom = 2;
+    private _renderRangeResolver: IConditionalFormattingRenderRangeResolver | null = null;
     override uKey = dataBarUKey;
 
     override Z_INDEX = EXTENSION_Z_INDEX;
     _radius = 1;
+
+    setRenderRangeResolver(resolver: IConditionalFormattingRenderRangeResolver | null) {
+        this._renderRangeResolver = resolver;
+    }
 
     // eslint-disable-next-line max-lines-per-function
     override draw(
@@ -53,88 +58,103 @@ export class DataBar extends SheetExtension {
             return false;
         }
         const mergeCellRendered = new Set<string>();
+        const sourceRanges = diffRanges?.length ? diffRanges : [spreadsheetSkeleton.rowColumnSegment];
+        const renderRanges = this._renderRangeResolver && worksheet.getMergeData().length === 0
+            ? this._renderRangeResolver(worksheet.getUnitId(), worksheet.getSheetId(), sourceRanges) ?? sourceRanges
+            : sourceRanges;
+        if (!renderRanges.length) {
+            return;
+        }
         ctx.save();
         // ctx.globalCompositeOperation = 'destination-over';
-        Range.foreach(spreadsheetSkeleton.rowColumnSegment, (row, col) => {
-            if (!worksheet.getRowVisible(row) || !worksheet.getColVisible(col)) {
-                return;
-            }
-
-            const primaryWithCoord = spreadsheetSkeleton.getCellWithCoordByIndex(row, col, false);
-            const { isMerged, isMergedMainCell, mergeInfo } = primaryWithCoord;
-
-            let cellData = worksheet.getCell(row, col) as IDataBarCellData;
-            if (isMerged) {
-                cellData = worksheet.getCell(mergeInfo.startRow, mergeInfo.startColumn) as IDataBarCellData;
-            }
-
-            if (!cellData?.dataBar) {
-                return;
-            }
-
-            if (!this.isRenderDiffRangesByCell(mergeInfo, diffRanges)) {
-                return;
-            }
-
-            if (isMerged || isMergedMainCell) {
-                const rangeStr = stringifyRange(mergeInfo);
-                if (mergeCellRendered.has(rangeStr)) {
+        // eslint-disable-next-line max-lines-per-function
+        renderRanges.forEach((range) => {
+            Range.foreach(range, (row, col) => {
+                if (!worksheet.getRowVisible(row) || !worksheet.getColVisible(col)) {
                     return;
                 }
 
-                mergeCellRendered.add(rangeStr);
-            }
+                const primaryWithCoord = spreadsheetSkeleton.getCellWithCoordByIndex(row, col, false);
+                const { isMerged, isMergedMainCell, mergeInfo } = primaryWithCoord;
 
-            const { color, value, startPoint, isGradient } = cellData.dataBar;
-            const { startX, endX, startY, endY } = (isMerged || isMergedMainCell) ? mergeInfo : primaryWithCoord;
-            const borderWidth = endX - startX;
-            const borderHeight = (endY + FIX_ONE_PIXEL_BLUR_OFFSET) - startY;
-            const width = borderWidth - this._paddingRightAndLeft * 2;
-            const height = borderHeight - this._paddingTopAndBottom * 2;
+                let cellData = worksheet.getCell(row, col) as IDataBarCellData;
+                if (isMerged) {
+                    cellData = worksheet.getCell(mergeInfo.startRow, mergeInfo.startColumn) as IDataBarCellData;
+                }
 
-            if (value > 0) {
-                // Width less than 1, almost invisible
-                const dataBarWidth = Math.max(width * (1 - startPoint / 100) * value / 100, 1);
-                const x0 = startX + this._paddingRightAndLeft + (startPoint / 100) * width;
-                const y0 = startY + this._paddingTopAndBottom;
-                if (isGradient) {
-                    const gradient = ctx.createLinearGradient(x0, y0, x0 + dataBarWidth, y0);
-                    gradient.addColorStop(0, color);
-                    gradient.addColorStop(1, 'rgb(255 255 255)');
-                    ctx.fillStyle = gradient;
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 1;
+                if (!cellData?.dataBar) {
+                    return;
+                }
+
+                if (!this.isRenderDiffRangesByCell(mergeInfo, diffRanges)) {
+                    return;
+                }
+
+                if (isMerged || isMergedMainCell) {
+                    const rangeStr = stringifyRange(mergeInfo);
+                    if (mergeCellRendered.has(rangeStr)) {
+                        return;
+                    }
+
+                    mergeCellRendered.add(rangeStr);
+                }
+
+                const { color, value, startPoint, isGradient } = cellData.dataBar;
+                const { startX, endX, startY, endY } = (isMerged || isMergedMainCell) ? mergeInfo : primaryWithCoord;
+                const borderWidth = endX - startX;
+                const borderHeight = (endY + FIX_ONE_PIXEL_BLUR_OFFSET) - startY;
+                const width = borderWidth - this._paddingRightAndLeft * 2;
+                const height = borderHeight - this._paddingTopAndBottom * 2;
+
+                if (value > 0) {
+                    // Width less than 1, almost invisible
+                    const dataBarWidth = Math.max(width * (1 - startPoint / 100) * value / 100, 1);
+                    const x0 = startX + this._paddingRightAndLeft + (startPoint / 100) * width;
+                    const y0 = startY + this._paddingTopAndBottom;
+                    if (isGradient) {
+                        const gradient = ctx.createLinearGradient(x0, y0, x0 + dataBarWidth, y0);
+                        gradient.addColorStop(0, color);
+                        gradient.addColorStop(1, 'rgb(255 255 255)');
+                        ctx.fillStyle = gradient;
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1;
+                    } else {
+                        ctx.fillStyle = color;
+                    }
+
+                    this._drawRectWithRoundedCorner(ctx, x0, y0, dataBarWidth, height, false, true, true, false);
+                    if (isGradient) {
+                        ctx.stroke();
+                    }
                 } else {
-                    ctx.fillStyle = color;
-                }
+                    // Width less than 1, almost invisible
+                    const dataBarWidth = Math.max(width * startPoint / 100 * Math.abs(value) / 100, 1);
+                    const x0 = startX + this._paddingRightAndLeft + (startPoint / 100) * width - dataBarWidth;
+                    const y0 = startY + this._paddingTopAndBottom;
+                    if (isGradient) {
+                        const gradient = ctx.createLinearGradient(x0, y0, x0 + dataBarWidth, y0);
+                        gradient.addColorStop(0, 'rgb(255 255 255)');
+                        gradient.addColorStop(1, color);
+                        ctx.fillStyle = gradient;
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1;
+                    } else {
+                        ctx.fillStyle = color;
+                    }
 
-                this._drawRectWithRoundedCorner(ctx, x0, y0, dataBarWidth, height, false, true, true, false);
-                if (isGradient) {
-                    ctx.stroke();
+                    this._drawRectWithRoundedCorner(ctx, x0, y0, dataBarWidth, height, true, false, false, true);
+                    if (isGradient) {
+                        ctx.stroke();
+                    }
                 }
-            } else {
-                // Width less than 1, almost invisible
-                const dataBarWidth = Math.max(width * startPoint / 100 * Math.abs(value) / 100, 1);
-                const x0 = startX + this._paddingRightAndLeft + (startPoint / 100) * width - dataBarWidth;
-                const y0 = startY + this._paddingTopAndBottom;
-                if (isGradient) {
-                    const gradient = ctx.createLinearGradient(x0, y0, x0 + dataBarWidth, y0);
-                    gradient.addColorStop(0, 'rgb(255 255 255)');
-                    gradient.addColorStop(1, color);
-                    ctx.fillStyle = gradient;
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 1;
-                } else {
-                    ctx.fillStyle = color;
-                }
-
-                this._drawRectWithRoundedCorner(ctx, x0, y0, dataBarWidth, height, true, false, false, true);
-                if (isGradient) {
-                    ctx.stroke();
-                }
-            }
+            });
         });
         ctx.restore();
+    }
+
+    override dispose(): void {
+        this._renderRangeResolver = null;
+        super.dispose();
     }
 
     private _drawRectWithRoundedCorner(ctx: UniverRenderingContext, x: number, y: number, width: number, height: number, topLeftRadius: boolean, topRightRadius: boolean, bottomRightRadius: boolean, bottomLeftRadius: boolean) {

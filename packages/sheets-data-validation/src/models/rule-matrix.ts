@@ -15,7 +15,6 @@
  */
 
 import type { BBox, IRange, ISheetDataValidationRule, IUniverInstanceService, Workbook } from '@univerjs/core';
-
 import { debounce, Range, RBush, Rectangle, Tools, UniverInstanceType } from '@univerjs/core';
 
 interface IRuleItem extends BBox {
@@ -106,12 +105,16 @@ export class RuleMatrix {
         this._addRule(rule.uid, rule.ranges);
     }
 
-    removeRange(_ranges: IRange[]) {
+    removeRange(_ranges: IRange[], ruleIds?: ReadonlySet<string>) {
         if (!this._worksheet) {
             return;
         }
         const ranges = _ranges.map((range) => Range.transformRange(range, this._worksheet!));
         this._map.forEach((value, key) => {
+            if (ruleIds && !ruleIds.has(key)) {
+                return;
+            }
+
             const newRanges = Rectangle.subtractMulti(value, ranges);
             if (newRanges.length === 0) {
                 this._map.delete(key);

@@ -19,13 +19,20 @@ import type enUS from './en-US';
 const locale: typeof enUS = {
     'find-replace': {
         toolbar: 'Rechercher & Remplacer',
+        mobile: {
+            settings: 'Paramètres de recherche et de remplacement',
+            'settings-title': 'Paramètres de recherche et de remplacement',
+            'previous-match': 'Occurrence précédente',
+            'next-match': 'Occurrence suivante',
+            close: 'Fermer la recherche et le remplacement',
+        },
         shortcut: {
-            'open-find-dialog': 'Ouvrir la boîte de dialogue Rechercher',
-            'open-replace-dialog': 'Ouvrir la boîte de dialogue Remplacer',
-            'close-dialog': 'Fermer la boîte de dialogue Rechercher & Remplacer',
+            'open-find-dialog': 'Ouvrir la boîte de dialogue de recherche',
+            'open-replace-dialog': 'Ouvrir la boîte de dialogue de remplacement',
             'go-to-next-match': 'Aller à la correspondance suivante',
             'go-to-previous-match': 'Aller à la correspondance précédente',
-            'focus-selection': 'Focus sur la sélection',
+            'focus-selection': 'Concentrer la sélection',
+            panel: 'Rechercher & Remplacer',
         },
         dialog: {
             title: 'Rechercher',
@@ -33,12 +40,13 @@ const locale: typeof enUS = {
             replace: 'Remplacer',
             'replace-all': 'Remplacer tout',
             'case-sensitive': 'Sensible à la casse',
-            'find-placeholder': 'Rechercher dans cette feuille',
-            'advanced-finding': 'Recherche avancée & Remplacer',
-            'replace-placeholder': 'Entrer la chaîne de remplacement',
-            'match-the-whole-cell': 'Correspondre à toute la cellule',
+            'find-placeholder': 'Rechercher',
+            'advanced-finding': 'Recherche et remplacement avancés',
+            'replace-placeholder': 'Saisir la chaîne de remplacement',
+            'match-the-whole-cell': 'Correspondance de la cellule entière',
+            'match-the-whole-word': 'Mot entier',
             'find-direction': {
-                title: 'Direction de recherche',
+                title: 'Direction de la recherche',
                 row: 'Rechercher par ligne',
                 column: 'Rechercher par colonne',
             },
@@ -50,20 +58,24 @@ const locale: typeof enUS = {
             'find-by': {
                 title: 'Rechercher par',
                 value: 'Rechercher par valeur',
-                formula: 'Rechercher par formule',
+                formula: 'Rechercher une formule',
             },
             'no-match': 'Recherche terminée mais aucune correspondance trouvée.',
             'no-result': 'Aucun résultat',
         },
         replace: {
-            'all-success': 'Remplacé toutes les {0} correspondances',
+            'all-success': 'Toutes les {0} correspondances ont été remplacées',
+            'partial-success': '{0} correspondances ont été remplacées, {1} ont échoué',
             'all-failure': 'Échec du remplacement',
             confirm: {
-                title: 'Êtes-vous sûr de vouloir remplacer toutes les correspondances?',
+                title: 'Êtes-vous sûr de vouloir remplacer toutes les correspondances ?',
             },
         },
+        button: {
+            confirm: 'OK',
+            cancel: 'Annuler',
+        },
     },
-    'find-replace-shortcuts': 'Rechercher & Remplacer',
 };
 
 export default locale;

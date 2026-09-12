@@ -15,7 +15,8 @@
  */
 
 import type { Nullable } from '@univerjs/core';
-
+import type { BaseReferenceObject } from '../reference-object/base-reference-object';
+import { AstNodePromiseType } from '../../basics/common';
 import { ErrorType } from '../../basics/error-type';
 import {
     regexTestReferenceTableAllColumn,
@@ -28,9 +29,11 @@ import {
 } from '../../basics/regex';
 import { matchToken } from '../../basics/token';
 import { IFormulaCurrentConfigService } from '../../services/current-data.service';
+import { IFormulaExternalReferenceDataLoader } from '../../services/external-reference-data-loader.service';
 import { IFunctionService } from '../../services/function.service';
 import { IFormulaRuntimeService } from '../../services/runtime.service';
 import { ISuperTableService } from '../../services/super-table.service';
+import { IFormulaUnitReferenceResolver } from '../../services/unit-reference-resolver.service';
 import { LexerNode } from '../analysis/lexer-node';
 import { TableReferenceObject } from '../reference-object/table-reference-object';
 import { prefixHandler } from '../utils/prefix-handler';
@@ -41,19 +44,56 @@ import { BaseAstNode } from './base-ast-node';
 import { BaseAstNodeFactory, DEFAULT_AST_NODE_FACTORY_Z_INDEX } from './base-ast-node-factory';
 import { NODE_ORDER_MAP, NodeType } from './node-type';
 
+interface ITableReferenceDescriptor {
+    unitQualifier: string;
+    tableName: string;
+    columnStruct: string | undefined;
+}
+
+type ReferenceNodeCurrentConfigService = Pick<
+    IFormulaCurrentConfigService,
+    'getArrayFormulaCellData' | 'getArrayFormulaRange' | 'getSheetNameMap' | 'getUnitData' | 'getUnitStylesData'
+>;
+
+type ReferenceNodeRuntimeService = Pick<
+    IFormulaRuntimeService,
+    | 'currentColumn'
+    | 'currentRow'
+    | 'currentSubUnitId'
+    | 'currentUnitId'
+    | 'getRuntimeArrayFormulaCellData'
+    | 'getRuntimeFeatureCellData'
+    | 'getUnitArrayFormula'
+    | 'getUnitData'
+>;
+
+type ReferenceNodeSuperTableService = Pick<
+    ISuperTableService,
+    'getTableMap' | 'getTableOptionMap'
+>;
+
 export class ReferenceNode extends BaseAstNode {
     private _refOffsetX = 0;
     private _refOffsetY = 0;
 
     constructor(
-        private _currentConfigService: IFormulaCurrentConfigService,
-        private _runtimeService: IFormulaRuntimeService,
+        private _currentConfigService: ReferenceNodeCurrentConfigService,
+        private _runtimeService: ReferenceNodeRuntimeService,
         operatorString: string,
         private _referenceObjectType: ReferenceObjectType,
+        private _unitReferenceResolver: IFormulaUnitReferenceResolver,
+        private _superTableService: ReferenceNodeSuperTableService,
+        private _externalReferenceDataLoader: IFormulaExternalReferenceDataLoader,
         private _isPrepareMerge: boolean = false,
-        private _tableReferenceObject?: TableReferenceObject
+        private _tableReference?: ITableReferenceDescriptor
     ) {
         super(operatorString);
+        const unitQualifier = _tableReference
+            ? _tableReference.unitQualifier
+            : getReferenceObjectFromCache(operatorString, _referenceObjectType).getUnitQualifier();
+        if (unitQualifier) {
+            this.setAsync();
+        }
     }
 
     override get nodeType() {
@@ -64,43 +104,136 @@ export class ReferenceNode extends BaseAstNode {
         const currentConfigService = this._currentConfigService;
         const runtimeService = this._runtimeService;
 
-        const referenceObject = this._tableReferenceObject || getReferenceObjectFromCache(this.getToken(), this._referenceObjectType);
+        let referenceObject: BaseReferenceObject;
+        if (this._tableReference) {
+            const { unitQualifier, tableName, columnStruct } = this._tableReference;
+            const resolution = this._unitReferenceResolver.resolve({
+                hostUnitId: runtimeService.currentUnitId,
+                qualifier: unitQualifier,
+                referenceKind: 'table',
+            });
+            if (typeof resolution === 'string') {
+                this.setValue(ErrorValueObject.create(resolution));
+                return;
+            }
+            const tableMap = this._superTableService.getTableMap(resolution.unitId);
+            const tableData = Array.from(tableMap?.entries() || []).find(([name]) => name.toLocaleLowerCase() === tableName.toLocaleLowerCase())?.[1];
+            if (!tableData) {
+                this.setValue(ErrorValueObject.create(ErrorType.REF));
+                return;
+            }
+            referenceObject = new TableReferenceObject(
+                this.getToken(),
+                tableData,
+                columnStruct,
+                this._superTableService.getTableOptionMap()
+            );
+            referenceObject.setUnitQualifier(unitQualifier);
+            referenceObject.setForcedUnitIdDirect(resolution.unitId);
+        } else {
+            referenceObject = getReferenceObjectFromCache(this.getToken(), this._referenceObjectType);
+            const unitQualifier = referenceObject.getUnitQualifier();
+            if (unitQualifier) {
+                const resolution = this._unitReferenceResolver.resolve({
+                    hostUnitId: runtimeService.currentUnitId,
+                    qualifier: unitQualifier,
+                    referenceKind: 'a1',
+                });
+                if (typeof resolution === 'string') {
+                    this.setValue(ErrorValueObject.create(resolution));
+                    return;
+                }
+                referenceObject.setForcedUnitIdDirect(resolution.unitId);
+            }
+        }
 
-        referenceObject.setDefaultUnitId(runtimeService.currentUnitId);
-
-        referenceObject.setDefaultSheetId(runtimeService.currentSubUnitId);
-
-        referenceObject.setForcedSheetId(currentConfigService.getSheetNameMap());
-
-        referenceObject.setUnitData(currentConfigService.getUnitData());
-
-        referenceObject.setArrayFormulaCellData(currentConfigService.getArrayFormulaCellData());
-
-        referenceObject.setArrayFormulaRange(currentConfigService.getArrayFormulaRange());
-
-        referenceObject.setRuntimeData(runtimeService.getUnitData());
-
-        referenceObject.setUnitStylesData(currentConfigService.getUnitStylesData());
-
-        referenceObject.setRuntimeArrayFormulaCellData(runtimeService.getRuntimeArrayFormulaCellData());
-
-        referenceObject.setRuntimeArrayFormulaRange(runtimeService.getUnitArrayFormula());
-
-        referenceObject.setRuntimeFeatureCellData(runtimeService.getRuntimeFeatureCellData());
-
-        const currentRow = runtimeService.currentRow;
-        const currentCol = runtimeService.currentColumn;
-        referenceObject.setCurrentRowAndColumn(currentRow, currentCol);
-
-        const { x, y } = this.getRefOffset();
-
-        referenceObject.setRefOffset(x, y);
+        this._configureReferenceObject(referenceObject, currentConfigService, runtimeService);
 
         if (!this._isPrepareMerge && referenceObject.isExceedRange()) {
             this.setValue(ErrorValueObject.create(ErrorType.NAME));
         } else {
             this.setValue(referenceObject);
         }
+    }
+
+    override async executeAsync(): Promise<AstNodePromiseType> {
+        const hostUnitId = this._runtimeService.currentUnitId;
+        const unitQualifier = this._tableReference
+            ? this._tableReference.unitQualifier
+            : getReferenceObjectFromCache(this.getToken(), this._referenceObjectType).getUnitQualifier();
+        if (!unitQualifier) {
+            this.execute();
+            return AstNodePromiseType.SUCCESS;
+        }
+
+        const referenceKind = this._tableReference ? 'table' : 'a1';
+        const resolution = this._unitReferenceResolver.resolve({
+            hostUnitId,
+            qualifier: unitQualifier,
+            referenceKind,
+        });
+        if (typeof resolution === 'string') {
+            this.setValue(ErrorValueObject.create(resolution));
+            return AstNodePromiseType.ERROR;
+        }
+
+        if (resolution.externalReference) {
+            const token = this._getExternalLoadToken();
+            const error = await this._externalReferenceDataLoader.load({
+                hostUnitId,
+                qualifier: unitQualifier,
+                referenceKind,
+                token,
+                tableName: this._tableReference?.tableName,
+                columnStruct: this._tableReference?.columnStruct,
+                resolution,
+            });
+            if (error) {
+                this.setValue(ErrorValueObject.create(error));
+                return AstNodePromiseType.ERROR;
+            }
+        }
+
+        this.execute();
+        return AstNodePromiseType.SUCCESS;
+    }
+
+    /**
+     * A1 ranges are represented as two ReferenceNodes under a `:` UnionNode.
+     * The qualified left node owns the external read, so include the right
+     * boundary and materialize the whole rectangular range in one request.
+     */
+    private _getExternalLoadToken(): string {
+        const parent = this.getParent();
+        if (parent?.nodeType !== NodeType.UNION || parent.getToken() !== matchToken.COLON) {
+            return this.getToken();
+        }
+        const [left, right] = parent.getChildren();
+        if (left !== this || right == null) {
+            return this.getToken();
+        }
+        return `${this.getToken()}${matchToken.COLON}${right.getToken()}`;
+    }
+
+    private _configureReferenceObject(
+        referenceObject: BaseReferenceObject,
+        currentConfigService: ReferenceNodeCurrentConfigService,
+        runtimeService: ReferenceNodeRuntimeService
+    ): void {
+        referenceObject.setDefaultUnitId(runtimeService.currentUnitId);
+        referenceObject.setDefaultSheetId(runtimeService.currentSubUnitId);
+        referenceObject.setForcedSheetId(currentConfigService.getSheetNameMap());
+        referenceObject.setUnitData(currentConfigService.getUnitData());
+        referenceObject.setArrayFormulaCellData(currentConfigService.getArrayFormulaCellData());
+        referenceObject.setArrayFormulaRange(currentConfigService.getArrayFormulaRange());
+        referenceObject.setRuntimeData(runtimeService.getUnitData());
+        referenceObject.setUnitStylesData(currentConfigService.getUnitStylesData());
+        referenceObject.setRuntimeArrayFormulaCellData(runtimeService.getRuntimeArrayFormulaCellData());
+        referenceObject.setRuntimeArrayFormulaRange(runtimeService.getUnitArrayFormula());
+        referenceObject.setRuntimeFeatureCellData(runtimeService.getRuntimeFeatureCellData());
+        referenceObject.setCurrentRowAndColumn(runtimeService.currentRow, runtimeService.currentColumn);
+        const { x, y } = this.getRefOffset();
+        referenceObject.setRefOffset(x, y);
     }
 
     setRefOffset(x: number = 0, y: number = 0) {
@@ -121,7 +254,10 @@ export class ReferenceNodeFactory extends BaseAstNodeFactory {
         @IFormulaCurrentConfigService private readonly _currentConfigService: IFormulaCurrentConfigService,
         @IFormulaRuntimeService private readonly _formulaRuntimeService: IFormulaRuntimeService,
         @IFunctionService private readonly _functionService: IFunctionService,
-        @ISuperTableService private readonly _superTableService: ISuperTableService
+        @ISuperTableService private readonly _superTableService: ISuperTableService,
+        @IFormulaUnitReferenceResolver private readonly _unitReferenceResolver: IFormulaUnitReferenceResolver,
+        @IFormulaExternalReferenceDataLoader
+        private readonly _externalReferenceDataLoader: IFormulaExternalReferenceDataLoader
     ) {
         super();
     }
@@ -173,7 +309,7 @@ export class ReferenceNodeFactory extends BaseAstNodeFactory {
     }
 
     private _getTableMap() {
-        const unitId = this._currentConfigService.getExecuteUnitId();
+        const unitId = this._formulaRuntimeService.currentUnitId;
         if (!unitId) {
             return;
         }
@@ -190,12 +326,12 @@ export class ReferenceNodeFactory extends BaseAstNodeFactory {
         const runtimeService = this._formulaRuntimeService;
 
         const makeRef = (type: ReferenceObjectType) =>
-            new ReferenceNode(currentConfigService, runtimeService, tokenTrim, type, isPrepareMerge);
+            new ReferenceNode(currentConfigService, runtimeService, tokenTrim, type, this._unitReferenceResolver, this._superTableService, this._externalReferenceDataLoader, isPrepareMerge);
 
         const tableMap = this._getTableMap();
         const isSuperTableDirect = tableMap?.has(tokenTrim) ?? false;
         if (isSuperTableDirect) {
-            return this._getTableReferenceNode(tokenTrim, isLexerNode, isPrepareMerge, true);
+            return this._getTableReferenceNode(tokenTrim, isPrepareMerge, true);
         }
 
         const isCellRange = regexTestSingeRange(tokenTrim);
@@ -214,26 +350,27 @@ export class ReferenceNodeFactory extends BaseAstNodeFactory {
             return makeRef(ReferenceObjectType.COLUMN);
         }
 
-        return this._getTableReferenceNode(tokenTrim, isLexerNode, isPrepareMerge, false);
+        return this._getTableReferenceNode(tokenTrim, isPrepareMerge, false);
     }
 
-    private _getTableReferenceNode(tokenTrim: string, isLexerNode: boolean, isPrepareMerge: boolean, isSuperTableDirectly: boolean = false) {
+    private _getTableReferenceNode(tokenTrim: string, isPrepareMerge: boolean, isSuperTableDirectly: boolean = false) {
         if (!this._checkTokenIsTableReference(tokenTrim) && !isSuperTableDirectly) {
             return;
         }
-        const { tableName, columnStruct } = splitTableStructuredRef(tokenTrim);
+        const { unitQualifier, tableName, columnStruct } = splitTableStructuredRef(tokenTrim);
         const tableMap = this._getTableMap();
-        if (!isLexerNode && tableMap?.has(tableName)) {
-            const columnDataString = columnStruct;
-            const tableData = tableMap.get(tableName)!;
-            const tableOption = this._superTableService.getTableOptionMap();
+        const hasLocalTable = Array.from(tableMap?.keys() || []).some((name) => name.toLocaleLowerCase() === tableName.toLocaleLowerCase());
+        if (unitQualifier || hasLocalTable) {
             return new ReferenceNode(
                 this._currentConfigService,
                 this._formulaRuntimeService,
                 tokenTrim,
                 ReferenceObjectType.COLUMN,
+                this._unitReferenceResolver,
+                this._superTableService,
+                this._externalReferenceDataLoader,
                 isPrepareMerge,
-                new TableReferenceObject(tokenTrim, tableData, columnDataString, tableOption)
+                { unitQualifier, tableName, columnStruct }
             );
         }
     }

@@ -14,20 +14,39 @@
  * limitations under the License.
  */
 
-import type { IDrawingGroupNestedIds, IDrawingGroupNestedParam, IDrawingParam, IDrawingSearch, Nullable } from '@univerjs/core';
-import type { JSONOp, JSONOpList } from 'ot-json1';
+import type {
+    IDrawingGroupNestedIds,
+    IDrawingGroupNestedParam,
+    IDrawingParam,
+    IDrawingSearch,
+    Nullable,
+} from '@univerjs/core';
 import type { Observable } from 'rxjs';
-import type { IDrawingGroupUpdateParam, IDrawingMap, IDrawingMapItemData, IDrawingOrderMapParam, IDrawingOrderUpdateParam, IDrawingSubunitMap, IDrawingVisibleParam, IUnitDrawingService } from './drawing-manager.service';
-import { DrawingTypeEnum, sortRules, sortRulesByDesc } from '@univerjs/core';
+import type {
+    IDrawingGroupUpdateParam,
+    IDrawingMap,
+    IDrawingMapItemData,
+    IDrawingOrderMapParam,
+    IDrawingOrderUpdateParam,
+    IDrawingSubunitMap,
+    IDrawingVisibleParam,
+    IUnitDrawingService,
+} from './drawing-manager.service';
+import { DrawingTypeEnum, normalizeDrawingOrderIndex, sortRules, sortRulesByDesc } from '@univerjs/core';
 import * as json1 from 'ot-json1';
 import { Subject } from 'rxjs';
 
-export interface IDrawingJsonUndo1 {
+type JSONOp = json1.JSONOp;
+type JSONOpList = json1.JSONOpList;
+
+export interface IDrawingJsonUndo1<
+    TObjects = IDrawingSearch[] | IDrawingOrderMapParam | IDrawingGroupUpdateParam | IDrawingGroupUpdateParam[]
+> {
     undo: JSONOp;
     redo: JSONOp;
     unitId: string;
     subUnitId: string;
-    objects: IDrawingSearch[] | IDrawingOrderMapParam | IDrawingGroupUpdateParam | IDrawingGroupUpdateParam[];
+    objects: TObjects;
 }
 
 export interface IDrawingJson1Type {
@@ -40,6 +59,122 @@ export interface IDrawingJson1Type {
 enum DrawingMapItemType {
     data = 'data',
     order = 'order',
+}
+
+function isNonEmptyOp(op: JSONOp): boolean {
+    return Array.isArray(op) && op.length > 0;
+}
+
+function isJsonValueEqual(left: unknown, right: unknown): boolean {
+    if (left === right) {
+        return true;
+    }
+
+    if (Array.isArray(left) || Array.isArray(right)) {
+        if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+            return false;
+        }
+
+        return left.every((item, index) => isJsonValueEqual(item, right[index]));
+    }
+
+    if (!isPlainObject(left) || !isPlainObject(right)) {
+        return false;
+    }
+
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) {
+        return false;
+    }
+
+    return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && isJsonValueEqual(left[key], right[key]));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOnlyEnumerableOwnProperties(value: Record<string, unknown>): boolean {
+    return Object.getOwnPropertyNames(value).every((key) => Object.prototype.propertyIsEnumerable.call(value, key));
+}
+
+function createJsonRemoveOp(path: Array<number | string>, value: json1.Doc): JSONOp {
+    return json1.type.writeCursor().writeAtPath(path, 'r', value).get();
+}
+
+function normalizeJsonDocument(value: unknown): json1.Doc | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((item) => normalizeJsonDocument(item) ?? null);
+    }
+
+    if (!isPlainObject(value)) {
+        return undefined;
+    }
+
+    const normalizedValue: Record<string, json1.Doc> = {};
+    Object.entries(value).forEach(([key, item]) => {
+        const normalizedItem = normalizeJsonDocument(item);
+        if (normalizedItem !== undefined) {
+            normalizedValue[key] = normalizedItem;
+        }
+    });
+    return normalizedValue;
+}
+
+function appendJsonUpdateOps(
+    ops: JSONOp[],
+    path: Array<number | string>,
+    newValue: unknown,
+    oldValue: unknown,
+    hasOldValue: boolean
+): void {
+    const normalizedOldValue = normalizeJsonDocument(oldValue);
+    const normalizedNewValue = normalizeJsonDocument(newValue);
+    const hasNormalizedOldValue = hasOldValue && normalizedOldValue !== undefined;
+
+    if (hasNormalizedOldValue && isJsonValueEqual(normalizedOldValue, normalizedNewValue)) {
+        return;
+    }
+
+    if (
+        hasNormalizedOldValue &&
+        isPlainObject(oldValue) &&
+        isPlainObject(newValue) &&
+        hasOnlyEnumerableOwnProperties(oldValue) &&
+        hasOnlyEnumerableOwnProperties(newValue)
+    ) {
+        const keys = new Set([...Object.keys(oldValue), ...Object.keys(newValue)]);
+        keys.forEach((key) => appendJsonUpdateOps(
+            ops,
+            [...path, key],
+            newValue[key],
+            oldValue[key],
+            Object.prototype.hasOwnProperty.call(oldValue, key) && oldValue[key] !== undefined
+        ));
+        return;
+    }
+
+    const op = !hasNormalizedOldValue
+        ? normalizedNewValue === undefined ? null : json1.insertOp(path, normalizedNewValue)
+        : normalizedNewValue === undefined
+            ? createJsonRemoveOp(path, normalizedOldValue)
+            : json1.replaceOp(path, normalizedOldValue, normalizedNewValue);
+    if (op && isNonEmptyOp(op)) {
+        ops.push(op);
+    }
+}
+
+interface IDrawingRefreshMetadata {
+    behindText?: unknown;
 }
 
 /**
@@ -130,8 +265,19 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
             }
 
             param.transform = updateParam.transform;
-            param.transforms = updateParam.transforms;
-            param.isMultiTransform = updateParam.isMultiTransform;
+            if (Object.prototype.hasOwnProperty.call(updateParam, 'transforms')) {
+                param.transforms = updateParam.transforms;
+            }
+            if (Object.prototype.hasOwnProperty.call(updateParam, 'isMultiTransform')) {
+                param.isMultiTransform = updateParam.isMultiTransform;
+            }
+
+            if ('behindText' in updateParam) {
+                (param as T & IDrawingRefreshMetadata).behindText = (updateParam as T & IDrawingRefreshMetadata).behindText;
+            }
+            if ('hidden' in updateParam) {
+                param.hidden = updateParam.hidden;
+            }
         });
 
         this.refreshTransformNotification(updateParams);
@@ -182,6 +328,9 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
             this._establishDrawingMap(unitId, subUnitId);
 
             const subUnitData = data[subUnitId];
+            if (subUnitData?.data == null) {
+                return;
+            }
 
             Object.keys(subUnitData.data).forEach((drawingId) => {
                 const drawing = subUnitData.data[drawingId];
@@ -202,6 +351,17 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
 
     // Use in doc only.
     setDrawingData(unitId: string, subUnitId: string, data: IDrawingMapItemData<T>) {
+        const unitData = this.drawingManagerData[unitId];
+        const subUnitData = unitData[subUnitId];
+        // Docs replaces a whole subunit snapshot instead of applying JSON1. Isolate that subunit container so
+        // getOldDrawingByParam can still detect removed metadata fields after the current data is replaced.
+        this._oldDrawingManagerData = {
+            ...this.drawingManagerData,
+            [unitId]: {
+                ...unitData,
+                [subUnitId]: { ...subUnitData },
+            },
+        };
         this.drawingManagerData[unitId][subUnitId].data = data;
     }
 
@@ -244,11 +404,25 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
         return this.getBatchRemoveOp(removeParams);
     }
 
-    getBatchRemoveOp(removeParams: IDrawingSearch[]): IDrawingJsonUndo1 {
-        // Expand group drawings to include all nested group nodes and leaf children.
-        // Non-group drawings are kept as-is.
+    private _getExpandedBatchRemoveParams(removeParams: IDrawingSearch[]): IDrawingSearch[] {
         const seenIds = new Set<string>();
         const allToRemove: IDrawingSearch[] = [];
+        const addDrawing = (drawing: IDrawingParam) => {
+            if (seenIds.has(drawing.drawingId)) {
+                return;
+            }
+
+            seenIds.add(drawing.drawingId);
+            allToRemove.push({ unitId: drawing.unitId, subUnitId: drawing.subUnitId, drawingId: drawing.drawingId });
+        };
+        const addSearch = (search: IDrawingSearch) => {
+            if (seenIds.has(search.drawingId)) {
+                return;
+            }
+
+            seenIds.add(search.drawingId);
+            allToRemove.push(search);
+        };
         removeParams.forEach((removeParam) => {
             const drawing = this.getDrawingByParam(removeParam);
             if (drawing?.drawingType === DrawingTypeEnum.DRAWING_GROUP) {
@@ -256,22 +430,29 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
                 if (nested) {
                     const { flatChildren, groups } = nested;
                     [...(flatChildren ?? []), ...groups].forEach((d) => {
-                        if (!seenIds.has(d.drawingId)) {
-                            seenIds.add(d.drawingId);
-                            allToRemove.push({ unitId: d.unitId, subUnitId: d.subUnitId, drawingId: d.drawingId });
-                        }
+                        addDrawing(d);
                     });
-                } else if (!seenIds.has(removeParam.drawingId)) {
-                    seenIds.add(removeParam.drawingId);
-                    allToRemove.push(removeParam);
+                } else {
+                    addDrawing(drawing);
                 }
-            } else if (!seenIds.has(removeParam.drawingId)) {
-                seenIds.add(removeParam.drawingId);
-                allToRemove.push(removeParam);
+            } else if (drawing) {
+                addDrawing(drawing);
+            } else {
+                addSearch(removeParam);
             }
         });
 
-        const { unitId, subUnitId } = allToRemove[0] ?? removeParams[0];
+        return allToRemove;
+    }
+
+    getBatchRemoveOp(removeParams: IDrawingSearch[]): IDrawingJsonUndo1 {
+        // Expand group drawings to include all nested group nodes and leaf children.
+        // Non-group drawings are kept as-is.
+        const allToRemove = this._getExpandedBatchRemoveParams(removeParams);
+        const { unitId, subUnitId } = allToRemove[0] ?? removeParams[0] ?? { unitId: '', subUnitId: '' };
+        if (allToRemove.length === 0) {
+            return { undo: null as unknown as JSONOp, redo: null as unknown as JSONOp, unitId, subUnitId, objects: [] };
+        }
 
         // Sort ascending by order index so that, with the unshift trick below,
         // composition applies removals from highest index to lowest (back-to-front).
@@ -311,16 +492,25 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
         return { undo: invertOp, redo: op, unitId, subUnitId, objects: allToRemove };
     }
 
-    getBatchUpdateOp(updateParams: T[]): IDrawingJsonUndo1 {
+    getBatchUpdateOp(updateParams: T[]): IDrawingJsonUndo1<IDrawingSearch[]> {
         const objects: IDrawingSearch[] = [];
         const ops: JSONOp[] = [];
         const invertOps: JSONOp[] = [];
         updateParams.forEach((updateParam) => {
             const { op, invertOp } = this._updateByParam(updateParam);
+            if (!isNonEmptyOp(op)) {
+                return;
+            }
+
             objects.push({ unitId: updateParam.unitId, subUnitId: updateParam.subUnitId, drawingId: updateParam.drawingId });
             ops.push(op);
             invertOps.push(invertOp);
         });
+
+        if (ops.length === 0) {
+            const { unitId, subUnitId } = updateParams[0];
+            return { undo: null as unknown as JSONOp, redo: null as unknown as JSONOp, unitId, subUnitId, objects };
+        }
 
         const op = ops.reduce(json1.type.compose, null);
         const invertOp = invertOps.reduce(json1.type.compose, null);
@@ -724,6 +914,39 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
         return { undo: invertOp, redo: op, unitId, subUnitId, objects: { ...orderParams, drawingIds: newIds } };
     }
 
+    getDrawingOrderOp(orderParams: IDrawingOrderMapParam, zOrder: number): Nullable<IDrawingJsonUndo1> {
+        const { unitId, subUnitId, drawingIds } = orderParams;
+        if (drawingIds.length !== 1) {
+            return null;
+        }
+
+        const orders = this.getDrawingOrder(unitId, subUnitId);
+        const drawingId = drawingIds[0];
+        const currentIndex = orders.indexOf(drawingId);
+        const targetIndex = normalizeDrawingOrderIndex(zOrder, orders.length);
+        if (currentIndex < 0 || currentIndex === targetIndex) {
+            return null;
+        }
+
+        const op = json1.moveOp(
+            [unitId, subUnitId, DrawingMapItemType.order, currentIndex],
+            [unitId, subUnitId, DrawingMapItemType.order, targetIndex]
+        );
+        const invertOp = json1.type.invertWithDoc(op, this.drawingManagerData as unknown as json1.Doc);
+        const affectedDrawingIds = orders.slice(
+            Math.min(currentIndex, targetIndex),
+            Math.max(currentIndex, targetIndex) + 1
+        );
+
+        return {
+            undo: invertOp,
+            redo: op,
+            unitId,
+            subUnitId,
+            objects: { ...orderParams, drawingIds: affectedDrawingIds },
+        };
+    }
+
     private _getDrawingCount(unitId: string, subUnitId: string) {
         return this.getDrawingOrder(unitId, subUnitId).length || 0;
     }
@@ -842,9 +1065,13 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
 
         // this.drawingManagerInfo[unitId][subUnitId][drawingId] = newObject;
 
+        if (ops.length === 0) {
+            return { op: [] as unknown as JSONOp, invertOp: [] as unknown as JSONOp };
+        }
+
         const op = ops.reduce(json1.type.compose, null);
 
-        const invertOp = json1.type.invertWithDoc(op, this.drawingManagerData as unknown as json1.Doc);
+        const invertOp = json1.type.invert(op);
 
         return { op, invertOp };
     }
@@ -862,16 +1089,10 @@ export class UnitDrawingService<T extends IDrawingParam> implements IUnitDrawing
         const ops: JSONOp[] = [];
         Object.keys(newParam as IDrawingParam).forEach((key) => {
             const newVal = newParam[key as keyof IDrawingParam];
-
+            const hasOldKey = Object.prototype.hasOwnProperty.call(oldParam, key);
             const oldVal = oldParam[key as keyof IDrawingParam];
-
-            if (oldVal === newVal) {
-                return;
-            }
-
-            ops.push(
-                json1.replaceOp([unitId, subUnitId, DrawingMapItemType.data, drawingId, key], oldVal as unknown as json1.Doc, newVal as unknown as json1.Doc)
-            );
+            const path = [unitId, subUnitId, DrawingMapItemType.data, drawingId, key];
+            appendJsonUpdateOps(ops, path, newVal, oldVal, hasOldKey);
         });
         return ops;
     }

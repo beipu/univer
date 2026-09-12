@@ -16,10 +16,19 @@
 
 import type { DocumentDataModel } from '@univerjs/core';
 import type { IRenderContext, IRenderModule } from '@univerjs/engine-render';
-import { CustomRangeType, Disposable, DOCS_NORMAL_EDITOR_UNIT_ID_KEY, DOCS_ZEN_EDITOR_UNIT_ID_KEY, ICommandService, Inject } from '@univerjs/core';
+import {
+    CustomRangeType,
+    Disposable,
+    DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
+    ICommandService,
+    Inject,
+} from '@univerjs/core';
 import { DocSelectionManagerService, DocSkeletonManagerService } from '@univerjs/docs';
 import { DocEventManagerService } from '@univerjs/docs-ui';
-import { ClickDocHyperLinkOperation, ToggleDocHyperLinkInfoPopupOperation } from '../../commands/operations/popup.operation';
+import {
+    ClickDocHyperLinkOperation,
+    ToggleDocHyperLinkInfoPopupOperation,
+} from '../../commands/operations/popup.operation';
 import { DocHyperLinkPopupService } from '../../services/hyper-link-popup.service';
 
 export class DocHyperLinkEventRenderController extends Disposable implements IRenderModule {
@@ -37,20 +46,34 @@ export class DocHyperLinkEventRenderController extends Disposable implements IRe
     ) {
         super();
 
-        if (this._context.unitId === DOCS_ZEN_EDITOR_UNIT_ID_KEY || this._context.unitId === DOCS_NORMAL_EDITOR_UNIT_ID_KEY) {
+        if (this._context.unitId === DOCS_NORMAL_EDITOR_UNIT_ID_KEY) {
             return;
         }
 
+        this._initPointerDown();
         this._initHover();
         this._initClick();
     }
 
     private _hideInfoPopup() {
-        if (this._hyperLinkPopupService.showing) {
-            this._commandService.executeCommand(
-                ToggleDocHyperLinkInfoPopupOperation.id
-            );
+        if (this._hyperLinkPopupService.infoPopupPinned) {
+            return;
         }
+
+        if (this._hyperLinkPopupService.showing) {
+            this._hyperLinkPopupService.scheduleHideInfoPopup();
+        }
+    }
+
+    private _initPointerDown() {
+        this.disposeWithMe(
+            this._docEventManagerService.pointerDownCustomRanges$.subscribe((ranges) => {
+                const link = ranges.find((range) => range.range.rangeType === CustomRangeType.HYPERLINK);
+                if (!link) {
+                    this._hyperLinkPopupService.hideInfoPopupOnPointerDown();
+                }
+            })
+        );
     }
 
     private _initHover() {
@@ -58,24 +81,24 @@ export class DocHyperLinkEventRenderController extends Disposable implements IRe
             this._docEventManagerService.hoverCustomRanges$.subscribe((ranges) => {
                 const link = ranges.find((range) => range.range.rangeType === CustomRangeType.HYPERLINK);
                 const activeRanges = this._docSelectionManagerService.getTextRanges();
-                const currentSegmentId = activeRanges?.[0].segmentId;
+                const currentSegmentId = activeRanges?.[0]?.segmentId;
                 if ((link?.segmentId ?? '') !== currentSegmentId) {
                     this._hideInfoPopup();
                     return;
                 }
 
                 if (link) {
+                    const info = {
+                        unitId: this._context.unitId,
+                        linkId: link.range.rangeId,
+                        segmentId: link.segmentId,
+                        segmentPage: link.segmentPageIndex,
+                        startIndex: link.range.startIndex,
+                        endIndex: link.range.endIndex,
+                    };
                     this._commandService.executeCommand(
                         ToggleDocHyperLinkInfoPopupOperation.id,
-                        {
-                            unitId: this._context.unitId,
-                            linkId: link.range.rangeId,
-                            segmentId: link.segmentId,
-                            segmentPage: link.segmentPageIndex,
-                            rangeId: link.range.rangeId,
-                            startIndex: link.range.startIndex,
-                            endIndex: link.range.endIndex,
-                        }
+                        info
                     );
                 } else {
                     this._hideInfoPopup();
@@ -88,16 +111,33 @@ export class DocHyperLinkEventRenderController extends Disposable implements IRe
         this.disposeWithMe(
             this._docEventManagerService.clickCustomRanges$.subscribe((range) => {
                 const link = range.range;
-                if (link) {
-                    this._commandService.executeCommand(
-                        ClickDocHyperLinkOperation.id,
+                if (link.rangeType !== CustomRangeType.HYPERLINK) {
+                    return;
+                }
+
+                if (!range.ctrlKey && !range.metaKey) {
+                    this._hyperLinkPopupService.showInfoPopup(
                         {
                             unitId: this._context.unitId,
                             linkId: link.rangeId,
                             segmentId: range.segmentId,
-                        }
+                            segmentPage: range.segmentPageIndex,
+                            startIndex: link.startIndex,
+                            endIndex: link.endIndex,
+                        },
+                        { pinned: true }
                     );
+                    return;
                 }
+
+                this._commandService.executeCommand(
+                    ClickDocHyperLinkOperation.id,
+                    {
+                        unitId: this._context.unitId,
+                        linkId: link.rangeId,
+                        segmentId: range.segmentId,
+                    }
+                );
             })
         );
     }

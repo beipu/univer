@@ -26,18 +26,17 @@ import type {
     VerticalAlign,
     WrapStrategy,
 } from '@univerjs/core';
-
-import type { BORDER_TYPE as BORDER_LTRB } from '../../basics/const';
+import type { BORDER_TYPE } from '../../basics/const';
 import type { Canvas } from '../../canvas';
 import type { UniverRenderingContext } from '../../context';
 import type { DocumentSkeleton } from '../docs/layout/doc-skeleton';
 
-export interface BorderCache {
-    [key: string]: BorderCacheItem | {};
+export interface IBorderCache {
+    [key: string]: IBorderCacheItem | {};
 }
 
-export interface BorderCacheItem {
-    type: BORDER_LTRB;
+export interface IBorderCacheItem {
+    type: BORDER_TYPE;
     style: BorderStyleTypes;
     color: string;
 }
@@ -53,6 +52,10 @@ export interface IFontCacheItem {
     cellData: Nullable<ICellDataForSheetInterceptor>;
     fontString: string;
     style?: Nullable<IStyleData>;
+    displayText?: string;
+    resolvedHorizontalAlign?: HorizontalAlign;
+    textFitsCurrentCell?: boolean;
+    shrinkScale?: number;
 }
 
 type colorString = string;
@@ -63,7 +66,7 @@ export interface IStylesCache {
      * Get value from getCell in skeleton and this value is used in font extension
      */
     fontMatrix: ObjectMatrix<IFontCacheItem>;
-    border?: ObjectMatrix<BorderCache>;
+    border?: ObjectMatrix<IBorderCache>;
 }
 
 export enum ShowGridlinesState {
@@ -101,8 +104,8 @@ export interface IPaintForScrolling {
     leftOrigin: number;
     bufferEdgeX: number;
     bufferEdgeY: number;
-    rowHeaderWidth: number;
-    columnHeaderHeight: number;
+    rowHeaderWidthAndMarginLeft: number;
+    columnHeaderHeightAndMarginTop: number;
     scaleX: number;
     scaleY: number;
 }

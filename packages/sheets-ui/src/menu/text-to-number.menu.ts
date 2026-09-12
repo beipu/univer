@@ -17,6 +17,7 @@
 import type { IAccessor, Workbook } from '@univerjs/core';
 import type { ISelectionWithStyle } from '@univerjs/sheets';
 import type { IMenuButtonItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { CellValueType, isRealNum, isTextFormat, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
 import {
     RangeProtectionPermissionEditPoint,
@@ -73,36 +74,23 @@ const getMenuHiddenByCurrentSelectionChangedObservable$ = (accessor: IAccessor):
     });
 };
 
-export const TEXT_TO_NUMBER_TOOLBAR_MENU_ID = 'sheet.toolbar.text-to-number';
-export function Text2NumberToolbarMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
-    return {
-        id: TEXT_TO_NUMBER_TOOLBAR_MENU_ID,
-        commandId: TextToNumberCommand.id,
-        type: MenuItemType.BUTTON,
-        title: 'toolbar.textToNumber',
-        disabled$: getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, {
-            workbookTypes: [WorkbookEditablePermission],
-            worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission],
-            rangeTypes: [RangeProtectionPermissionEditPoint],
-        })),
-        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
-    };
-}
-
 export const TEXT_TO_NUMBER_CONTEXT_MENU_ID = 'sheet.contextMenu.text-to-number';
-export function Text2NumberContextMenuItemFactory(accessor: IAccessor): IMenuButtonItem<string> {
+export function Text2NumberContextMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: TEXT_TO_NUMBER_CONTEXT_MENU_ID,
         commandId: TextToNumberCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.textToNumber',
-        icon: 'PipingIcon',
+        title: 'sheets-ui.rightClick.textToNumber',
+        icon: 'ConvertToNumberIcon',
         disabled$: getObservableWithExclusiveRange$(accessor, getCurrentRangeDisable$(accessor, {
             workbookTypes: [WorkbookEditablePermission],
             worksheetTypes: [WorksheetEditPermission, WorksheetSetCellValuePermission],
             rangeTypes: [RangeProtectionPermissionEditPoint],
         })),
-        hidden$: combineLatest([getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET), getMenuHiddenByCurrentSelectionChangedObservable$(accessor)]).pipe(
+        hidden$: combineLatest([
+            getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+            getMenuHiddenByCurrentSelectionChangedObservable$(accessor),
+        ]).pipe(
             map(([menuHidden, selectionHidden]) => menuHidden || selectionHidden)
         ),
     };

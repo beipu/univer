@@ -14,17 +14,24 @@
  * limitations under the License.
  */
 
+import type { LocaleKey } from '../../locale/types';
 import type { IBusinessComponentProps } from './interface';
 import { isPatternEqualWithoutDecimal, LocaleService } from '@univerjs/core';
 import { InputNumber, SelectList } from '@univerjs/design';
-import { getDecimalFromPattern, getNumberFormatOptions, isPatternHasDecimal, setPatternDecimal } from '@univerjs/sheets-numfmt';
+import {
+    getDecimalFromPattern,
+    getNumberFormatOptions,
+    isPatternHasDecimal,
+    setPatternDecimal,
+} from '@univerjs/sheets-numfmt';
 import { useDependency } from '@univerjs/ui';
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useState } from 'react';
 
 export const isThousandthPercentilePanel = (pattern: string) =>
     getNumberFormatOptions().some((item) => isPatternEqualWithoutDecimal(item.value, pattern));
 
 export function ThousandthPercentilePanel(props: IBusinessComponentProps) {
+    const { onActionChange, onChange } = props;
     const localeService = useDependency(LocaleService);
 
     const options = useMemo(getNumberFormatOptions, []);
@@ -37,11 +44,11 @@ export function ThousandthPercentilePanel(props: IBusinessComponentProps) {
 
     const pattern = useMemo(() => setPatternDecimal(suffix, Number(decimal || 0)), [suffix, decimal]);
 
-    const isInputDisable = useMemo(() => !isPatternHasDecimal(suffix), [suffix]);
+    const isInputDisable = !isPatternHasDecimal(suffix);
 
     const handleDecimalChange = (decimal: number | null) => {
         setDecimal(decimal || 0);
-        props.onChange(setPatternDecimal(suffix, Number(decimal || 0)));
+        onChange(setPatternDecimal(suffix, Number(decimal || 0)));
     };
     const handleClick = (v: any) => {
         if (v === undefined) {
@@ -49,14 +56,18 @@ export function ThousandthPercentilePanel(props: IBusinessComponentProps) {
         }
         setDecimal(getDecimalFromPattern(v, 0));
         setSuffix(v);
-        props.onChange(v);
+        onChange(v);
     };
 
-    props.action.current = () => pattern;
+    useLayoutEffect(() => {
+        onActionChange(() => pattern);
+    }, [onActionChange, pattern]);
 
     return (
         <div>
-            <div className="univer-mt-4 univer-text-sm univer-text-gray-400">{localeService.t('sheet.numfmt.decimalLength')}</div>
+            <div className="univer-mt-4 univer-text-sm univer-text-gray-400">
+                {localeService.t<LocaleKey>('sheets-numfmt-ui.decimalLength')}
+            </div>
             <div className="univer-mt-2">
                 <InputNumber
                     disabled={isInputDisable}
@@ -68,7 +79,7 @@ export function ThousandthPercentilePanel(props: IBusinessComponentProps) {
             </div>
             <div className="univer-mt-4 univer-text-sm univer-text-gray-400">
                 {' '}
-                {localeService.t('sheet.numfmt.negType')}
+                {localeService.t<LocaleKey>('sheets-numfmt-ui.negType')}
             </div>
             <div className="univer-mt-2">
                 <SelectList onChange={handleClick} options={options} value={suffix} />
@@ -79,7 +90,7 @@ export function ThousandthPercentilePanel(props: IBusinessComponentProps) {
                   dark:!univer-text-gray-200
                 `}
             >
-                {localeService.t('sheet.numfmt.thousandthPercentileDes')}
+                {localeService.t<LocaleKey>('sheets-numfmt-ui.thousandthPercentileDes')}
             </div>
         </div>
     );

@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: 'Chỉnh sửa liên kết',
             addTitle: 'Chèn liên kết',
             label: 'Văn bản',
             labelPlaceholder: 'Nhập văn bản',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: 'Thêm liên kết',
         },
+        permission: {
+            hyperLinkErr: 'Bạn không có quyền chèn liên kết.',
+        },
         message: {
             noSheet: 'Bảng con này đã bị xóa',
             refError: 'Tham chiếu lỗi',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: 'Liên kết đã được sao chép vào clipboard',
         },
         popup: {
+            title: 'Siêu liên kết',
+            open: 'Mở liên kết',
             copy: 'Sao chép',
             edit: 'Chỉnh sửa',
             cancel: 'Hủy liên kết',

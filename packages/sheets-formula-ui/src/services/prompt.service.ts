@@ -15,8 +15,7 @@
  */
 
 import type { Direction, IDisposable } from '@univerjs/core';
-import type { IFunctionInfo, ISequenceNode } from '@univerjs/engine-formula';
-import type { ISearchItem } from '@univerjs/sheets-formula';
+import type { IFunctionInfo, ISearchItem, ISequenceNode } from '@univerjs/engine-formula';
 import type { Observable } from 'rxjs';
 import { createIdentifier, IContextService } from '@univerjs/core';
 import { sequenceNodeType } from '@univerjs/engine-formula';
@@ -152,7 +151,7 @@ export interface IFormulaPromptService {
     isLockedSelectionInsert(): boolean;
 }
 
-export const IFormulaPromptService = createIdentifier<FormulaPromptService>('formula-ui.prompt-service');
+export const IFormulaPromptService = createIdentifier<IFormulaPromptService>('formula-ui.prompt-service');
 
 export class FormulaPromptService implements IFormulaPromptService, IDisposable {
     private readonly _search$ = new Subject<ISearchFunctionOperationParams>();

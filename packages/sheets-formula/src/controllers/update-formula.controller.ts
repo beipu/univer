@@ -18,11 +18,12 @@ import type {
     ICellData,
     ICommandInfo,
     IExecutionOptions,
+    IObjectMatrixPrimitiveType,
     IUnitRange,
     Nullable,
     Workbook,
 } from '@univerjs/core';
-import type { IDirtyUnitFeatureMap, IDirtyUnitOtherFormulaMap, IDirtyUnitSheetNameMap, IFormulaData, IFormulaDataItem, IFormulaDirtyData, IUnitSheetNameMap } from '@univerjs/engine-formula';
+import type { IDirtyUnitDefinedNameMap, IDirtyUnitFeatureMap, IDirtyUnitOtherFormulaMap, IDirtyUnitSheetNameMap, IFormulaData, IFormulaDataItem, IFormulaDirtyData, IUnitSheetNameMap } from '@univerjs/engine-formula';
 import type {
     IInsertSheetMutationParams,
     IRemoveSheetMutationParams,
@@ -43,7 +44,7 @@ import {
     Tools,
     UniverInstanceType,
 } from '@univerjs/core';
-import { deserializeRangeWithSheetWithCache, ErrorType, FormulaDataModel, generateStringWithSequence, IDefinedNamesService, initSheetFormulaData, LexerTreeBuilder, sequenceNodeType, serializeRangeToRefString, SetArrayFormulaDataMutation, SetFormulaDataMutation, SetTriggerFormulaCalculationStartMutation } from '@univerjs/engine-formula';
+import { deserializeRangeWithSheetWithCache, ErrorType, FormulaDataModel, generateStringWithSequence, IDefinedNamesService, LexerTreeBuilder, refactorFormulaUnitQualifier, sequenceNodeType, serializeRangeToRefString, SetArrayFormulaDataMutation, SetFormulaDataMutation, SetTriggerFormulaCalculationStartMutation, splitTableStructuredRef } from '@univerjs/engine-formula';
 import {
     ClearSelectionFormatCommand,
     InsertSheetMutation,
@@ -112,17 +113,10 @@ export class UpdateFormulaController extends Disposable {
                 if (command.id === SetRangeValuesMutation.id) {
                     const params = command.params as ISetRangeValuesMutationParams;
 
-                    if (
-                        (options && options.onlyLocal === true) ||
-                        (options && options.syncOnly === true) ||
-                        (options && options.fromChangeset === true) ||
-                        params.trigger === SetStyleCommand.id ||
-                        params.trigger === SetBorderCommand.id ||
-                        params.trigger === ClearSelectionFormatCommand.id ||
-                        params.trigger === SetRangeCustomMetadataCommand.id
-                    ) {
+                    if (shouldSkipFormulaUpdateForSetRangeValues(params, options)) {
                         return;
                     }
+
                     this._handleSetRangeValuesMutation(params as ISetRangeValuesMutationParams);
                 }
             })
@@ -143,8 +137,24 @@ export class UpdateFormulaController extends Disposable {
         }
 
         const newSheetFormulaData = this._formulaDataModel.updateFormulaData(unitId, sheetId, cellValue);
+        const arrayFormulaCellDataChanged = this._formulaDataModel.updateArrayFormulaCellData(unitId, sheetId, cellValue);
+        const arrayFormulaRangeChanged = this._formulaDataModel.updateArrayFormulaRange(unitId, sheetId, cellValue);
 
         if (Object.keys(newSheetFormulaData).length === 0) {
+            if (arrayFormulaCellDataChanged || arrayFormulaRangeChanged) {
+                this._commandService.executeCommand(
+                    SetArrayFormulaDataMutation.id,
+                    {
+                        arrayFormulaRange: this._formulaDataModel.getArrayFormulaRange(),
+                        arrayFormulaCellData: this._formulaDataModel.getArrayFormulaCellData(),
+                    },
+                    {
+                        onlyLocal: true,
+                        remove: true, // remove array formula range shape
+                    }
+                );
+            }
+
             return;
         }
 
@@ -167,10 +177,6 @@ export class UpdateFormulaController extends Disposable {
                 fromFormula: true,
             }
         );
-
-        // update formula model
-        this._formulaDataModel.updateArrayFormulaCellData(unitId, sheetId, cellValue);
-        this._formulaDataModel.updateArrayFormulaRange(unitId, sheetId, cellValue);
 
         // update image formula data
         this._formulaDataModel.updateImageFormulaData(unitId, sheetId, cellValue);
@@ -200,6 +206,8 @@ export class UpdateFormulaController extends Disposable {
     }
 
     private _handleWorkbookDisposed(unitId: string, sheetId?: string) {
+        this._formulaDataModel.clearFormulaIdMap(unitId, sheetId);
+
         const formulaData = this._formulaDataModel.getFormulaData();
         const newFormulaData = removeFormulaData(formulaData, unitId, sheetId);
 
@@ -241,7 +249,7 @@ export class UpdateFormulaController extends Disposable {
         const formulaData = this._formulaDataModel.getFormulaData();
         const { id: sheetId, cellData } = sheet;
         const cellMatrix = new ObjectMatrix<Nullable<ICellData>>(cellData);
-        const newFormulaData = initSheetFormulaData(formulaData, unitId, sheetId, cellMatrix);
+        const newFormulaData = this._formulaDataModel.initSheetFormulaData(formulaData, unitId, sheetId, cellMatrix);
 
         this._commandService.executeCommand(
             SetFormulaDataMutation.id,
@@ -264,7 +272,7 @@ export class UpdateFormulaController extends Disposable {
             const cellMatrix = worksheet.getCellMatrix();
             const sheetId = worksheet.getSheetId();
 
-            const currentSheetData = initSheetFormulaData(formulaData, unitId, sheetId, cellMatrix);
+            const currentSheetData = this._formulaDataModel.initSheetFormulaData(formulaData, unitId, sheetId, cellMatrix);
 
             newFormulaData[unitId]![sheetId] = currentSheetData[unitId]?.[sheetId];
         });
@@ -273,6 +281,7 @@ export class UpdateFormulaController extends Disposable {
 
         const config = this._configService.getConfig<IUniverSheetsFormulaBaseConfig>(PLUGIN_CONFIG_KEY_BASE);
         const calculationMode = config?.initialFormulaComputing ?? CalculationMode.WHEN_EMPTY;
+        if (calculationMode === CalculationMode.NO_CALCULATION) return;
         const params = this._getDirtyDataByCalculationMode(calculationMode);
 
         this._commandService.executeCommand(SetTriggerFormulaCalculationStartMutation.id, params, { onlyLocal: true });
@@ -285,7 +294,7 @@ export class UpdateFormulaController extends Disposable {
         const dirtyRanges: IUnitRange[] = calculationMode === CalculationMode.WHEN_EMPTY ? this._formulaDataModel.getFormulaDirtyRanges() : [];
 
         const dirtyNameMap: IDirtyUnitSheetNameMap = {};
-        const dirtyDefinedNameMap: IDirtyUnitSheetNameMap = {};
+        const dirtyDefinedNameMap: IDirtyUnitDefinedNameMap = {};
         const dirtyUnitFeatureMap: IDirtyUnitFeatureMap = {};
         const dirtyUnitOtherFormulaMap: IDirtyUnitOtherFormulaMap = {};
         const clearDependencyTreeCache: IDirtyUnitSheetNameMap = {};
@@ -302,7 +311,7 @@ export class UpdateFormulaController extends Disposable {
     }
 
     private _getUpdateFormula(command: ICommandInfo) {
-        const workbook = this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
 
         if (!workbook) {
             return {
@@ -314,7 +323,10 @@ export class UpdateFormulaController extends Disposable {
         const result = getReferenceMoveParams(workbook, command);
 
         if (result) {
-            const { unitSheetNameMap } = this._formulaDataModel.getCalculateData();
+            const { unitNameMap, unitSheetNameMap } = this._formulaDataModel.getCalculateData();
+            if (result.type === FormulaReferenceMoveType.SetUnitName) {
+                result.oldUnitName = unitNameMap?.[result.unitId]?.name;
+            }
             const oldFormulaData = this._formulaDataModel.getFormulaData();
 
             // change formula reference
@@ -384,6 +396,14 @@ export class UpdateFormulaController extends Disposable {
 
                     const { f: formulaString, x, y, si } = formulaDataItem;
 
+                    if (type === FormulaReferenceMoveType.SetUnitName) {
+                        const { oldUnitName, unitName } = formulaReferenceMoveParam;
+                        if (!oldUnitName || !unitName) return true;
+                        const nextFormula = refactorFormulaUnitQualifier(formulaString, oldUnitName, unitName);
+                        if (nextFormula !== formulaString) newFormulaDataItem.setValue(row, column, { f: nextFormula });
+                        return true;
+                    }
+
                     const sequenceNodes = this._lexerTreeBuilder.sequenceNodesBuilder(formulaString);
 
                     if (sequenceNodes == null) {
@@ -442,6 +462,33 @@ export class UpdateFormulaController extends Disposable {
                                 ...node,
                                 token: type === FormulaReferenceMoveType.SetDefinedName ? definedName : ErrorType.REF,
                             };
+                            shouldModify = true;
+                            refChangeIds.push(i);
+
+                            continue;
+                        } else if ((type === FormulaReferenceMoveType.SetSuperTableName || type === FormulaReferenceMoveType.RemoveSuperTableName || type === FormulaReferenceMoveType.RemoveSuperTableColumn) && (nodeType === sequenceNodeType.TABLE || nodeType === sequenceNodeType.FUNCTION)) {
+                            const { oldTableName, tableName, tableColumnNames } = formulaReferenceMoveParam;
+                            if (oldTableName === undefined || (type === FormulaReferenceMoveType.SetSuperTableName && tableName === undefined)) {
+                                continue;
+                            }
+
+                            const { tableName: tokenTableName, columnStruct = '' } = splitTableStructuredRef(token);
+                            if (tokenTableName !== oldTableName) {
+                                continue;
+                            }
+
+                            if (type === FormulaReferenceMoveType.RemoveSuperTableColumn && !tableReferenceContainsColumn(columnStruct, tableColumnNames)) {
+                                continue;
+                            }
+
+                            sequenceNodes[i] = {
+                                ...node,
+                                token: type === FormulaReferenceMoveType.SetSuperTableName ? `${tableName}${columnStruct}` : ErrorType.REF,
+                            };
+                            const nextNode = sequenceNodes[i + 1];
+                            if ((type === FormulaReferenceMoveType.RemoveSuperTableName || type === FormulaReferenceMoveType.RemoveSuperTableColumn) && typeof nextNode === 'string' && nextNode.startsWith(']')) {
+                                sequenceNodes[i + 1] = nextNode.slice(1);
+                            }
                             shouldModify = true;
                             refChangeIds.push(i);
 
@@ -614,7 +661,7 @@ export class UpdateFormulaController extends Disposable {
                 });
 
                 if (newFormulaData[unitId]) {
-                    newFormulaData[unitId]![sheetId] = newFormulaDataItem.getData();
+                    newFormulaData[unitId]![sheetId] = newFormulaDataItem.clone();
                 }
             }
         }
@@ -645,4 +692,80 @@ export class UpdateFormulaController extends Disposable {
 
         return { newFormulaData };
     }
+}
+
+/**
+ * Whether to skip the formula update when the setRangeValues mutation is executed.
+ * The style-only cell value does not affect the formula calculation, so it can be skipped.
+ */
+function shouldSkipFormulaUpdateForSetRangeValues(params: ISetRangeValuesMutationParams, options?: IExecutionOptions): boolean {
+    if (
+        options &&
+        (options.onlyLocal === true || options.syncOnly === true || options.fromChangeset === true)
+    ) {
+        return true;
+    }
+
+    const { cellValue, trigger } = params;
+
+    if (
+        trigger &&
+        [
+            SetStyleCommand.id,
+            SetBorderCommand.id,
+            ClearSelectionFormatCommand.id,
+            SetRangeCustomMetadataCommand.id,
+        ].includes(trigger)
+    ) {
+        return true;
+    }
+
+    if (!cellValue) {
+        return true;
+    }
+
+    return isStyleOnlyCellValue(cellValue);
+}
+
+function isStyleOnlyCellValue(cellValue: IObjectMatrixPrimitiveType<Nullable<ICellData>>): boolean {
+    const matrix = new ObjectMatrix(cellValue);
+
+    let hasCell = false;
+    let styleOnly = true;
+
+    matrix.forValue((_row, _col, cell) => {
+        hasCell = true;
+
+        if (!cell) {
+            styleOnly = false;
+            return false;
+        }
+
+        const keys = Object.keys(cell);
+        if (keys.length !== 1 || keys[0] !== 's') {
+            styleOnly = false;
+            return false;
+        }
+    });
+
+    return hasCell && styleOnly;
+}
+
+function tableReferenceContainsColumn(columnStruct: string, columnNames: string[] | undefined): boolean {
+    if (!columnNames?.length || columnStruct.length === 0) {
+        return false;
+    }
+
+    const columnNameSet = new Set(columnNames);
+    const completedColumnStruct = columnStruct.endsWith(']') ? columnStruct : `${columnStruct}]`;
+    const columnMatches = completedColumnStruct.matchAll(/\[([^\]]+)\]/g);
+
+    for (const match of columnMatches) {
+        const columnName = match[1].replace(/^\[/, '').trim();
+        if (!columnName.startsWith('#') && columnNameSet.has(columnName)) {
+            return true;
+        }
+    }
+
+    return false;
 }

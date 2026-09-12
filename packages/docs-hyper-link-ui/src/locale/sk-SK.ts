@@ -17,13 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    docLink: {
+    'docs-hyper-link-ui': {
         edit: {
             confirm: 'Potvrdiť',
             cancel: 'Zrušiť',
-            title: 'Odkaz',
             address: 'Odkaz',
-            placeholder: 'Zadajte URL odkazu',
             addressError: 'URL je neplatná!',
             label: 'Popisok',
             labelError: 'Zadajte popis odkazu',

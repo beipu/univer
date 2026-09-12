@@ -15,13 +15,33 @@
  */
 
 import type { ICommandInfo } from '@univerjs/core';
-import type { IAddCommentCommandParams, IDeleteCommentCommandParams, IDeleteCommentTreeCommandParams, IResolveCommentCommandParams, IUpdateCommentCommandParams } from '@univerjs/thread-comment';
+import type {
+    IAddCommentCommandParams,
+    IDeleteCommentCommandParams,
+    IDeleteCommentTreeCommandParams,
+    IResolveCommentCommandParams,
+    IUpdateCommentCommandParams,
+} from '@univerjs/thread-comment';
+import type { LocaleKey } from '../locale/types';
 import { Disposable, ICommandService, Inject, LocaleService } from '@univerjs/core';
 import { singleReferenceToGrid } from '@univerjs/engine-formula';
-import { RangeProtectionPermissionViewPoint, SheetPermissionCheckController, WorkbookCommentPermission, WorksheetViewPermission } from '@univerjs/sheets';
+import {
+    RangeProtectionPermissionViewPoint,
+    SheetPermissionCheckController,
+    WorkbookCommentPermission,
+    WorksheetViewPermission,
+} from '@univerjs/sheets';
 import { SheetsThreadCommentModel } from '@univerjs/sheets-thread-comment';
-import { AddCommentCommand, DeleteCommentCommand, DeleteCommentTreeCommand, ResolveCommentCommand, UpdateCommentCommand } from '@univerjs/thread-comment';
-import { ShowAddSheetCommentModalOperation, ToggleSheetCommentPanelOperation } from '../commands/operations/comment.operation';
+import {
+    AddCommentCommand,
+    DeleteCommentCommand,
+    DeleteCommentTreeCommand,
+    deserializeThreadCommentAnchor,
+    ResolveCommentCommand,
+    ThreadCommentAnchorKind,
+    UpdateCommentCommand,
+} from '@univerjs/thread-comment';
+import { AddSheetDrawingCommentOperation, ShowAddSheetCommentModalOperation, ToggleSheetCommentPanelOperation } from '../commands/operations/comment.operation';
 
 export class SheetsThreadCommentPermissionController extends Disposable {
     constructor(
@@ -40,27 +60,19 @@ export class SheetsThreadCommentPermissionController extends Disposable {
             this._commandService.beforeCommandExecuted((command: ICommandInfo) => {
                 const { id } = command;
 
-                if (id === ShowAddSheetCommentModalOperation.id || id === ToggleSheetCommentPanelOperation.id) {
+                if (id === AddSheetDrawingCommentOperation.id || id === ShowAddSheetCommentModalOperation.id || id === ToggleSheetCommentPanelOperation.id) {
                     const permission = this._sheetPermissionCheckController.permissionCheckWithoutRange({
                         workbookTypes: [WorkbookCommentPermission],
                         worksheetTypes: [WorksheetViewPermission],
                     });
                     if (!permission) {
-                        this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.commentErr'));
+                        this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-thread-comment-ui.permission.commentErr'));
                     }
                 } else if (id === AddCommentCommand.id) {
                     const params = command.params as IAddCommentCommandParams;
                     const { unitId, subUnitId, comment } = params;
-                    const location = singleReferenceToGrid(comment.ref);
-                    const { row, column } = location;
-
-                    const permission = this._sheetPermissionCheckController.permissionCheckWithRanges({
-                        workbookTypes: [WorkbookCommentPermission],
-                        worksheetTypes: [WorksheetViewPermission],
-                        rangeTypes: [RangeProtectionPermissionViewPoint],
-                    }, [{ startRow: row, startColumn: column, endRow: row, endColumn: column }], unitId, subUnitId);
-                    if (!permission) {
-                        this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.commentErr'));
+                    if (!this._hasCommentPermission(unitId, subUnitId, comment.ref)) {
+                        this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-thread-comment-ui.permission.commentErr'));
                     }
                 } else if (id === UpdateCommentCommand.id) {
                     const params = command.params as IUpdateCommentCommandParams;
@@ -68,39 +80,43 @@ export class SheetsThreadCommentPermissionController extends Disposable {
                     const { commentId } = payload;
                     const comment = this._sheetsThreadCommentModel.getComment(unitId, subUnitId, commentId);
 
-                    if (comment) {
-                        const location = singleReferenceToGrid(comment.ref);
-                        const { row, column } = location;
-
-                        const permission = this._sheetPermissionCheckController.permissionCheckWithRanges({
-                            workbookTypes: [WorkbookCommentPermission],
-                            worksheetTypes: [WorksheetViewPermission],
-                            rangeTypes: [RangeProtectionPermissionViewPoint],
-                        }, [{ startRow: row, startColumn: column, endRow: row, endColumn: column }], unitId, subUnitId);
-                        if (!permission) {
-                            this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.commentErr'));
-                        }
+                    if (comment && !this._hasCommentPermission(unitId, subUnitId, comment.ref)) {
+                        this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-thread-comment-ui.permission.commentErr'));
                     }
                 } else if (id === ResolveCommentCommand.id || id === DeleteCommentCommand.id || id === DeleteCommentTreeCommand.id) {
                     const params = command.params as IResolveCommentCommandParams | IDeleteCommentCommandParams | IDeleteCommentTreeCommandParams;
                     const { unitId, subUnitId, commentId } = params;
                     const comment = this._sheetsThreadCommentModel.getComment(unitId, subUnitId, commentId);
 
-                    if (comment) {
-                        const location = singleReferenceToGrid(comment.ref);
-                        const { row, column } = location;
-
-                        const permission = this._sheetPermissionCheckController.permissionCheckWithRanges({
-                            workbookTypes: [WorkbookCommentPermission],
-                            worksheetTypes: [WorksheetViewPermission],
-                            rangeTypes: [RangeProtectionPermissionViewPoint],
-                        }, [{ startRow: row, startColumn: column, endRow: row, endColumn: column }], unitId, subUnitId);
-                        if (!permission) {
-                            this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t('permission.dialog.commentErr'));
-                        }
+                    if (comment && !this._hasCommentPermission(unitId, subUnitId, comment.ref)) {
+                        this._sheetPermissionCheckController.blockExecuteWithoutPermission(this._localeService.t<LocaleKey>('sheets-thread-comment-ui.permission.commentErr'));
                     }
                 }
             })
         );
+    }
+
+    private _hasCommentPermission(unitId: string, subUnitId: string, ref: string): boolean {
+        const permissionTypes = {
+            workbookTypes: [WorkbookCommentPermission],
+            worksheetTypes: [WorksheetViewPermission],
+        };
+        const anchor = deserializeThreadCommentAnchor(ref);
+        if (anchor?.kind === ThreadCommentAnchorKind.SHEET_DRAWING) {
+            return this._sheetPermissionCheckController.permissionCheckWithoutRange(
+                permissionTypes,
+                unitId,
+                subUnitId
+            );
+        }
+
+        const { row, column } = singleReferenceToGrid(ref);
+        if (!Number.isFinite(row) || !Number.isFinite(column)) {
+            return false;
+        }
+        return this._sheetPermissionCheckController.permissionCheckWithRanges({
+            ...permissionTypes,
+            rangeTypes: [RangeProtectionPermissionViewPoint],
+        }, [{ startRow: row, startColumn: column, endRow: row, endColumn: column }], unitId, subUnitId);
     }
 }

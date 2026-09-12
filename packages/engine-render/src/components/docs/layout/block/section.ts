@@ -23,7 +23,13 @@ import type { ILayoutContext } from '../tools';
 import { DataStreamTreeNodeType } from '@univerjs/core';
 import { createSkeletonPage } from '../model/page';
 import { dealWithBlockError } from './block-error';
+import { appendColumnGroupBlockLine, createColumnGroupSkeleton } from './column';
 import { dealWidthParagraph } from './paragraph/paragraph-layout';
+
+export interface IDealWithSectionOptions {
+    startParagraphIndex?: number;
+    maxParagraphs?: number;
+}
 
 export function dealWithSection(
     ctx: ILayoutContext,
@@ -31,12 +37,13 @@ export function dealWithSection(
     sectionNode: DataStreamTreeNode,
     curPage: IDocumentSkeletonPage,
     sectionBreakConfig: ISectionBreakConfig,
-    layoutAnchor: Nullable<number>
+    layoutAnchor: Nullable<number>,
+    options?: IDealWithSectionOptions
 ) {
     const allCurrentSkeletonPages: IDocumentSkeletonPage[] = [];
     const renderedBlockIdMap = new Map<string, boolean>();
 
-    let paragraphStartIndex = 0;
+    let paragraphStartIndex = options?.startParagraphIndex ?? 0;
 
     if (layoutAnchor != null) {
         const { startIndex, endIndex } = sectionNode;
@@ -51,7 +58,12 @@ export function dealWithSection(
         }
     }
 
-    for (let i = paragraphStartIndex; i < sectionNode.children.length; i++) {
+    const paragraphEndIndex = Math.min(
+        sectionNode.children.length,
+        paragraphStartIndex + (options?.maxParagraphs ?? Number.POSITIVE_INFINITY)
+    );
+
+    for (let i = paragraphStartIndex; i < paragraphEndIndex; i++) {
         const paragraphNode = sectionNode.children[i];
         // const { paragraph, table, tableOfContents, blockType, customBlock, blockId } = block;
         // if (preRenderedBlockIdMap?.get(blockId)) {
@@ -64,8 +76,13 @@ export function dealWithSection(
         }
 
         if (paragraphNode.nodeType === DataStreamTreeNodeType.PARAGRAPH) {
-            // Paragraph 段落
-            if (ctx.paragraphsOpenNewPage.has(paragraphNode.endIndex)) {
+            // Paragraph
+            // Opening the anchor paragraph on a new page is a one-shot relayout instruction.
+            // Keeping it would advance the paragraph by one more page on every dirty-layout retry.
+            if (
+                ctx.paragraphsOpenNewPage.delete(paragraphNode.endIndex) &&
+                currentPageCache.sections.some((section) => section.columns.some((column) => column.lines.length > 0))
+            ) {
                 currentPageCache = createSkeletonPage(
                     ctx,
                     sectionBreakConfig,
@@ -78,8 +95,25 @@ export function dealWithSection(
                 viewModel,
                 paragraphNode,
                 currentPageCache,
+                sectionBreakConfig,
+                sectionNode.children[i + 1]?.nodeType === DataStreamTreeNodeType.PARAGRAPH
+                    ? sectionNode.children[i + 1]
+                    : undefined
+            );
+        }
+
+        if (paragraphNode.nodeType === DataStreamTreeNodeType.COLUMN_GROUP) {
+            const columnGroupSkeleton = createColumnGroupSkeleton(
+                ctx,
+                currentPageCache,
+                viewModel,
+                paragraphNode,
                 sectionBreakConfig
             );
+
+            if (columnGroupSkeleton && appendColumnGroupBlockLine(currentPageCache, columnGroupSkeleton)) {
+                skeletonPages = [currentPageCache];
+            }
         }
 
         if (skeletonPages.length === 0) {
@@ -104,6 +138,8 @@ export function dealWithSection(
     return {
         pages: allCurrentSkeletonPages,
         renderedBlockIdMap,
+        nextParagraphIndex: paragraphEndIndex,
+        complete: paragraphEndIndex >= sectionNode.children.length,
     };
 }
 

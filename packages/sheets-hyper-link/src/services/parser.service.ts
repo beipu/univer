@@ -15,8 +15,14 @@
  */
 
 import type { IRange, Nullable, Workbook } from '@univerjs/core';
+import type { LocaleKey } from '../locale/types';
 import { Inject, isValidRange, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
-import { deserializeRangeWithSheet, IDefinedNamesService, serializeRange, serializeRangeWithSheet } from '@univerjs/engine-formula';
+import {
+    deserializeRangeWithSheet,
+    IDefinedNamesService,
+    serializeRange,
+    serializeRangeWithSheet,
+} from '@univerjs/engine-formula';
 import { ERROR_RANGE } from '../types/const';
 import { SheetHyperLinkType } from '../types/enums/hyper-link-type';
 
@@ -41,8 +47,20 @@ export class SheetsHyperLinkParserService {
         @IDefinedNamesService private _definedNamesService: IDefinedNamesService
     ) {}
 
-    buildHyperLink(unitId: string, sheetId: string, range?: string | IRange): string {
-        return `#${SheetHyperLinkType.SHEET}=${sheetId}${range ? `&${typeof range === 'string' ? SheetHyperLinkType.DEFINE_NAME : SheetHyperLinkType.RANGE}=${typeof range === 'string' ? range : serializeRange(range)}` : ''}`;
+    buildHyperLink(defineNameId: string): string;
+    buildHyperLink(range: IRange | null, sheetId: string): string;
+    buildHyperLink(defineNameIdOrRange: string | IRange | null, sheetId?: string): string {
+        if (typeof defineNameIdOrRange === 'string') {
+            return `#${SheetHyperLinkType.DEFINE_NAME}=${defineNameIdOrRange}`;
+        }
+
+        let result = `#${SheetHyperLinkType.SHEET}=${sheetId}`;
+
+        if (defineNameIdOrRange) {
+            result += `&${SheetHyperLinkType.RANGE}=${serializeRange(defineNameIdOrRange)}`;
+        }
+
+        return result;
     }
 
     parseHyperLink(urlStr: string): ISheetHyperLinkInfo {
@@ -76,10 +94,10 @@ export class SheetsHyperLinkParserService {
         const { gid, range, rangeid, unitid } = params;
         const workbook = unitid ?
             this._univerInstanceService.getUnit<Workbook>(unitid, UniverInstanceType.UNIVER_SHEET)
-            : this._univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+            : this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
         const invalidLink = {
             type: SheetHyperLinkType.INVALID,
-            name: this._localeService.t('hyperLink.message.refError'),
+            name: this._localeService.t<LocaleKey>('sheets-hyper-link.message.refError'),
         };
 
         if (!workbook) {

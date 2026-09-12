@@ -27,10 +27,13 @@ import type {
     IUnitExcludedCell,
     IUnitRowData,
 } from '../basics/common';
-
 import type { IUniverEngineFormulaConfig } from '../config/config';
 import type { LexerNode } from '../engine/analysis/lexer-node';
-import type { IFormulaDependencyTreeFullJson, IFormulaDependencyTreeJson, IFormulaDependentsAndInRangeResults } from '../engine/dependency/dependency-tree';
+import type {
+    IFormulaDependencyTreeFullJson,
+    IFormulaDependencyTreeJson,
+    IFormulaDependentsAndInRangeResults,
+} from '../engine/dependency/dependency-tree';
 import type { BaseReferenceObject, FunctionVariantType } from '../engine/reference-object/base-reference-object';
 import type { ArrayValueObject } from '../engine/value-object/array-value-object';
 import type { BaseValueObject } from '../engine/value-object/base-value-object';
@@ -53,6 +56,7 @@ import { AstTreeBuilder } from '../engine/analysis/parser';
 import { IFormulaDependencyGenerator } from '../engine/dependency/formula-dependency';
 import { Interpreter } from '../engine/interpreter/interpreter';
 import { FORMULA_REF_TO_ARRAY_CACHE } from '../engine/reference-object/base-reference-object';
+import { generateAstNode } from '../engine/utils/generate-ast-node';
 import { ErrorValueObjectCache } from '../engine/value-object/base-value-object';
 import { StringValueObjectCache } from '../engine/value-object/primitive-object';
 import { IFormulaCurrentConfigService } from './current-data.service';
@@ -71,7 +75,7 @@ export interface ICalculateFormulaService {
     setRuntimeFeatureRange(featureId: string, featureRange: IFeatureDirtyRangeType): void;
     execute(formulaDatasetConfig: IFormulaDatasetConfig): Promise<void>;
     stopFormulaExecution(): void;
-    calculate(formulaString: string, transformSuffix?: boolean): void;
+    calculate(formulaString: string, transformSuffix?: boolean, unitId?: string): void;
     executeFormulas(formulas: IFormulaStringMap, rowData?: IUnitRowData): Promise<IFormulaExecuteResultMap>;
     getAllDependencyJson(rowData?: IUnitRowData): Promise<IFormulaDependencyTreeJson[]>;
     getCellDependencyJson(unitId: string, sheetId: string, row: number, column: number, rowData?: IUnitRowData): Promise<IFormulaDependencyTreeFullJson | undefined>;
@@ -89,7 +93,7 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
     protected readonly _executionCompleteListener$ = new Subject<IAllRuntimeData>();
     readonly executionCompleteListener$ = this._executionCompleteListener$.asObservable();
 
-    private _executeLock = new AsyncLock();
+    protected _executeLock = new AsyncLock();
 
     protected _isCalculateTreeModel: boolean = false;
 
@@ -153,12 +157,12 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
         this._executeLock.acquire('FORMULA_EXECUTION_LOCK', async () => {
             for (let i = 0; i < cycleReferenceCount; i++) {
                 this._runtimeService.setFormulaCycleIndex(i);
-                await this._executeStep();
+                const executed = await this._executeStep();
 
                 FORMULA_REF_TO_ARRAY_CACHE.clear();
 
                 const isCycleDependency = this._runtimeService.isCycleDependency();
-                if (!isCycleDependency) {
+                if (!executed || !isCycleDependency) {
                     break;
                 }
             }
@@ -171,7 +175,7 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
         });
     }
 
-    private async _executeStep() {
+    protected async _executeStep() {
         const executeState = await this._apply();
 
         if (executeState == null) {
@@ -198,7 +202,7 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
         return true;
     }
 
-    private _getArrayFormulaDirtyRangeAndExcludedRange(
+    protected _getArrayFormulaDirtyRangeAndExcludedRange(
         arrayFormulaRange: IArrayFormulaRangeType,
         runtimeFeatureRange: { [featureId: string]: IFeatureDirtyRangeType }
     ) {
@@ -270,7 +274,7 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
 
         this._executionInProgressListener$.next(this._runtimeService.getRuntimeState());
 
-        const treeList = (await this._formulaDependencyGenerator.generate(this._isCalculateTreeModel)).reverse();
+        const treeList = await this._formulaDependencyGenerator.generate(this._isCalculateTreeModel);
 
         const interpreter = this._interpreter;
 
@@ -290,18 +294,42 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
 
         const config = this._configService.getConfig(ENGINE_FORMULA_PLUGIN_CONFIG_KEY) as IUniverEngineFormulaConfig;
         const intervalCount = config?.intervalCount || DEFAULT_INTERVAL_COUNT;
-
+        let i = 0;
         const treeCount = treeList.length;
-        for (let i = 0; i < treeCount; i++) {
-            const tree = treeList[i];
-            const nodeData = tree.nodeData;
+        while (treeList.length > 0) {
+            const tree = treeList.pop()!;
+
+            this._runtimeService.setCurrent(
+                tree.row,
+                tree.column,
+                tree.rowCount,
+                tree.columnCount,
+                tree.subUnitId,
+                tree.unitId
+            );
+
+            const node = generateAstNode(
+                tree.unitId,
+                tree.formula,
+                this._lexer,
+                this._astTreeBuilder,
+                this._currentConfigService,
+                tree.subUnitId,
+                tree.column,
+                tree.row
+            );
+            const nodeData = {
+                node,
+                refOffsetX: tree.refOffsetX,
+                refOffsetY: tree.refOffsetY,
+            };
             const getDirtyData = tree.getDirtyData;
 
             // Execute the await every 100 iterations
             if (i % intervalCount === 0) {
-                /**
-                 * For every functions, execute a setTimeout to wait for external command input.
-                 */
+            /**
+             * For every functions, execute a setTimeout to wait for external command input.
+             */
                 await new Promise((resolve) => {
                     const calCancelTask = requestImmediateMacroTask(resolve);
                     pendingTasks.push(calCancelTask);
@@ -324,19 +352,9 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
                 if (this._runtimeService.isStopExecution() || (nodeData == null && getDirtyData == null)) {
                     this._runtimeService.setFormulaExecuteStage(FormulaExecuteStageType.IDLE);
                     this._runtimeService.markedAsStopFunctionsExecuted();
-                    this._executionCompleteListener$.next(this._runtimeService.getAllRuntimeData());
                     return;
                 }
             }
-
-            this._runtimeService.setCurrent(
-                tree.row,
-                tree.column,
-                tree.rowCount,
-                tree.columnCount,
-                tree.subUnitId,
-                tree.unitId
-            );
 
             let value: FunctionVariantType;
 
@@ -365,7 +383,9 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
                 }
             }
 
-            nodeData.node?.resetCalculationState();
+            node.resetCalculationState();
+
+            i++;
         }
 
         // clear all pending tasks
@@ -486,10 +506,11 @@ export class CalculateFormulaService extends Disposable implements ICalculateFor
         return result;
     }
 
-    async calculate(formulaString: string) {
+    async calculate(formulaString: string, transformSuffix = true, unitId?: string) {
         // TODO how to observe @alex
         // this.getObserver('onBeforeFormulaCalculateObservable')?.notifyObservers(formulaString);
-        const lexerNode = this._lexer.treeBuilder(formulaString);
+        const executeUnitId = unitId || this._runtimeService.currentUnitId || this._currentConfigService.getExecuteUnitId();
+        const lexerNode = this._lexer.treeBuilder(formulaString, transformSuffix, executeUnitId);
 
         if (Object.values(ErrorType).includes(lexerNode as ErrorType)) {
             return;

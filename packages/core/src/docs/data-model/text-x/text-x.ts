@@ -20,13 +20,32 @@ import type { IDeleteAction, IInsertAction, IRetainAction, TextXAction } from '.
 import { UpdateDocsAttributeType } from '../../../shared/command-enum';
 import { Tools } from '../../../shared/tools';
 import { ActionIterator } from './action-iterator';
-import { TextXActionType } from './action-types';
+import { PRESERVE_INSERTED_PARAGRAPH_IDS, TextXActionType } from './action-types';
 import { textXApply } from './apply';
+import {
+    normalizeInsertedParagraphIdsForDocument,
+    normalizeInsertedSectionIdsForDocument,
+    RESTORE_INSERTED_PARAGRAPH_IDS,
+} from './apply-utils/common';
 import { transformBody } from './transform-utils';
-import { composeBody, getBodySlice, isUselessRetainAction } from './utils';
+import { composeBody, getBodySlice, getBodySliceForTextXAction, isUselessRetainAction } from './utils';
 
 function onlyHasDataStream(body: IDocumentBody) {
     return Object.keys(body).length === 1;
+}
+
+function normalizeInsertActionParagraphIds(
+    body: IDocumentBody,
+    doc: IDocumentBody,
+    currentIndex: number,
+    reservedParagraphIds: Set<string>
+) {
+    normalizeInsertedParagraphIdsForDocument(doc.paragraphs, body.paragraphs, currentIndex, {
+        freshenSplitParagraph: false,
+        preserveExplicitParagraphIds: Boolean((body as IDocumentBody & Record<string, unknown>)[PRESERVE_INSERTED_PARAGRAPH_IDS]),
+        reservedParagraphIds,
+        dataStream: doc.dataStream,
+    });
 }
 
 export type TPriority = 'left' | 'right';
@@ -230,6 +249,11 @@ export class TextX {
                     throw new Error('Can not invert DELETE action without body property, makeInvertible must be called first.');
                 }
 
+                if (action.body.paragraphs?.length) {
+                    (action.body as IDocumentBody & Record<string, unknown>)[RESTORE_INSERTED_PARAGRAPH_IDS] = true;
+                    Reflect.set(action.body, PRESERVE_INSERTED_PARAGRAPH_IDS, true);
+                }
+
                 invertedActions.push({
                     t: TextXActionType.INSERT,
                     body: action.body,
@@ -261,16 +285,32 @@ export class TextX {
         const invertibleActions: TextXAction[] = [];
 
         let index = 0;
+        const reservedParagraphIds = new Set<string>();
+        const reservedSectionIds = new Set<string>();
 
         for (const action of actions) {
+            if (action.t === TextXActionType.INSERT) {
+                normalizeInsertActionParagraphIds(action.body, doc, index, reservedParagraphIds);
+                normalizeInsertedSectionIdsForDocument(doc.sectionBreaks, action.body.sectionBreaks, reservedSectionIds);
+            }
+
             if (action.t === TextXActionType.DELETE && (action.body == null || (action.body && action.body.dataStream.length !== action.len))) {
-                const body = getBodySlice(doc, index, index + action.len, false);
+                const body = getBodySliceForTextXAction(doc, index, index + action.len, false);
                 action.len = body.dataStream.length;
                 action.body = body;
             }
 
             if (action.t === TextXActionType.RETAIN && action.body != null) {
                 const body = getBodySlice(doc, index, index + action.len, true);
+
+                // A partial slice clips enclosing structural ranges. Restoring
+                // those ranges would duplicate/truncate a table (or container)
+                // when undoing an unrelated comment or text-formatting change.
+                for (const field of ['tables', 'columnGroups', 'blockRanges'] as const) {
+                    if (action.body[field] == null) {
+                        delete body[field];
+                    }
+                }
 
                 action.oldBody = {
                     ...body,

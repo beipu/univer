@@ -16,25 +16,26 @@
 
 import type { IAbsoluteTransform, Nullable } from '@univerjs/core';
 import type { Subscription } from 'rxjs';
-
 import type { BaseObject } from './base-object';
 import type { IMouseEvent, IPointerEvent } from './basics/i-events';
 import type { ITransformerConfig } from './basics/transformer-config';
 import type { IPoint } from './basics/vector2';
+import type { UniverRenderingContext } from './context';
 import type { Scene } from './scene';
 import type { IRectProps } from './shape/rect';
 import type { IRegularPolygonProps } from './shape/regular-polygon';
 import { Disposable, MOVE_BUFFER_VALUE, requestImmediateMacroTask, toDisposable } from '@univerjs/core';
 import { Subject } from 'rxjs';
-import { ObjectType } from './base-object';
 import { CURSOR_TYPE } from './basics/const';
-
 import { offsetRotationAxis } from './basics/offset-rotation-axis';
 import { getCurrentScrollXY } from './basics/scroll-xy';
 import { degToRad, precisionTo, radToDeg } from './basics/tools';
+import { DEFAULT_TRANSFORMER_CONFIG } from './basics/transformer-config';
 import { Vector2 } from './basics/vector2';
 import { Group } from './group';
 import { ScrollTimer } from './scroll-timer';
+import { Control } from './shape/control';
+import { Line } from './shape/line';
 import { Rect } from './shape/rect';
 import { RegularPolygon } from './shape/regular-polygon';
 
@@ -99,9 +100,69 @@ const MINI_HEIGHT_LIMIT = 20;
 
 const DEFAULT_CONTROL_PLUS_INDEX = 5000;
 
-const SINGLE_ACTIVE_OBJECT_TYPE_MAP = new Set<ObjectType>([
-    ObjectType.CHART,
-]);
+const ROTATE_ICON_SIZE = 14;
+
+class TransformerRotateIcon extends Rect {
+    protected override _draw(ctx: UniverRenderingContext) {
+        const iconWidth = this.width || ROTATE_ICON_SIZE;
+        const iconHeight = this.height || ROTATE_ICON_SIZE;
+        const scaleX = iconWidth / 24;
+        const scaleY = iconHeight / 24;
+
+        ctx.save();
+        ctx.scale(scaleX, scaleY);
+        ctx.beginPath();
+        ctx.lineWidth = (this.strokeWidth || 2) / Math.max(scaleX, scaleY);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = this.stroke || 'currentColor';
+
+        ctx.moveTo(21, 12);
+        ctx.arc(12, 12, 9, 0, Math.PI * 1.5, false);
+        ctx.bezierCurveTo(14.52, 3, 16.93, 4, 18.74, 5.74);
+        ctx.lineTo(21, 8);
+        ctx.moveTo(21, 3);
+        ctx.lineTo(21, 8);
+        ctx.lineTo(16, 8);
+
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+class TransformerCropAnchor extends RegularPolygon {
+    constructor(key: string, props: IRegularPolygonProps, private readonly _hitSize: number) {
+        super(key, props);
+    }
+
+    override isHit(coord: Vector2): boolean {
+        if (this._hitSize <= 0) {
+            return super.isHit(coord);
+        }
+        const point = this.getInverseCoord(coord);
+        const scale = this.getScene()?.getAncestorScale();
+        const halfWidth = Math.max(this.width, this._hitSize / Math.max(scale?.scaleX ?? 1, 0.01)) / 2;
+        const halfHeight = Math.max(this.height, this._hitSize / Math.max(scale?.scaleY ?? 1, 0.01)) / 2;
+        return Math.abs(point.x - this.width / 2) <= halfWidth && Math.abs(point.y - this.height / 2) <= halfHeight;
+    }
+}
+
+class TransformerAnchor extends Control {
+    protected override _draw(ctx: UniverRenderingContext) {
+        if (!this.shadowColor || (!this.shadowBlur && !this.shadowOffsetX && !this.shadowOffsetY)) {
+            Rect.drawWith(ctx, this as IRectProps);
+            return;
+        }
+
+        ctx.save();
+        ctx.shadowColor = this.shadowColor;
+        ctx.shadowBlur = this.shadowBlur;
+        ctx.shadowOffsetX = this.shadowOffsetX;
+        ctx.shadowOffsetY = this.shadowOffsetY;
+        Rect.drawWith(ctx, this as IRectProps);
+        ctx.restore();
+    }
+}
 
 /**
  * Transformer constructor.  Transformer is a special type of group that allow you transform
@@ -109,39 +170,60 @@ const SINGLE_ACTIVE_OBJECT_TYPE_MAP = new Set<ObjectType>([
  * when you resize them. Instead it changes `scaleX` and `scaleY` properties.
  */
 export class Transformer extends Disposable implements ITransformerConfig {
+    private static readonly _selectionTapMovementThreshold = 12;
+
     isCropper: boolean = false;
 
     hoverEnabled = false;
     hoverEnterFunc: Nullable<(e: IPointerEvent | IMouseEvent) => void>;
     hoverLeaveFunc: Nullable<(e: IPointerEvent | IMouseEvent) => void>;
 
-    resizeEnabled = true;
+    moveEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.moveEnabled;
+    moveOnlyWhenSelected = false;
+    resizeEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.resizeEnabled;
 
-    rotateEnabled = true;
+    rotateEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.rotateEnabled;
     rotationSnaps: number[] = [];
     rotationSnapTolerance = 5;
-    rotateAnchorOffset = 50;
-    rotateSize = 10;
+    rotateAnchorOffset = DEFAULT_TRANSFORMER_CONFIG.rotateAnchorOffset;
+    rotateAnchorPosition: 'top' | 'bottom' = DEFAULT_TRANSFORMER_CONFIG.rotateAnchorPosition;
+    rotateLineEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.rotateLineEnabled;
+    rotateSize = DEFAULT_TRANSFORMER_CONFIG.rotateSize;
 
-    rotateCornerRadius = 10;
-    borderEnabled = true;
+    rotateCornerRadius = DEFAULT_TRANSFORMER_CONFIG.rotateCornerRadius;
+    rotateFill: string | undefined = DEFAULT_TRANSFORMER_CONFIG.rotateFill;
+    rotateStroke: string | undefined = DEFAULT_TRANSFORMER_CONFIG.rotateStroke;
+    rotateStrokeWidth: number | undefined = DEFAULT_TRANSFORMER_CONFIG.rotateStrokeWidth;
+    rotateIconEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.rotateIconEnabled;
+    rotateIconStroke: string | undefined = DEFAULT_TRANSFORMER_CONFIG.rotateIconStroke;
+    rotateIconStrokeWidth = DEFAULT_TRANSFORMER_CONFIG.rotateIconStrokeWidth;
+    borderEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.borderEnabled;
 
-    borderStroke = 'rgb(97, 97, 97)';
-    borderStrokeWidth = 1;
+    borderStroke = DEFAULT_TRANSFORMER_CONFIG.borderStroke;
+    borderStrokeWidth = DEFAULT_TRANSFORMER_CONFIG.borderStrokeWidth;
     borderDash: number[] = [];
-    borderSpacing = 0;
+    borderSpacing = DEFAULT_TRANSFORMER_CONFIG.borderSpacing;
 
-    anchorFill = 'rgb(255, 255, 255)';
-    anchorStroke = 'rgb(185, 185, 185)';
-    anchorStrokeWidth = 1;
-    anchorSize = 10;
-    anchorCornerRadius = 10;
+    anchorFill = DEFAULT_TRANSFORMER_CONFIG.anchorFill;
+    anchorStroke = DEFAULT_TRANSFORMER_CONFIG.anchorStroke;
+    anchorStrokeWidth = DEFAULT_TRANSFORMER_CONFIG.anchorStrokeWidth;
+    anchorSize = DEFAULT_TRANSFORMER_CONFIG.anchorSize;
+    anchorCornerRadius = DEFAULT_TRANSFORMER_CONFIG.anchorCornerRadius;
+    anchorStyle: 'default' | 'canva' = DEFAULT_TRANSFORMER_CONFIG.anchorStyle;
+    anchorSideLongSize = 16;
+    anchorSideShortSize = 5;
+    anchorSideCornerRadius = 2.5;
+    anchorShadowColor: string | undefined;
+    anchorShadowBlur = 0;
+    anchorShadowOffsetX = 0;
+    anchorShadowOffsetY = 0;
 
-    keepRatio = true;
+    keepRatio: boolean = DEFAULT_TRANSFORMER_CONFIG.keepRatio;
     centeredScaling = false;
 
     zeroLeft = 0;
     zeroTop = 0;
+    moveBoundaryEnabled: boolean = DEFAULT_TRANSFORMER_CONFIG.moveBoundaryEnabled;
 
     /**
      * leftTop centerTop rightTop
@@ -158,6 +240,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
     useSingleNodeRotation: boolean = false;
     shouldOverdrawWholeArea: boolean = false;
+    controlLayerIndex: number | undefined;
 
     private readonly _changeStart$ = new Subject<IChangeObserverConfig>();
 
@@ -187,15 +270,13 @@ export class Transformer extends Disposable implements ITransformerConfig {
     private _viewportScrollX: number = -1;
     private _viewportScrollY: number = -1;
 
-    private _topScenePointerMoveSub: Nullable<Subscription>;
-    private _topScenePointerUpSub: Nullable<Subscription>;
+    private _finishGesture: (() => void) | null = null;
     private _cancelFocusSubscription: Nullable<Subscription>;
 
     private _transformerControlMap = new Map<string, Group>();
     private _selectedObjectMap = new Map<string, BaseObject>();
 
     private _subscriptionObjectMap = new Map<string, Nullable<Subscription>>();
-
     private _copperControl: Nullable<Group>;
     private _copperSelectedObject: Nullable<BaseObject>;
 
@@ -227,6 +308,30 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
     getSelectedObjectMap() {
         return this._selectedObjectMap;
+    }
+
+    /** Complete the current object transform before another gesture takes ownership of the scene. */
+    finishTransform(): void {
+        this._finishGesture?.();
+    }
+
+    private _bindGestureEnd(scene: Scene, initialEvent: IPointerEvent | IMouseEvent, onEnd: (event: IPointerEvent | IMouseEvent) => void): void {
+        let latestEvent = initialEvent;
+        const subscriptions: Subscription[] = [];
+        subscriptions.push(scene.onPointerMove$.subscribeEvent((event) => {
+            latestEvent = event;
+        }));
+        const finish = (event = latestEvent) => {
+            if (this._finishGesture !== finish) {
+                return;
+            }
+            this._finishGesture = null;
+            subscriptions.forEach((subscription) => subscription.unsubscribe());
+            onEnd(event);
+        };
+        subscriptions.push(scene.onPointerUp$.subscribeEvent((event) => finish(event)));
+        subscriptions.push(scene.onPointerCancel$.subscribeEvent(() => finish()));
+        this._finishGesture = finish;
     }
 
     resetProps(config?: ITransformerConfig) {
@@ -295,13 +400,23 @@ export class Transformer extends Disposable implements ITransformerConfig {
             hoverEnabled,
             hoverEnterFunc,
             hoverLeaveFunc,
+            moveEnabled,
+            moveOnlyWhenSelected,
             resizeEnabled,
             rotateEnabled,
             rotationSnaps,
             rotationSnapTolerance,
             rotateAnchorOffset,
+            rotateAnchorPosition,
+            rotateLineEnabled,
             rotateSize,
             rotateCornerRadius,
+            rotateFill,
+            rotateStroke,
+            rotateStrokeWidth,
+            rotateIconEnabled,
+            rotateIconStroke,
+            rotateIconStrokeWidth,
             borderEnabled,
             borderStroke,
             borderStrokeWidth,
@@ -312,6 +427,14 @@ export class Transformer extends Disposable implements ITransformerConfig {
             anchorStrokeWidth,
             anchorSize,
             anchorCornerRadius,
+            anchorStyle,
+            anchorSideLongSize,
+            anchorSideShortSize,
+            anchorSideCornerRadius,
+            anchorShadowColor,
+            anchorShadowBlur,
+            anchorShadowOffsetX,
+            anchorShadowOffsetY,
             keepRatio,
             centeredScaling,
             enabledAnchors,
@@ -320,19 +443,30 @@ export class Transformer extends Disposable implements ITransformerConfig {
             boundBoxFunc,
             useSingleNodeRotation,
             shouldOverdrawWholeArea,
+            moveBoundaryEnabled,
         } = this;
         if (objectTransformerConfig != null) {
             isCropper = objectTransformerConfig.isCropper ?? isCropper;
             hoverEnabled = objectTransformerConfig.hoverEnabled ?? hoverEnabled;
             hoverEnterFunc = objectTransformerConfig.hoverEnterFunc ?? hoverEnterFunc;
             hoverLeaveFunc = objectTransformerConfig.hoverLeaveFunc ?? hoverLeaveFunc;
+            moveEnabled = objectTransformerConfig.moveEnabled ?? moveEnabled;
+            moveOnlyWhenSelected = objectTransformerConfig.moveOnlyWhenSelected ?? moveOnlyWhenSelected;
             resizeEnabled = objectTransformerConfig.resizeEnabled ?? resizeEnabled;
             rotateEnabled = objectTransformerConfig.rotateEnabled ?? rotateEnabled;
             rotationSnaps = objectTransformerConfig.rotationSnaps ?? rotationSnaps;
             rotationSnapTolerance = objectTransformerConfig.rotationSnapTolerance ?? rotationSnapTolerance;
             rotateAnchorOffset = objectTransformerConfig.rotateAnchorOffset ?? rotateAnchorOffset;
+            rotateAnchorPosition = objectTransformerConfig.rotateAnchorPosition ?? rotateAnchorPosition;
+            rotateLineEnabled = objectTransformerConfig.rotateLineEnabled ?? rotateLineEnabled;
             rotateSize = objectTransformerConfig.rotateSize ?? rotateSize;
             rotateCornerRadius = objectTransformerConfig.rotateCornerRadius ?? rotateCornerRadius;
+            rotateFill = objectTransformerConfig.rotateFill ?? rotateFill;
+            rotateStroke = objectTransformerConfig.rotateStroke ?? rotateStroke;
+            rotateStrokeWidth = objectTransformerConfig.rotateStrokeWidth ?? rotateStrokeWidth;
+            rotateIconEnabled = objectTransformerConfig.rotateIconEnabled ?? rotateIconEnabled;
+            rotateIconStroke = objectTransformerConfig.rotateIconStroke ?? rotateIconStroke;
+            rotateIconStrokeWidth = objectTransformerConfig.rotateIconStrokeWidth ?? rotateIconStrokeWidth;
             borderEnabled = objectTransformerConfig.borderEnabled ?? borderEnabled;
             borderStroke = objectTransformerConfig.borderStroke ?? borderStroke;
             borderStrokeWidth = objectTransformerConfig.borderStrokeWidth ?? borderStrokeWidth;
@@ -343,6 +477,14 @@ export class Transformer extends Disposable implements ITransformerConfig {
             anchorStrokeWidth = objectTransformerConfig.anchorStrokeWidth ?? anchorStrokeWidth;
             anchorSize = objectTransformerConfig.anchorSize ?? anchorSize;
             anchorCornerRadius = objectTransformerConfig.anchorCornerRadius ?? anchorCornerRadius;
+            anchorStyle = objectTransformerConfig.anchorStyle ?? anchorStyle;
+            anchorSideLongSize = objectTransformerConfig.anchorSideLongSize ?? anchorSideLongSize;
+            anchorSideShortSize = objectTransformerConfig.anchorSideShortSize ?? anchorSideShortSize;
+            anchorSideCornerRadius = objectTransformerConfig.anchorSideCornerRadius ?? anchorSideCornerRadius;
+            anchorShadowColor = objectTransformerConfig.anchorShadowColor ?? anchorShadowColor;
+            anchorShadowBlur = objectTransformerConfig.anchorShadowBlur ?? anchorShadowBlur;
+            anchorShadowOffsetX = objectTransformerConfig.anchorShadowOffsetX ?? anchorShadowOffsetX;
+            anchorShadowOffsetY = objectTransformerConfig.anchorShadowOffsetY ?? anchorShadowOffsetY;
             keepRatio = objectTransformerConfig.keepRatio ?? keepRatio;
             centeredScaling = objectTransformerConfig.centeredScaling ?? centeredScaling;
             enabledAnchors = objectTransformerConfig.enabledAnchors ?? enabledAnchors;
@@ -351,6 +493,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
             boundBoxFunc = objectTransformerConfig.boundBoxFunc ?? boundBoxFunc;
             useSingleNodeRotation = objectTransformerConfig.useSingleNodeRotation ?? useSingleNodeRotation;
             shouldOverdrawWholeArea = objectTransformerConfig.shouldOverdrawWholeArea ?? shouldOverdrawWholeArea;
+            moveBoundaryEnabled = objectTransformerConfig.moveBoundaryEnabled ?? moveBoundaryEnabled;
         }
 
         return {
@@ -358,13 +501,23 @@ export class Transformer extends Disposable implements ITransformerConfig {
             hoverEnabled,
             hoverEnterFunc,
             hoverLeaveFunc,
+            moveEnabled,
+            moveOnlyWhenSelected,
             resizeEnabled,
             rotateEnabled,
             rotationSnaps,
             rotationSnapTolerance,
             rotateAnchorOffset,
+            rotateAnchorPosition,
+            rotateLineEnabled,
             rotateSize,
             rotateCornerRadius,
+            rotateFill,
+            rotateStroke,
+            rotateStrokeWidth,
+            rotateIconEnabled,
+            rotateIconStroke,
+            rotateIconStrokeWidth,
             borderEnabled,
             borderStroke,
             borderStrokeWidth,
@@ -375,6 +528,14 @@ export class Transformer extends Disposable implements ITransformerConfig {
             anchorStrokeWidth,
             anchorSize,
             anchorCornerRadius,
+            anchorStyle,
+            anchorSideLongSize,
+            anchorSideShortSize,
+            anchorSideCornerRadius,
+            anchorShadowColor,
+            anchorShadowBlur,
+            anchorShadowOffsetX,
+            anchorShadowOffsetY,
             keepRatio,
             centeredScaling,
             enabledAnchors,
@@ -383,26 +544,58 @@ export class Transformer extends Disposable implements ITransformerConfig {
             boundBoxFunc,
             useSingleNodeRotation,
             shouldOverdrawWholeArea,
+            moveBoundaryEnabled,
         };
     }
 
     // eslint-disable-next-line max-lines-per-function
     attachTo(applyObject: BaseObject) {
-        if (this.hoverEnabled) {
-            this.hoverEnterFunc && applyObject.onPointerEnter$.subscribeEvent(this.hoverEnterFunc);
-            this.hoverLeaveFunc && applyObject.onPointerLeave$.subscribeEvent(this.hoverLeaveFunc);
-        }
-
         // First check if there is an old subscription to avoid duplicate subscriptions
         this.detachFrom(applyObject);
 
         // eslint-disable-next-line max-lines-per-function
         const observer = applyObject.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent, state) => {
+            this.finishTransform();
             const { offsetX: evtOffsetX, offsetY: evtOffsetY } = evt;
             this._startOffsetX = evtOffsetX;
             this._startOffsetY = evtOffsetY;
 
-            const { isCropper } = this._getConfig(applyObject);
+            const { isCropper, moveEnabled, moveOnlyWhenSelected } = this._getConfig(applyObject);
+
+            if (!isCropper && moveOnlyWhenSelected && !this._selectedObjectMap.has(this._findGroupObject(applyObject).oKey)) {
+                const scene = this._getTopScene();
+                if (!scene) {
+                    this._updateActiveObjectList(applyObject, evt);
+                    return;
+                }
+
+                let moved = false;
+                let moveSubscription: Nullable<Subscription>;
+                let upSubscription: Nullable<Subscription>;
+                let cancelSubscription: Nullable<Subscription>;
+                const disposeGesture = () => {
+                    moveSubscription?.unsubscribe();
+                    upSubscription?.unsubscribe();
+                    cancelSubscription?.unsubscribe();
+                };
+
+                moveSubscription = scene.onPointerMove$.subscribeEvent((moveEvent: IPointerEvent | IMouseEvent) => {
+                    moved ||= Math.hypot(moveEvent.offsetX - evtOffsetX, moveEvent.offsetY - evtOffsetY) >= Transformer._selectionTapMovementThreshold;
+                });
+                upSubscription = scene.onPointerUp$.subscribeEvent(() => {
+                    disposeGesture();
+                    if (!moved) {
+                        this._updateActiveObjectList(applyObject, evt);
+                    }
+                });
+                cancelSubscription = scene.onPointerCancel$.subscribeEvent(disposeGesture);
+                return;
+            }
+
+            if (!isCropper && !moveEnabled) {
+                this._updateActiveObjectList(applyObject, evt);
+                return;
+            }
 
             const scene = this._getTopScene();
 
@@ -451,9 +644,8 @@ export class Transformer extends Disposable implements ITransformerConfig {
                 });
             });
 
-            const scenePointerUpSub = scene.onPointerUp$.subscribeEvent((event) => {
+            this._bindGestureEnd(scene, evt, (event) => {
                 scenePointerMoveSub?.unsubscribe();
-                scenePointerUpSub?.unsubscribe();
                 scene.enableObjectsEvent();
                 !isCropper && this.refreshControls();
                 scrollTimer.dispose();
@@ -482,7 +674,10 @@ export class Transformer extends Disposable implements ITransformerConfig {
             state.stopPropagation();
         });
 
-        this.disposeWithMe(toDisposable(observer));
+        if (this.hoverEnabled) {
+            this.hoverEnterFunc && observer.add(applyObject.onPointerEnter$.subscribeEvent(this.hoverEnterFunc));
+            this.hoverLeaveFunc && observer.add(applyObject.onPointerLeave$.subscribeEvent(this.hoverLeaveFunc));
+        }
 
         this._subscriptionObjectMap.set(applyObject.oKey, observer);
 
@@ -500,16 +695,15 @@ export class Transformer extends Disposable implements ITransformerConfig {
     }
 
     override dispose() {
+        this.finishTransform();
         super.dispose();
 
-        this._topScenePointerMoveSub?.unsubscribe();
-        this._topScenePointerUpSub?.unsubscribe();
+        this._subscriptionObjectMap.forEach((subscription) => subscription?.unsubscribe());
+        this._subscriptionObjectMap.clear();
 
         this._cancelFocusSubscription?.unsubscribe();
         this._cancelFocusSubscription = null;
 
-        this._topScenePointerMoveSub = null;
-        this._topScenePointerUpSub = null;
         this._cancelFocusSubscription = null;
 
         this._transformerControlMap.forEach((control) => control.dispose());
@@ -540,6 +734,13 @@ export class Transformer extends Disposable implements ITransformerConfig {
     }
 
     private _checkMoveBoundary(moveObject: BaseObject, moveLeft: number, moveTop: number, ancestorLeft: number, ancestorTop: number, topSceneWidth: number, topSceneHeight: number) {
+        if (this._getConfig(moveObject).moveBoundaryEnabled === false) {
+            return {
+                moveLeft,
+                moveTop,
+            };
+        }
+
         const { left, top, width, height } = moveObject;
         let resultMoveLeft = moveLeft;
         let resultMoveTop = moveTop;
@@ -975,6 +1176,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
             toDisposable(
                 // eslint-disable-next-line max-lines-per-function
                 anchor.onPointerDown$.subscribeEvent((evt, state) => {
+                    this.finishTransform();
                     const { offsetX: evtOffsetX, offsetY: evtOffsetY } = evt;
                     this._startOffsetX = evtOffsetX;
                     this._startOffsetY = evtOffsetY;
@@ -1014,7 +1216,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
                     }
 
                     this._moveBufferSkip = false;
-                    this._topScenePointerMoveSub = topScene.onPointerMove$.subscribeEvent((moveEvt: IPointerEvent | IMouseEvent) => {
+                    const moveSubscription = topScene.onPointerMove$.subscribeEvent((moveEvt: IPointerEvent | IMouseEvent) => {
                         const { offsetX: moveOffsetX, offsetY: moveOffsetY } = moveEvt;
                         this._anchorMoving(type, moveOffsetX, moveOffsetY, scrollTimer, keepRatio, isCropper, applyObject);
 
@@ -1024,11 +1226,8 @@ export class Transformer extends Disposable implements ITransformerConfig {
                         topScene.setCursor(cursor);
                     });
 
-                    this._topScenePointerUpSub = topScene.onPointerUp$.subscribeEvent((event) => {
-                        // topScene.onPointerMove$.remove(this._moveObserver);
-                        // topScene.onPointerUp$.remove(this._topScenePointerUpSub);
-                        this._topScenePointerMoveSub?.unsubscribe();
-                        this._topScenePointerUpSub?.unsubscribe();
+                    this._bindGestureEnd(topScene, evt, (event) => {
+                        moveSubscription.unsubscribe();
                         topScene.enableObjectsEvent();
                         topScene.resetCursor();
                         scrollTimer.dispose();
@@ -1065,6 +1264,9 @@ export class Transformer extends Disposable implements ITransformerConfig {
     private _recoverySizeBoundary(selectedObjects: BaseObject[], ancestorLeft: number, ancestorTop: number, topSceneWidth: number, topSceneHeight: number) {
         for (let i = 0; i < selectedObjects.length; i++) {
             const moveObject = selectedObjects[i];
+            if (this._getConfig(moveObject).moveBoundaryEnabled === false) {
+                continue;
+            }
             const { left, top, width, height } = moveObject;
 
             const newTransform: ITransformState = {};
@@ -1091,6 +1293,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
         this.disposeWithMe(
             toDisposable(
                 rotateControl.onPointerDown$.subscribeEvent((evt: IPointerEvent | IMouseEvent, state) => {
+                    this.finishTransform();
                     const { offsetX: evtOffsetX, offsetY: evtOffsetY } = evt;
 
                     this._startOffsetX = evtOffsetX;
@@ -1129,11 +1332,8 @@ export class Transformer extends Disposable implements ITransformerConfig {
                         topScene.setCursor(cursor);
                     });
 
-                    const topScenePointerUpSub = topScene.onPointerUp$.subscribeEvent((event) => {
-                        // topScenePointerMoveSub?.dispose();
-                        // topScenePointerUpSub?.dispose();
+                    this._bindGestureEnd(topScene, evt, (event) => {
                         topScenePointerMoveSub?.unsubscribe();
-                        topScenePointerUpSub?.unsubscribe();
                         topScene.enableObjectsEvent();
                         topScene.resetCursor();
                         this.refreshControls();
@@ -1162,15 +1362,13 @@ export class Transformer extends Disposable implements ITransformerConfig {
             return;
         }
 
-        const angle1 = Math.atan2(
-            (moveOffsetY - centerY) / ancestorScaleY + this._viewportScrollY,
-            (moveOffsetX - centerX) / ancestorScaleX + this._viewportScrollX
-        );
+        const moveSceneX = moveOffsetX / ancestorScaleX + this._viewportScrollX;
+        const moveSceneY = moveOffsetY / ancestorScaleY + this._viewportScrollY;
+        const startSceneX = this._startOffsetX / ancestorScaleX + this._viewportScrollX;
+        const startSceneY = this._startOffsetY / ancestorScaleY + this._viewportScrollY;
 
-        const angle2 = Math.atan2(
-            (this._startOffsetY - centerY) / ancestorScaleY + this._viewportScrollY,
-            (this._startOffsetX - centerX) / ancestorScaleX + this._viewportScrollX
-        );
+        const angle1 = Math.atan2(moveSceneY - centerY, moveSceneX - centerX);
+        const angle2 = Math.atan2(startSceneY - centerY, startSceneX - centerX);
 
         let angle = agentOrigin + radToDeg(angle1 - angle2);
 
@@ -1195,11 +1393,14 @@ export class Transformer extends Disposable implements ITransformerConfig {
     }
 
     private _getOutlinePosition(width: number, height: number, borderSpacing: number, borderStrokeWidth: number) {
+        const offset = borderSpacing + borderStrokeWidth;
+        const strokeOffset = borderStrokeWidth / 2;
+
         return {
-            left: borderSpacing - borderStrokeWidth,
-            top: -borderSpacing - this.borderStrokeWidth,
-            width: width + borderSpacing * 2,
-            height: height + borderSpacing * 2,
+            left: -offset - strokeOffset,
+            top: -offset - strokeOffset,
+            width: width + offset * 2,
+            height: height + offset * 2,
         };
     }
 
@@ -1240,6 +1441,26 @@ export class Transformer extends Disposable implements ITransformerConfig {
         return cursor;
     }
 
+    private _createRotateIcon(applyObject: BaseObject, zIndex: number, left: number, top: number) {
+        const { rotateSize, rotateIconStroke, rotateIconStrokeWidth, borderStroke } = this._getConfig(applyObject);
+        const iconSize = Math.min(ROTATE_ICON_SIZE, Math.max(rotateSize - 4, 1));
+        const iconOffset = (rotateSize - iconSize) / 2;
+
+        return new TransformerRotateIcon(`${TransformerManagerType.ROTATE}_ICON_${zIndex}`, {
+            zIndex,
+            evented: false,
+            left: left + iconOffset,
+            top: top + iconOffset,
+            width: iconSize,
+            height: iconSize,
+            fill: null,
+            stroke: rotateIconStroke ?? borderStroke,
+            strokeWidth: rotateIconStrokeWidth,
+            strokeLineCap: 'round',
+            strokeLineJoin: 'round',
+        });
+    }
+
     private _getCopperAnchorPosition(type: TransformerManagerType, height: number, width: number, applyObject: BaseObject) {
         const { borderStrokeWidth, borderSpacing, anchorSize } = this._getConfig(applyObject);
 
@@ -1265,7 +1486,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
                 break;
             case TransformerManagerType.RESIZE_LM:
-                left += borderSpacing - borderStrokeWidth;
+                left += -borderSpacing - borderStrokeWidth;
                 top += height / 2 - longEdge / 2;
 
                 break;
@@ -1275,7 +1496,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
                 break;
             case TransformerManagerType.RESIZE_LB:
-                left += -this.borderSpacing - borderStrokeWidth;
+                left += -borderSpacing - borderStrokeWidth;
                 top += height + borderSpacing - borderStrokeWidth - longEdge;
 
                 break;
@@ -1298,7 +1519,8 @@ export class Transformer extends Disposable implements ITransformerConfig {
     }
 
     private _getRotateAnchorPosition(type: TransformerManagerType, height: number, width: number, applyObject: BaseObject) {
-        const { rotateAnchorOffset, rotateSize, borderStrokeWidth, borderSpacing, anchorSize } = this._getConfig(applyObject);
+        const { rotateAnchorOffset, rotateAnchorPosition, rotateSize, borderStrokeWidth, borderSpacing, anchorSize } = this._getConfig(applyObject);
+        const isBottomRotateAnchor = rotateAnchorPosition === 'bottom';
 
         let left = -anchorSize / 2;
         let top = -anchorSize / 2;
@@ -1306,12 +1528,16 @@ export class Transformer extends Disposable implements ITransformerConfig {
         switch (type) {
             case TransformerManagerType.ROTATE:
                 left = width / 2 - rotateSize / 2;
-                top = -rotateAnchorOffset - borderSpacing - borderStrokeWidth * 2 - rotateSize;
+                top = isBottomRotateAnchor
+                    ? height + rotateAnchorOffset + borderSpacing + borderStrokeWidth * 2
+                    : -rotateAnchorOffset - borderSpacing - borderStrokeWidth * 2 - rotateSize;
 
                 break;
             case TransformerManagerType.ROTATE_LINE:
                 left = width / 2;
-                top = -rotateAnchorOffset - borderSpacing - borderStrokeWidth;
+                top = isBottomRotateAnchor
+                    ? height + borderSpacing + borderStrokeWidth
+                    : -rotateAnchorOffset - borderSpacing - borderStrokeWidth;
 
                 break;
             case TransformerManagerType.RESIZE_LT:
@@ -1324,33 +1550,33 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
                 break;
             case TransformerManagerType.RESIZE_RT:
-                left += width + borderSpacing - borderStrokeWidth;
+                left += width + borderSpacing + borderStrokeWidth;
                 top += -borderSpacing - borderStrokeWidth;
 
                 break;
             case TransformerManagerType.RESIZE_LM:
-                left += borderSpacing - borderStrokeWidth;
+                left += -borderSpacing - borderStrokeWidth;
                 top += height / 2;
 
                 break;
             case TransformerManagerType.RESIZE_RM:
-                left += width + borderSpacing - borderStrokeWidth;
+                left += width + borderSpacing + borderStrokeWidth;
                 top += height / 2;
 
                 break;
             case TransformerManagerType.RESIZE_LB:
-                left += -this.borderSpacing - borderStrokeWidth;
-                top += height + borderSpacing - borderStrokeWidth;
+                left += -borderSpacing - borderStrokeWidth;
+                top += height + borderSpacing + borderStrokeWidth;
 
                 break;
             case TransformerManagerType.RESIZE_CB:
                 left += width / 2;
-                top += height + borderSpacing - borderStrokeWidth;
+                top += height + borderSpacing + borderStrokeWidth;
 
                 break;
             case TransformerManagerType.RESIZE_RB:
-                left += width + borderSpacing - borderStrokeWidth;
-                top += height + borderSpacing - borderStrokeWidth;
+                left += width + borderSpacing + borderStrokeWidth;
+                top += height + borderSpacing + borderStrokeWidth;
 
                 break;
         }
@@ -1361,25 +1587,73 @@ export class Transformer extends Disposable implements ITransformerConfig {
         };
     }
 
-    private _createResizeAnchor(type: TransformerManagerType, applyObject: BaseObject, zIndex: number) {
-        const { height = 0, width = 0, scaleX = 1, scaleY = 1 } = applyObject.getState();
+    private _isMiddleAnchor(type: TransformerManagerType) {
+        return type === TransformerManagerType.RESIZE_CT ||
+            type === TransformerManagerType.RESIZE_LM ||
+            type === TransformerManagerType.RESIZE_RM ||
+            type === TransformerManagerType.RESIZE_CB;
+    }
 
-        const { anchorFill, anchorStroke, anchorStrokeWidth, anchorCornerRadius, anchorSize } = this._getConfig(applyObject);
+    private _getResizeAnchorProps(type: TransformerManagerType, applyObject: BaseObject) {
+        const {
+            anchorSize,
+            anchorCornerRadius,
+            anchorStyle,
+            anchorSideLongSize,
+            anchorSideShortSize,
+            anchorSideCornerRadius,
+        } = this._getConfig(applyObject);
+
+        if (anchorStyle !== 'canva' || !this._isMiddleAnchor(type)) {
+            return {
+                width: anchorSize,
+                height: anchorSize,
+                radius: anchorStyle === 'canva' ? anchorSize / 2 : anchorCornerRadius,
+            };
+        }
+
+        const isHorizontal = type === TransformerManagerType.RESIZE_CT || type === TransformerManagerType.RESIZE_CB;
+
+        return {
+            width: isHorizontal ? anchorSideLongSize : anchorSideShortSize,
+            height: isHorizontal ? anchorSideShortSize : anchorSideLongSize,
+            radius: anchorSideCornerRadius,
+        };
+    }
+
+    private _createResizeAnchor(type: TransformerManagerType, applyObject: BaseObject, zIndex: number) {
+        const { height = 0, width = 0 } = this._getControlState(applyObject);
+
+        const {
+            anchorFill,
+            anchorStroke,
+            anchorStrokeWidth,
+            anchorSize,
+            anchorShadowColor,
+            anchorShadowBlur,
+            anchorShadowOffsetX,
+            anchorShadowOffsetY,
+        } = this._getConfig(applyObject);
 
         const { left, top } = this._getRotateAnchorPosition(type, height, width, applyObject);
+        const anchorProps = this._getResizeAnchorProps(type, applyObject);
 
         const cursor = this._getRotateAnchorCursor(type);
 
-        const anchor = new Rect(`${type}_${zIndex}`, {
+        const anchor = new TransformerAnchor(`${type}_${zIndex}`, {
             zIndex: zIndex - 1,
             fill: anchorFill,
             stroke: anchorStroke,
             strokeWidth: anchorStrokeWidth,
-            width: anchorSize,
-            height: anchorSize,
-            radius: anchorCornerRadius,
-            left,
-            top,
+            width: anchorProps.width,
+            height: anchorProps.height,
+            radius: anchorProps.radius,
+            left: left + (anchorSize - anchorProps.width) / 2 - anchorStrokeWidth / 2,
+            top: top + (anchorSize - anchorProps.height) / 2 - anchorStrokeWidth / 2,
+            shadowColor: anchorShadowColor,
+            shadowBlur: anchorShadowBlur,
+            shadowOffsetX: anchorShadowOffsetX,
+            shadowOffsetY: anchorShadowOffsetY,
         });
 
         this._attachHover(anchor, cursor, CURSOR_TYPE.DEFAULT);
@@ -1389,7 +1663,7 @@ export class Transformer extends Disposable implements ITransformerConfig {
     }
 
     private _createCopperResizeAnchor(type: TransformerManagerType, applyObject: BaseObject, zIndex: number) {
-        const { height = 0, width = 0, scaleX = 1, scaleY = 1 } = applyObject.getState();
+        const { height = 0, width = 0 } = this._getControlState(applyObject);
 
         const { anchorFill, anchorStroke, anchorStrokeWidth, anchorSize } = this._getConfig(applyObject);
 
@@ -1397,9 +1671,8 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
         const cursor = this._getRotateAnchorCursor(type);
 
-        let anchor: BaseObject;
         const oKey = `${type}_${zIndex}`;
-        const config: IRectProps | IRegularPolygonProps = {
+        const config: IRegularPolygonProps = {
             zIndex: zIndex - 1,
             fill: anchorFill,
             stroke: anchorStroke,
@@ -1408,42 +1681,44 @@ export class Transformer extends Disposable implements ITransformerConfig {
             height: anchorSize,
             left,
             top,
+            pointsGroup: [],
         };
         const longEdge = anchorSize;
         const shortEdge = anchorSize / 4;
         if (cursor === CURSOR_TYPE.EAST_RESIZE) {
             config.width = shortEdge;
             config.height = longEdge;
-            anchor = new Rect(oKey, config);
         } else if (cursor === CURSOR_TYPE.WEST_RESIZE) {
             config.width = shortEdge;
             config.height = longEdge;
-            anchor = new Rect(oKey, config);
         } else if (cursor === CURSOR_TYPE.NORTH_RESIZE) {
             config.width = longEdge;
             config.height = shortEdge;
-            anchor = new Rect(oKey, config);
         } else if (cursor === CURSOR_TYPE.SOUTH_RESIZE) {
             config.width = longEdge;
             config.height = shortEdge;
-            anchor = new Rect(oKey, config);
         } else if (cursor === CURSOR_TYPE.NORTH_EAST_RESIZE) {
-            (config as IRegularPolygonProps).pointsGroup = this._getNorthEastPoints(longEdge, shortEdge);
-            anchor = new RegularPolygon(oKey, config as IRegularPolygonProps);
+            config.pointsGroup = this._getNorthEastPoints(longEdge, shortEdge);
         } else if (cursor === CURSOR_TYPE.NORTH_WEST_RESIZE) {
-            (config as IRegularPolygonProps).pointsGroup = this._getNorthWestPoints(longEdge, shortEdge);
-            anchor = new RegularPolygon(oKey, config as IRegularPolygonProps);
+            config.pointsGroup = this._getNorthWestPoints(longEdge, shortEdge);
         } else if (cursor === CURSOR_TYPE.SOUTH_EAST_RESIZE) {
-            (config as IRegularPolygonProps).pointsGroup = this._getSouthEastPoints(longEdge, shortEdge);
-            anchor = new RegularPolygon(oKey, config as IRegularPolygonProps);
+            config.pointsGroup = this._getSouthEastPoints(longEdge, shortEdge);
         } else if (cursor === CURSOR_TYPE.SOUTH_WEST_RESIZE) {
-            (config as IRegularPolygonProps).pointsGroup = this._getSouthWestPoints(longEdge, shortEdge);
-            anchor = new RegularPolygon(oKey, config as IRegularPolygonProps);
+            config.pointsGroup = this._getSouthWestPoints(longEdge, shortEdge);
         }
 
-        this._attachHover(anchor!, cursor, CURSOR_TYPE.DEFAULT);
+        if (config.pointsGroup.length === 0) {
+            config.pointsGroup = [[
+                { x: 0, y: 0 },
+                { x: config.width ?? 0, y: 0 },
+                { x: config.width ?? 0, y: config.height ?? 0 },
+                { x: 0, y: config.height ?? 0 },
+            ]];
+        }
+        const anchor = new TransformerCropAnchor(oKey, config, applyObject.transformerConfig?.cropAnchorHitSize ?? 0);
+        this._attachHover(anchor, cursor, CURSOR_TYPE.DEFAULT);
 
-        return anchor!;
+        return anchor;
     }
 
     private _getNorthEastPoints(longEdge: number, shortEdge: number): IPoint[][] {
@@ -1552,9 +1827,13 @@ export class Transformer extends Disposable implements ITransformerConfig {
         });
     }
 
+    private _getControlState(applyObject: BaseObject): ReturnType<BaseObject['getState']> {
+        return applyObject.transformerConfig?.controlStateResolver?.(applyObject) ?? applyObject.getState();
+    }
+
     private _updateControl() {
         this._updateControlIterator((control, applyObject) => {
-            const { left, top, height, width, angle } = applyObject.getState();
+            const { left, top, height, width, angle } = this._getControlState(applyObject);
             control.transformByState({
                 left,
                 top,
@@ -1618,15 +1897,37 @@ export class Transformer extends Disposable implements ITransformerConfig {
 
     // eslint-disable-next-line max-lines-per-function, complexity
     private _createControl(applyObject: BaseObject, isSkipOnCropper = true) {
-        const { left = 0, top = 0, height = 0, width = 0 } = applyObject.getState();
-        const angle = applyObject.angle;
-        const { isCropper, resizeEnabled, rotateEnabled, rotateAnchorOffset, rotateSize, rotateCornerRadius, borderEnabled, borderStroke, borderStrokeWidth, borderSpacing, enabledAnchors } = this._getConfig(applyObject);
+        const { left = 0, top = 0, height = 0, width = 0, angle = 0 } = this._getControlState(applyObject);
+        const {
+            isCropper,
+            resizeEnabled,
+            rotateEnabled,
+            rotateAnchorOffset,
+            rotateLineEnabled,
+            rotateSize,
+            rotateCornerRadius,
+            rotateFill,
+            rotateStroke,
+            rotateStrokeWidth,
+            rotateIconEnabled,
+            anchorShadowColor,
+            anchorShadowBlur,
+            anchorShadowOffsetX,
+            anchorShadowOffsetY,
+            borderEnabled,
+            borderStroke,
+            borderStrokeWidth,
+            borderSpacing,
+            enabledAnchors,
+        } = this._getConfig(applyObject);
         if (isSkipOnCropper && isCropper) {
             return;
         }
         const oKey = applyObject.oKey;
         const zIndex = this._selectedObjectMap.size + applyObject.maxZIndex + DEFAULT_CONTROL_PLUS_INDEX;
-        const layerIndex = applyObject.getLayerIndex() || DEFAULT_TRANSFORMER_LAYER_INDEX;
+        const layerIndex = applyObject.transformerConfig?.controlLayerIndex ??
+            this.controlLayerIndex ??
+            (applyObject.getLayerIndex() || DEFAULT_TRANSFORMER_LAYER_INDEX);
         const groupElements: BaseObject[] = [];
 
         if (borderEnabled && !isCropper) {
@@ -1647,33 +1948,45 @@ export class Transformer extends Disposable implements ITransformerConfig {
                 applyObject
             );
             if (rotateEnabled) {
-                const rotateLine = new Rect(`${TransformerManagerType.ROTATE_LINE}_${zIndex}`, {
+                const rotateLine = new Line(`${TransformerManagerType.ROTATE_LINE}_${zIndex}`, {
                     zIndex: zIndex - 1,
                     evented: false,
-                    left: lineLeft,
-                    top: lineTop,
-                    height: rotateAnchorOffset,
-                    width: 1,
+                    startX: lineLeft,
+                    startY: lineTop,
+                    endX: lineLeft,
+                    endY: lineTop + rotateAnchorOffset,
                     strokeWidth: borderStrokeWidth,
-                    stroke: borderStroke,
+                    strokeLineCap: 'butt',
+                    stroke: rotateStroke ?? borderStroke,
                 });
 
                 const { left: rotateLeft, top: rotateTop } = this._getRotateAnchorPosition(TransformerManagerType.ROTATE, height, width, applyObject);
 
                 const cursor = this._getRotateAnchorCursor(TransformerManagerType.ROTATE);
-                const rotate = new Rect(`${TransformerManagerType.ROTATE}_${zIndex}`, {
+                const rotate = new TransformerAnchor(`${TransformerManagerType.ROTATE}_${zIndex}`, {
                     zIndex: zIndex - 1,
                     left: rotateLeft,
                     top: rotateTop,
                     height: rotateSize,
                     width: rotateSize,
                     radius: rotateCornerRadius,
-                    strokeWidth: borderStrokeWidth * 2,
-                    stroke: borderStroke,
+                    fill: rotateFill,
+                    strokeWidth: rotateStrokeWidth ?? borderStrokeWidth * 2,
+                    stroke: rotateStroke ?? borderStroke,
+                    shadowColor: anchorShadowColor,
+                    shadowBlur: anchorShadowBlur,
+                    shadowOffsetX: anchorShadowOffsetX,
+                    shadowOffsetY: anchorShadowOffsetY,
                 });
                 this._attachEventToRotate(rotate, applyObject);
                 this._attachHover(rotate, cursor, CURSOR_TYPE.DEFAULT);
-                groupElements.push(rotateLine, rotate);
+                if (rotateLineEnabled) {
+                    groupElements.push(rotateLine);
+                }
+                groupElements.push(rotate);
+                if (rotateIconEnabled) {
+                    groupElements.push(this._createRotateIcon(applyObject, zIndex, rotateLeft, rotateTop));
+                }
             }
         }
         if (resizeEnabled) {
@@ -1699,11 +2012,11 @@ export class Transformer extends Disposable implements ITransformerConfig {
         transformerControl.evented = false;
         transformerControl.openSelfSizeMode();
         transformerControl.transformByState({
-            left: applyObject.left || left,
-            top: applyObject.top || top,
-            angle: applyObject.angle || angle,
-            width: applyObject.width || width,
-            height: applyObject.height || height,
+            left,
+            top,
+            angle,
+            width,
+            height,
         });
         const scene = this.getScene();
         scene.addObject(transformerControl, layerIndex);
@@ -1741,10 +2054,13 @@ export class Transformer extends Disposable implements ITransformerConfig {
         const targetObject = this._findGroupObject(applyObject);
 
         if (this._selectedObjectMap.has(targetObject.oKey)) {
+            if (!this._transformerControlMap.has(targetObject.oKey)) {
+                this._createControl(targetObject);
+            }
             return;
         }
 
-        if (!evt.ctrlKey || SINGLE_ACTIVE_OBJECT_TYPE_MAP.has(targetObject.objectType)) {
+        if (!evt.ctrlKey) {
             this._selectedObjectMap.clear();
             this._clearControlMap();
         }

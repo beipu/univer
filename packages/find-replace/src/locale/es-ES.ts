@@ -19,13 +19,20 @@ import type enUS from './en-US';
 const locale: typeof enUS = {
     'find-replace': {
         toolbar: 'Buscar y reemplazar',
+        mobile: {
+            settings: 'Configuración de buscar y reemplazar',
+            'settings-title': 'Configuración de buscar y reemplazar',
+            'previous-match': 'Coincidencia anterior',
+            'next-match': 'Coincidencia siguiente',
+            close: 'Cerrar buscar y reemplazar',
+        },
         shortcut: {
-            'open-find-dialog': 'Abrir diálogo de búsqueda',
-            'open-replace-dialog': 'Abrir diálogo de reemplazo',
-            'close-dialog': 'Cerrar diálogo de buscar y reemplazar',
+            'open-find-dialog': 'Abrir cuadro de diálogo de búsqueda',
+            'open-replace-dialog': 'Abrir cuadro de diálogo de reemplazo',
             'go-to-next-match': 'Ir a la siguiente coincidencia',
             'go-to-previous-match': 'Ir a la coincidencia anterior',
             'focus-selection': 'Enfocar selección',
+            panel: 'Buscar y reemplazar',
         },
         dialog: {
             title: 'Buscar',
@@ -33,10 +40,11 @@ const locale: typeof enUS = {
             replace: 'Reemplazar',
             'replace-all': 'Reemplazar todo',
             'case-sensitive': 'Distinguir mayúsculas y minúsculas',
-            'find-placeholder': 'Buscar en esta hoja',
+            'find-placeholder': 'Buscar',
             'advanced-finding': 'Búsqueda y reemplazo avanzados',
-            'replace-placeholder': 'Introducir texto de reemplazo',
-            'match-the-whole-cell': 'Coincidir toda la celda',
+            'replace-placeholder': 'Introducir cadena de reemplazo',
+            'match-the-whole-cell': 'Coincidir con toda la celda',
+            'match-the-whole-word': 'Coincidir con la palabra completa',
             'find-direction': {
                 title: 'Dirección de búsqueda',
                 row: 'Buscar por fila',
@@ -56,14 +64,18 @@ const locale: typeof enUS = {
             'no-result': 'Sin resultados',
         },
         replace: {
-            'all-success': 'Se reemplazaron las {0} coincidencias',
+            'all-success': 'Se reemplazaron todas las {0} coincidencias',
+            'partial-success': 'Se reemplazaron {0} coincidencias; no se pudieron reemplazar {1}',
             'all-failure': 'Error al reemplazar',
             confirm: {
-                title: '¿Está seguro de reemplazar todas las coincidencias?',
+                title: '¿Está seguro de que desea reemplazar todas las coincidencias?',
             },
         },
+        button: {
+            confirm: 'Aceptar',
+            cancel: 'Cancelar',
+        },
     },
-    'find-replace-shortcuts': 'Buscar y reemplazar',
 };
 
 export default locale;

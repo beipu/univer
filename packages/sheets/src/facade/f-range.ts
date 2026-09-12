@@ -14,7 +14,23 @@
  * limitations under the License.
  */
 
-import type { AbsoluteRefType, BorderStyleTypes, BorderType, CellValue, CustomData, ICellData, IColorStyle, IDocumentData, IObjectMatrixPrimitiveType, IRange, IStyleData, ITextDecoration, Nullable, Workbook, Worksheet } from '@univerjs/core';
+import type {
+    AbsoluteRefType,
+    BorderStyleTypes,
+    BorderType,
+    CellValue,
+    CustomData,
+    ICellData,
+    IColorStyle,
+    IDocumentData,
+    IObjectMatrixPrimitiveType,
+    IRange,
+    IStyleData,
+    ITextDecoration,
+    Nullable,
+    Workbook,
+    Worksheet,
+} from '@univerjs/core';
 import type {
     AUTO_FILL_APPLY_TYPE,
     IMergeCellsUtilOptions,
@@ -23,6 +39,7 @@ import type {
     ISetRangeCustomMetadataCommandParams,
     ISetRangeValuesCommandParams,
     ISetSelectionsOperationParams,
+    ISetShrinkToFitCommandParams,
     ISetStyleCommandParams,
     ISetTextRotationCommandParams,
     ISetTextWrapCommandParams,
@@ -32,7 +49,24 @@ import type {
 } from '@univerjs/sheets';
 import type { IFacadeClearOptions } from './f-worksheet';
 import type { FHorizontalAlignment, FVerticalAlignment } from './utils';
-import { BooleanNumber, covertCellValue, covertCellValues, DEFAULT_STYLES, Dimension, ICommandService, Inject, Injector, isNullCell, Rectangle, RichTextValue, TextStyleValue, WrapStrategy } from '@univerjs/core';
+import {
+    BooleanNumber,
+    covertCellValue,
+    covertCellValues,
+    DEFAULT_STYLES,
+    Dimension,
+    getDisplayValueFromCell,
+    getOriginCellValue,
+    ICommandService,
+    ILogService,
+    Inject,
+    Injector,
+    isNullCell,
+    Rectangle,
+    RichTextValue,
+    TextStyleValue,
+    WrapStrategy,
+} from '@univerjs/core';
 import { FBaseInitialable } from '@univerjs/core/facade';
 import { FormulaDataModel, serializeRange, serializeRangeWithSheet } from '@univerjs/engine-formula';
 import {
@@ -54,6 +88,7 @@ import {
     SetRangeCustomMetadataCommand,
     SetRangeValuesCommand,
     SetSelectionsOperation,
+    SetShrinkToFitCommand,
     SetStyleCommand,
     SetTextRotationCommand,
     SetTextWrapCommand,
@@ -62,10 +97,16 @@ import {
     SheetRangeThemeService,
     SplitTextToColumnsCommand,
 } from '@univerjs/sheets';
+import { SHEETS_CUSTOM_FIELD_WARNING_MESSAGE } from './const';
 import { FWorkbook } from './f-workbook';
 import { FWorksheet } from './f-worksheet';
 import { FRangePermission } from './permission/f-range-permission';
-import { transformCoreHorizontalAlignment, transformCoreVerticalAlignment, transformFacadeHorizontalAlignment, transformFacadeVerticalAlignment } from './utils';
+import {
+    transformCoreHorizontalAlignment,
+    transformCoreVerticalAlignment,
+    transformFacadeHorizontalAlignment,
+    transformFacadeVerticalAlignment,
+} from './utils';
 
 export type FontLine = 'none' | 'underline' | 'line-through';
 export type FontStyle = 'normal' | 'italic';
@@ -95,7 +136,8 @@ export class FRange extends FBaseInitialable {
         protected readonly _range: IRange,
         @Inject(Injector) protected override readonly _injector: Injector,
         @ICommandService protected readonly _commandService: ICommandService,
-        @Inject(FormulaDataModel) protected readonly _formulaDataModel: FormulaDataModel
+        @Inject(FormulaDataModel) protected readonly _formulaDataModel: FormulaDataModel,
+        @ILogService protected readonly _logService: ILogService
     ) {
         super(_injector);
 
@@ -126,7 +168,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getUnitId());
      * ```
@@ -141,7 +184,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getSheetName());
      * ```
@@ -156,7 +200,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getSheetId());
      * ```
@@ -171,7 +216,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * const range = fRange.getRange();
      * const { startRow, startColumn, endRow, endColumn } = range;
@@ -188,7 +234,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getRow()); // 0
      * ```
@@ -203,7 +250,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getLastRow()); // 1
      * ```
@@ -218,7 +266,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getColumn()); // 0
      * ```
@@ -233,7 +282,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getLastColumn()); // 1
      * ```
@@ -243,12 +293,13 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Gets the width of the applied area
-     * @returns {number} The width of the area
+     * Returns the number of columns in this range.
+     * @returns {number} The column count, not a size in pixels.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getWidth());
      * ```
@@ -258,12 +309,13 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Gets the height of the applied area
-     * @returns {number} The height of the area
+     * Returns the number of rows in this range.
+     * @returns {number} The row count, not a size in pixels.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getHeight());
      * ```
@@ -273,12 +325,13 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Return range whether this range is merged
-     * @returns {boolean} if true is merged
+     * Checks whether this range exactly matches a merged cell range.
+     * @returns {boolean} `true` only for an exact merged range match. Use `isPartOfMerge()` to check overlap.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.isMerged());
      * // merge cells A1:B2
@@ -296,7 +349,7 @@ export class FRange extends FBaseInitialable {
      * Return first cell style data in this range. Please note that if there are row styles, col styles and (or)
      * worksheet style, they will be merged into the cell style. You can use `type` to specify the type of the style to get.
      *
-     * @param {GetStyleType} type - The type of the style to get. 'row' means get the composed style of row, col and
+     * @param {GetStyleType} [type] - The type of the style to get. 'row' means get the composed style of row, col and
      * default worksheet style. 'col' means get the composed style of col, row and default worksheet style.
      * 'cell' means get the style of cell without merging row style, col style and default worksheet style.
      * Default is 'row'.
@@ -305,7 +358,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCellStyleData());
      * ```
@@ -321,7 +375,7 @@ export class FRange extends FBaseInitialable {
     /**
      * Get the font family of the cell.
      *
-     * @param {GetStyleType} type - The type of the style to get. 'row' means get the composed style of row, col and
+     * @param {GetStyleType} [type] - The type of the style to get. 'row' means get the composed style of row, col and
      * default worksheet style. 'col' means get the composed style of col, row and default worksheet style.
      * 'cell' means get the style of cell without merging row style, col style and default worksheet style.
      * Default is 'row'.
@@ -330,7 +384,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getFontFamily());
      * ```
@@ -342,7 +397,7 @@ export class FRange extends FBaseInitialable {
     /**
      * Get the font size of the cell.
      *
-     * @param {GetStyleType} type - The type of the style to get. 'row' means get the composed style of row, col and
+     * @param {GetStyleType} [type] - The type of the style to get. 'row' means get the composed style of row, col and
      * default worksheet style. 'col' means get the composed style of col, row and default worksheet style.
      * 'cell' means get the style of cell without merging row style, col style and default worksheet style.
      * Default is 'row'.
@@ -351,7 +406,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getFontSize());
      * ```
@@ -363,7 +419,7 @@ export class FRange extends FBaseInitialable {
     /**
      * Return first cell style in this range.
      *
-     * @param {GetStyleType} type - The type of the style to get. 'row' means get the composed style of row, col and
+     * @param {GetStyleType} [type] - The type of the style to get. 'row' means get the composed style of row, col and
      * default worksheet style. 'col' means get the composed style of col, row and default worksheet style.
      * 'cell' means get the style of cell without merging row style, col style and default worksheet style.
      * Default is 'row'.
@@ -372,7 +428,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCellStyle());
      * ```
@@ -385,7 +442,7 @@ export class FRange extends FBaseInitialable {
     /**
      * Returns the cell styles for the cells in the range.
      *
-     * @param {GetStyleType} type - The type of the style to get. 'row' means get the composed style of row, col and
+     * @param {GetStyleType} [type] - The type of the style to get. 'row' means get the composed style of row, col and
      * default worksheet style. 'col' means get the composed style of col, row and default worksheet style.
      * 'cell' means get the style of cell without merging row style, col style and default worksheet style.
      * Default is 'row'.
@@ -394,7 +451,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCellStyles());
      * ```
@@ -418,7 +476,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValue());
      *
@@ -430,17 +489,19 @@ export class FRange extends FBaseInitialable {
     getValue(): CellValue | null;
     /**
      * Return first cell value in this range
-     * @param {boolean} includeRichText Should the returns of this func to include rich text
+     * @param {true} includeRichText Pass `true` to return a `RichTextValue` for rich-text content instead of plain text.
      * @returns {CellValue | RichTextValue | null} The cell value
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValue(true));
      *
      * // set the first cell value to 123
-     * const richText = univerAPI.newRichText({ body: { dataStream: 'Hello World\r\n' } })
+     * const richText = univerAPI.newRichText()
+     *   .text('Hello World')
      *   .setStyle(0, 1, { bl: 1, cl: { rgb: '#c81e1e' } })
      *   .setStyle(6, 7, { bl: 1, cl: { rgb: '#c81e1e' } });
      * fRange.setRichTextValueForCell(richText);
@@ -462,7 +523,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValueForCell({
      *   v: 0.2,
@@ -477,8 +539,7 @@ export class FRange extends FBaseInitialable {
      */
     getRawValue(): Nullable<CellValue> {
         const cell = this._worksheet.getCellMatrix().getValue(this._range.startRow, this._range.startColumn);
-        if (cell?.p && cell.p.body?.dataStream) return cell.p.body.dataStream;
-        return cell?.v ?? null;
+        return getOriginCellValue(cell);
     }
 
     /**
@@ -487,7 +548,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValueForCell({
      *   v: 0.2,
@@ -502,8 +564,7 @@ export class FRange extends FBaseInitialable {
      */
     getDisplayValue(): string {
         const cell = this._worksheet.getCell(this._range.startRow, this._range.startColumn);
-        if (cell?.p && cell.p.body?.dataStream) return cell.p.body.dataStream;
-        return cell?.v?.toString() ?? '';
+        return getDisplayValueFromCell(cell);
     }
 
     /**
@@ -513,7 +574,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Get plain values
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValues());
      * ```
@@ -521,13 +583,14 @@ export class FRange extends FBaseInitialable {
     getValues(): Nullable<CellValue>[][];
     /**
      * Returns the cell values for the cells in the range.
-     * @param {boolean} includeRichText Should the returns of this func to include rich text
+     * @param {true} includeRichText Pass `true` to return `RichTextValue` entries for rich-text content instead of plain text.
      * @returns {Nullable<RichTextValue | CellValue>[][]} A two-dimensional array of cell values.
      * @example
      * ```ts
      * // Get values with rich text if available
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValues(true));
      * ```
@@ -559,7 +622,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValues([
      *   [
@@ -605,11 +669,8 @@ export class FRange extends FBaseInitialable {
 
             for (let c = startColumn; c <= endColumn; c++) {
                 const cell = cellMatrix.getValue(r, c);
-                if (cell?.p && cell.p.body?.dataStream) {
-                    row.push(cell.p.body.dataStream);
-                } else {
-                    row.push(cell?.v ?? null);
-                }
+                const rawValue = getOriginCellValue(cell);
+                row.push(rawValue);
             }
 
             values.push(row);
@@ -624,7 +685,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValues([
      *   [
@@ -669,12 +731,8 @@ export class FRange extends FBaseInitialable {
 
             for (let c = startColumn; c <= endColumn; c++) {
                 const cell = this._worksheet.getCell(r, c);
-
-                if (cell?.p && cell.p.body?.dataStream) {
-                    row.push(cell.p.body.dataStream);
-                } else {
-                    row.push(cell?.v?.toString() ?? '');
-                }
+                const displayValue = getDisplayValueFromCell(cell);
+                row.push(displayValue);
             }
 
             values.push(row);
@@ -689,7 +747,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCellData());
      * ```
@@ -704,7 +763,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCellDatas());
      * ```
@@ -719,7 +779,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCellDataGrid());
      * ```
@@ -746,7 +807,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getRichTextValue());
      * ```
@@ -768,7 +830,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getRichTextValues());
      * ```
@@ -786,7 +849,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValueAndRichTextValue());
      * ```
@@ -802,7 +866,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValueAndRichTextValues());
      * ```
@@ -818,7 +883,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getFormula());
      * ```
@@ -838,7 +904,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getFormulas());
      * ```
@@ -870,7 +937,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getWrap());
      * ```
@@ -880,12 +948,22 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
+     * Gets whether the top-left cell shrinks its font size to fit the cell width.
+     * @returns {boolean} Whether shrink-to-fit is enabled for the top-left cell.
+     */
+    getShrinkToFit(): boolean {
+        const { startRow, startColumn } = this._range;
+        return this._worksheet.getComposedCellStyle(startRow, startColumn)?.stf === BooleanNumber.TRUE;
+    }
+
+    /**
      * Gets whether text wrapping is enabled for cells in the range.
      * @returns {boolean[][]} A two-dimensional array of whether text wrapping is enabled for each cell in the range.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getWraps());
      */
@@ -901,7 +979,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getWrapStrategy());
      * ```
@@ -916,7 +995,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getHorizontalAlignment());
      * ```
@@ -932,7 +1012,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getHorizontalAlignments());
      * ```
@@ -948,7 +1029,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getVerticalAlignment());
      * ```
@@ -963,7 +1045,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getVerticalAlignments());
      * ```
@@ -977,15 +1060,19 @@ export class FRange extends FBaseInitialable {
      * Set custom meta data for first cell in current range.
      * @param {CustomData} data The custom meta data
      * @returns {FRange} This range, for chaining
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setCustomMetaData({ key: 'value' });
      * console.log(fRange.getCustomMetaData());
      * ```
      */
     setCustomMetaData(data: CustomData): FRange {
+        this._logService.warn(SHEETS_CUSTOM_FIELD_WARNING_MESSAGE);
+
         const params: ISetRangeCustomMetadataCommandParams = {
             unitId: this._workbook.getUnitId(),
             subUnitId: this._worksheet.getSheetId(),
@@ -1004,9 +1091,11 @@ export class FRange extends FBaseInitialable {
      * Set custom meta data for current range.
      * @param {CustomData[][]} datas The custom meta data
      * @returns {FRange} This range, for chaining
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setCustomMetaDatas([
      *   [{ key: 'value' }, { key: 'value2' }],
@@ -1016,6 +1105,8 @@ export class FRange extends FBaseInitialable {
      * ```
      */
     setCustomMetaDatas(datas: CustomData[][]): FRange {
+        this._logService.warn(SHEETS_CUSTOM_FIELD_WARNING_MESSAGE);
+
         const params: ISetRangeCustomMetadataCommandParams = {
             unitId: this._workbook.getUnitId(),
             subUnitId: this._worksheet.getSheetId(),
@@ -1034,28 +1125,34 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCustomMetaData());
      * ```
      */
     getCustomMetaData(): CustomData | null {
+        this._logService.warn(SHEETS_CUSTOM_FIELD_WARNING_MESSAGE);
+
         const cell = this.getCellData();
         return cell?.custom ?? null;
     }
 
     /**
      * Returns the custom meta data for the cells in the range.
-     * @returns {CustomData[][]} A two-dimensional array of custom meta data
+     * @returns {Nullable<CustomData>[][]} A two-dimensional array of custom metadata, with `null` for cells without metadata.
      * @example
      * ```
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getCustomMetaDatas());
      * ```
      */
     getCustomMetaDatas(): Nullable<CustomData>[][] {
+        this._logService.warn(SHEETS_CUSTOM_FIELD_WARNING_MESSAGE);
+
         const dataGrid = this.getCellDataGrid();
         return dataGrid.map((row) => row.map((data) => data?.custom ?? null));
     }
@@ -1069,7 +1166,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setBorder(univerAPI.Enum.BorderType.ALL, univerAPI.Enum.BorderStyleTypes.THIN, '#ff0000');
      * ```
@@ -1096,7 +1194,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getBackground());
      * ```
@@ -1112,7 +1211,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getBackgrounds());
      * ```
@@ -1129,7 +1229,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setBackgroundColor('red');
      * ```
@@ -1156,7 +1257,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setBackground('red');
      * ```
@@ -1173,7 +1275,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setTextRotation(45);
      * ```
@@ -1189,17 +1292,55 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Sets the value of the range.
-     * @param {CellValue | ICellData} value The value can be a number, string, boolean, or standard cell format. If it begins with `=`, it is interpreted as a formula. The value is tiled to all cells in the range.
+     * Sets the value or specified cell properties for every cell in this range.
+     *
+     * There are two input modes:
+     *
+     * - `CellValue` (`number`, `string`, or `boolean`): replaces the cell content. A string starting
+     *   with `=` and containing at least one more character is written as a formula (`f`), clearing
+     *   the previous value (`v`) and rich text (`p`). Other values clear the previous formula and
+     *   rich text. Strings recognized as formatted numbers (for example, percentages, dates, or
+     *   currencies) are converted to numeric values and apply the parsed number format. Existing
+     *   formatting is otherwise preserved.
+     * - `ICellData`: updates cell-data fields directly, for explicit control over `v` (value),
+     *   `f` (formula), `p` (rich text), `t` (value type), and `s` (style). The object bypasses the
+     *   formula and formatted-number parsing above: `{ v: '=SUM(A1:A2)' }` does not set a formula;
+     *   use `{ f: '=SUM(A1:A2)', v: null, p: null }` instead. Omitted content fields are not
+     *   automatically cleared, so use `f: null` and `p: null` when replacing a formula or rich text
+     *   with `v`. Use `v: null` to clear the stored value. Supplied style properties are merged into
+     *   the existing style; `s: null` clears the style.
+     *
+     * In both modes, the stored value is converted according to its cell type. Unless an `ICellData`
+     * input supplies `t`, the type is inferred from the value, number format, and existing cell type.
+     * Consequently, passing `{ v: '00123' }` alone does not guarantee that the value stays a string;
+     * supply `t: CellValueType.STRING` to store it as text.
+     *
+     * @param {CellValue | ICellData} value The scalar content or cell-data update to apply throughout the range.
      * @returns {FRange} This range, for chaining
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
-     * const fRange = fWorksheet.getRange('B2');
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
+     * const fRange = fWorksheet.getRange('B2:B3');
+     *
+     * // Replace the content of both cells, preserving their formatting.
      * fRange.setValue(123);
      *
-     * // or
-     * fRange.setValue({ v: 234, s: { bg: { rgb: '#ff0000' } } });
+     * // Parse a percentage and apply its number format to both cells.
+     * fRange.setValue('25%');
+     *
+     * // Write the same formula to both cells.
+     * fRange.setValue('=SUM(A1:A2)');
+     *
+     * // Explicitly replace content and update the background color.
+     * fRange.setValue({ v: 234, f: null, p: null, s: { bg: { rgb: '#ff0000' } } });
+     *
+     * // Store numeric-looking text (CellValueType is imported from '@univerjs/core').
+     * fRange.setValue({ v: '00123', t: CellValueType.STRING, f: null, p: null });
+     *
+     * // Clear value, formula, and rich text while preserving formatting.
+     * fRange.setValue({ v: null, f: null, p: null });
      * ```
      */
     setValue(value: CellValue | ICellData): FRange {
@@ -1220,12 +1361,15 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Set new value for current cell, first cell in this range.
-     * @param {CellValue | ICellData} value  The value can be a number, string, boolean, or standard cell format. If it begins with `=`, it is interpreted as a formula. The value is tiled to all cells in the range.
+     * Sets the value or specified cell properties of the top-left cell in this range.
+     * Uses the same scalar parsing and cell-data update rules as {@link FRange.setValue}.
+     * @param {CellValue | ICellData} value  The scalar content or cell-data update to apply to the top-left cell only.
      * @returns {FRange} This range, for chaining
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValueForCell(123);
      *
@@ -1262,7 +1406,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValue(true));
      *
@@ -1294,12 +1439,13 @@ export class FRange extends FBaseInitialable {
 
     /**
      * Set the rich text value for the cells in the range.
-     * @param {RichTextValue[][]} values The rich text value
+     * @param {(RichTextValue | IDocumentData)[][]} values A two-dimensional array of rich-text values or document data matching this range's dimensions.
      * @returns {FRange} The range
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getValue(true));
      *
@@ -1310,7 +1456,7 @@ export class FRange extends FBaseInitialable {
      *   .setStyle(6, 7, { bl: 1, cl: { rgb: '#c81e1e' } });
      * fRange.setRichTextValues([
      *   [richText, richText],
-     *   [null, null]
+     *   [richText, richText]
      * ]);
      * console.log(fRange.getValue(true).toPlainText()); // Hello World
      * ```
@@ -1331,13 +1477,15 @@ export class FRange extends FBaseInitialable {
 
     /**
      * Set the cell wrap of the given range.
-     * Cells with wrap enabled (the default) resize to display their full content. Cells with wrap disabled display as much as possible in the cell without resizing or running to multiple lines.
+     * Pass `true` to set `WrapStrategy.WRAP`, or `false` to reset to `WrapStrategy.UNSPECIFIED`.
+     * Use `setWrapStrategy()` to explicitly select clipping or overflow behavior.
      * @param {boolean} isWrapEnabled Whether to enable wrap
      * @returns {FRange} this range, for chaining
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setWrap(true);
      * console.log(fRange.getWrap());
@@ -1355,13 +1503,34 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
+     * Sets whether cells shrink their font size to fit the cell width.
+     * @param {boolean} enabled Whether to enable shrink-to-fit for this range.
+     * @returns {FRange} This range, for chaining.
+     * @example
+     * ```ts
+     * univerAPI.getActiveWorkbook()?.getActiveSheet().getRange('A1:B2').setShrinkToFit(true);
+     * ```
+     */
+    setShrinkToFit(enabled: boolean): FRange {
+        this._commandService.syncExecuteCommand(SetShrinkToFitCommand.id, {
+            unitId: this._workbook.getUnitId(),
+            subUnitId: this._worksheet.getSheetId(),
+            range: this._range,
+            value: enabled ? BooleanNumber.TRUE : BooleanNumber.FALSE,
+        } as ISetShrinkToFitCommandParams);
+
+        return this;
+    }
+
+    /**
      * Sets the text wrapping strategy for the cells in the range.
      * @param {WrapStrategy} strategy The text wrapping strategy
      * @returns {FRange} this range, for chaining
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setWrapStrategy(univerAPI.Enum.WrapStrategy.WRAP);
      * console.log(fRange.getWrapStrategy());
@@ -1380,12 +1549,13 @@ export class FRange extends FBaseInitialable {
 
     /**
      * Set the vertical (top to bottom) alignment for the given range (top/middle/bottom).
-     * @param {"top" | "middle" | "bottom"} alignment The vertical alignment
+     * @param {FVerticalAlignment} alignment The vertical alignment
      * @returns {FRange} this range, for chaining
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setVerticalAlignment('top');
      * ```
@@ -1403,12 +1573,13 @@ export class FRange extends FBaseInitialable {
 
     /**
      * Set the horizontal (left to right) alignment for the given range (left/center/right).
-     * @param {"left" | "center" | "normal"} alignment The horizontal alignment
+     * @param {FHorizontalAlignment} alignment The horizontal alignment
      * @returns {FRange} this range, for chaining
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setHorizontalAlignment('left');
      * ```
@@ -1425,18 +1596,30 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Sets a different value for each cell in the range. The value can be a two-dimensional array or a standard range matrix (must match the dimensions of this range), consisting of numbers, strings, Boolean values or Composed of standard cell formats. If a value begins with `=`, it is interpreted as a formula.
-     * @param {CellValue[][] | IObjectMatrixPrimitiveType<CellValue> | ICellData[][] | IObjectMatrixPrimitiveType<ICellData>} value The value can be a two-dimensional array or a standard range matrix (must match the dimensions of this range), consisting of numbers, strings, Boolean values or Composed of standard cell formats.
+     * Sets cell values or specified cell properties using an array or a sparse matrix.
+     * Each entry follows the scalar parsing and cell-data update rules of {@link FRange.setValue}.
+     *
+     * A two-dimensional array is relative to this range's top-left cell and must match its dimensions.
+     * A sparse matrix uses absolute, zero-based worksheet row and column keys. Only supplied entries
+     * are updated; matrix coordinates are not offset by or clipped to this range.
+     * @param {CellValue[][] | IObjectMatrixPrimitiveType<CellValue> | ICellData[][] | IObjectMatrixPrimitiveType<ICellData>} value An array relative to this range, or a sparse matrix using absolute worksheet coordinates.
      * @returns {FRange} This range, for chaining
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setValues([
      *   [1, { v: 2, s: { bg: { rgb: '#ff0000' } } }],
      *   [3, 4]
      * ]);
+     *
+     * // Update only B2 and C3 using absolute worksheet coordinates.
+     * fWorksheet.getRange('B2:C3').setValues({
+     *   1: { 1: 'B2' },
+     *   2: { 2: { v: 10, f: null, p: null } },
+     * });
      * ```
      */
     setValues(
@@ -1465,7 +1648,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFontWeight('bold');
      * ```
@@ -1506,7 +1690,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFontStyle('italic');
      * ```
@@ -1547,7 +1732,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFontLine('underline');
      * ```
@@ -1624,7 +1810,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFontFamily('Arial');
      * ```
@@ -1653,7 +1840,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFontSize(24);
      * ```
@@ -1682,7 +1870,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFontColor('#ff0000');
      * ```
@@ -1719,7 +1908,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.merge();
      * console.log(fRange.isMerged());
@@ -1727,7 +1917,8 @@ export class FRange extends FBaseInitialable {
      *
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('B1:C2');
      * // Assume A1:B2 is already merged.
      * fRange.merge({ isForceMerge: true });
@@ -1752,7 +1943,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Assume the active sheet is a new sheet with no merged cells.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.mergeAcross();
      * // There will be two merged cells. A1:B1 and A2:B2.
@@ -1764,7 +1956,8 @@ export class FRange extends FBaseInitialable {
      *
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('B1:C2');
      * // Assume A1:B2 is already merged.
      * fRange.mergeAcross({ isForceMerge: true });
@@ -1790,7 +1983,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Assume the active sheet is a new sheet with no merged cells.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.mergeVertically();
      * // There will be two merged cells. A1:A2 and B1:B2.
@@ -1802,7 +1996,8 @@ export class FRange extends FBaseInitialable {
      *
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('B1:C2');
      * // Assume A1:B2 is already merged.
      * fRange.mergeVertically({ isForceMerge: true });
@@ -1824,7 +2019,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.merge();
      * const anchor = fWorksheet.getRange('A1');
@@ -1842,7 +2038,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.merge();
      * const anchor = fWorksheet.getRange('A1');
@@ -1868,9 +2065,11 @@ export class FRange extends FBaseInitialable {
      * @param {number} callback.row the row number of the cell
      * @param {number} callback.col the column number of the cell
      * @param {ICellData} callback.cell the cell data
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.forEach((row, col, cell) => {
      *   console.log(row, col, cell);
@@ -1893,9 +2092,11 @@ export class FRange extends FBaseInitialable {
      * @param {AbsoluteRefType} [startAbsoluteRefType] - The absolute reference type for the start cell.
      * @param {AbsoluteRefType} [endAbsoluteRefType] - The absolute reference type for the end cell.
      * @returns {string} The A1 notation of the range.
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // By default, the A1 notation is returned without the sheet name and without absolute reference types.
      * const fRange = fWorksheet.getRange('A1:B2');
@@ -1935,7 +2136,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.activate(); // the active cell will be A1
      * ```
@@ -1955,7 +2157,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set the range A1:B2 as the active range, default active cell is A1
      * const fRange = fWorksheet.getRange('A1:B2');
@@ -2022,7 +2225,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // A1:A3 has following values:
      * //    A    |
@@ -2056,7 +2260,8 @@ export class FRange extends FBaseInitialable {
      * @example Show how to split text to columns with combined delimiter. The bit operations are used to combine the delimiters.
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // A1:A3 has following values:
      * //     A   |
@@ -2091,7 +2296,8 @@ export class FRange extends FBaseInitialable {
      * @example Show how to split text to columns with custom delimiter
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // A1:A3 has following values:
      * //     A   |
@@ -2134,7 +2340,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:E20');
      * fRange.useThemeStyle('default');
      * ```
@@ -2161,7 +2368,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:E20');
      * fRange.removeThemeStyle('default');
      * ```
@@ -2181,7 +2389,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:E20');
      * console.log(fRange.getUsedThemeStyle()); // undefined
      * fRange.useThemeStyle('default');
@@ -2197,15 +2406,17 @@ export class FRange extends FBaseInitialable {
     }
 
     /**
-     * Clears content and formatting information of the range. Or Optionally clears only the contents or only the formatting.
+     * Clears the range content and formatting, or only one of them as specified by the options.
+     * Both content and formatting are cleared when both flags are true or both are false.
      * @param {IFacadeClearOptions} [options] - Options for clearing the range. If not provided, the contents and formatting are cleared both.
-     * @param {boolean} [options.contentsOnly] - If true, the contents of the range are cleared. If false, the contents and formatting are cleared. Default is false.
-     * @param {boolean} [options.formatOnly] - If true, the formatting of the range is cleared. If false, the contents and formatting are cleared. Default is false.
-     * @returns {FWorksheet} Returns the current worksheet instance for method chaining
+     * @param {boolean} [options.contentsOnly] - If true, the contents of the range are cleared. Effective only when `formatOnly` is false. Defaults to false.
+     * @param {boolean} [options.formatOnly] - Clears only formatting when true and `contentsOnly` is false. Defaults to false.
+     * @returns {FRange} This range, for chaining.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorkSheet = fWorkbook.getActiveSheet();
+     * const fWorkSheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorkSheet) return;
      * const fRange = fWorkSheet.getRange('A1:D10');
      *
      * // clear the content and format of the range A1:D10
@@ -2235,11 +2446,12 @@ export class FRange extends FBaseInitialable {
 
     /**
      * Clears content of the range, while preserving formatting information.
-     * @returns {FWorksheet} Returns the current worksheet instance for method chaining
+     * @returns {FRange} This range, for chaining.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorkSheet = fWorkbook.getActiveSheet();
+     * const fWorkSheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorkSheet) return;
      * const fRange = fWorkSheet.getRange('A1:D10');
      *
      * // clear the content only of the range A1:D10
@@ -2257,11 +2469,12 @@ export class FRange extends FBaseInitialable {
 
     /**
      * Clears formatting information of the range, while preserving contents.
-     * @returns {FWorksheet} Returns the current worksheet instance for method chaining
+     * @returns {FRange} This range, for chaining.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorkSheet = fWorkbook.getActiveSheet();
+     * const fWorkSheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorkSheet) return;
      * const fRange = fWorkSheet.getRange('A1:D10');
      * // clear the format only of the range A1:D10
      * fRange.clearFormat();
@@ -2283,7 +2496,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Assume the active sheet empty sheet.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const values = [
      *   [1, 2, 3, 4],
      *   [2, 3, 4, 5],
@@ -2350,7 +2564,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Assume the active sheet empty sheet.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const values = [
      *   [1, 2, 3, 4],
      *   [2, 3, 4, 5],
@@ -2421,7 +2636,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Assume the active sheet is a new sheet with no data.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Set the range A1:D4 with some values, the range A1:D4 will be:
      * //  |     |     |
@@ -2446,7 +2662,6 @@ export class FRange extends FBaseInitialable {
      * console.log(range3.getA1Notation()); // B2:D4
      * ```
      */
-    // eslint-disable-next-line complexity
     getDataRegion(dimension?: Dimension): FRange {
         const { startRow, startColumn, endRow, endColumn } = this._range;
         const maxRows = this._worksheet.getMaxRows();
@@ -2530,7 +2745,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Assume the active sheet is a new sheet with no data.
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.isBlank()); // true
      *
@@ -2570,7 +2786,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getA1Notation()); // A1:B2
      *
@@ -2589,7 +2806,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getA1Notation()); // A1:B2
      *
@@ -2603,13 +2821,14 @@ export class FRange extends FBaseInitialable {
      * Returns a new range that is relative to the current range, whose upper left point is offset from the current range by the given rows and columns, and with the given height and width in cells.
      * @param {number} rowOffset - The number of rows down from the range's top-left cell; negative values represent rows up from the range's top-left cell.
      * @param {number} columnOffset - The number of columns right from the range's top-left cell; negative values represent columns left from the range's top-left cell.
-     * @param {number} numRows - The height in rows of the new range.
-     * @param {number} numColumns - The width in columns of the new range.
+     * @param {number} [numRows] - The height in rows of the new range.
+     * @param {number} [numColumns] - The width in columns of the new range.
      * @returns {FRange} The new range.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * console.log(fRange.getA1Notation()); // A1:B2
      *
@@ -2645,7 +2864,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1');
      * fRange.setFormula('=SUM(A2:A5)');
      * console.log(fRange.getFormula()); // '=SUM(A2:A5)'
@@ -2664,7 +2884,8 @@ export class FRange extends FBaseInitialable {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B2');
      * fRange.setFormulas([
      *   ['=SUM(A2:A5)', '=SUM(B2:B5)'],
@@ -2683,7 +2904,8 @@ export class FRange extends FBaseInitialable {
      * @returns {FRangePermission} - The RangePermission instance.
      * @example
      * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:B10');
      * const permission = fRange.getRangePermission();
      *
@@ -2726,7 +2948,8 @@ export class FRange extends FBaseInitialable {
      * ```ts
      * // Auto-fill the range D1:D10 based on the data in the range C1:C2
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const fRange = fWorksheet.getRange('A1:A4');
      *
      * // Auto-fill without specifying applyType (default behavior)

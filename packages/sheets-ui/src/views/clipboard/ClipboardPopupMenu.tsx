@@ -20,24 +20,24 @@ import { ICommandService, IUniverInstanceService, LocaleService } from '@univerj
 import { borderClassName, clsx, DropdownMenu } from '@univerjs/design';
 import { convertTransformToOffsetX, convertTransformToOffsetY, IRenderManagerService } from '@univerjs/engine-render';
 import { MoreDownIcon, PasteSpecialDoubleIcon } from '@univerjs/icons';
-import { useDependency, useObservable } from '@univerjs/ui';
+import { ILayoutService, useDependency, useObservable } from '@univerjs/ui';
 import { useState } from 'react';
 import { SheetOptionalPasteCommand } from '../../commands/commands/clipboard.command';
-import { useActiveWorkbook } from '../../components/hook';
+import { getViewportByCell } from '../../common/utils';
 import { getSheetObject } from '../../controllers/utils/component-tools';
 import { ISheetClipboardService, PREDEFINED_HOOK_NAME_PASTE } from '../../services/clipboard/clipboard.service';
-import { ISheetSelectionRenderService } from '../../services/selection/base-selection-render.service';
 import { SheetSkeletonManagerService } from '../../services/sheet-skeleton-manager.service';
+import { useActiveWorkbook } from '../hook';
 
 const DEFAULT_PADDING = 2;
 
 const SheetPasteOptions = [
-    { value: 'DEFAULT_PASTE', label: 'rightClick.paste' },
-    { value: 'SPECIAL_PASTE_VALUE', label: 'rightClick.pasteValue' },
-    { value: 'SPECIAL_PASTE_FORMAT', label: 'rightClick.pasteFormat' },
-    { value: 'SPECIAL_PASTE_COL_WIDTH', label: 'rightClick.pasteColWidth' },
-    { value: 'SPECIAL_PASTE_BESIDES_BORDER', label: 'rightClick.pasteBesidesBorder' },
-    { value: 'SPECIAL_PASTE_FORMULA', label: 'formula.operation.pasteFormula' },
+    { value: 'DEFAULT_PASTE', label: 'sheets-ui.rightClick.paste' },
+    { value: 'SPECIAL_PASTE_VALUE', label: 'sheets-ui.rightClick.pasteValue' },
+    { value: 'SPECIAL_PASTE_FORMAT', label: 'sheets-ui.rightClick.pasteFormat' },
+    { value: 'SPECIAL_PASTE_COL_WIDTH', label: 'sheets-ui.rightClick.pasteColWidth' },
+    { value: 'SPECIAL_PASTE_BESIDES_BORDER', label: 'sheets-ui.rightClick.pasteBesidesBorder' },
+    { value: 'SPECIAL_PASTE_FORMULA', label: 'sheets-ui.rightClick.pasteFormula' },
 ];
 
 const useMenuPosition = (range?: IDiscreteRange) => {
@@ -58,16 +58,16 @@ const useMenuPosition = (range?: IDiscreteRange) => {
         return null;
     }
 
-    const ru = renderManagerService.getRenderById(workbook.getUnitId());
+    const ru = renderManagerService.getRenderUnitById(workbook.getUnitId());
     const sheetSkeletonManagerService = ru?.with(SheetSkeletonManagerService);
-    const selectionRenderService = ru?.with(ISheetSelectionRenderService);
 
     const sheetObject = getSheetObject(univerInstanceService, renderManagerService);
-    if (!sheetObject || !selectionRenderService) return null;
+    if (!sheetObject) return null;
 
     const { scene } = sheetObject;
     const skeleton = sheetSkeletonManagerService?.getCurrentSkeleton();
-    const viewport = selectionRenderService.getViewPort();
+    const viewport = getViewportByCell(anchor.endRow, anchor.endCol, scene, workbook.getActiveSheet());
+    if (!viewport) return null;
     const scaleX = scene?.scaleX;
     const scaleY = scene?.scaleY;
     const scrollXY = scene?.getViewportScrollXY(viewport);
@@ -106,13 +106,18 @@ const useMenuPosition = (range?: IDiscreteRange) => {
     };
 };
 
-export const ClipboardPopupMenu = () => {
+export interface IClipboardPopupMenuProps {
+    DropdownMenuComponent?: typeof DropdownMenu;
+}
+
+export const ClipboardPopupMenu = ({ DropdownMenuComponent = DropdownMenu }: IClipboardPopupMenuProps = {}) => {
     const clipboardService = useDependency(ISheetClipboardService);
     const showMenu = useObservable(clipboardService.showMenu$, false);
     // const clipboardController = useDependency(SheetClipboardController);
     const pasteOptionsCache = useObservable(clipboardService.pasteOptionsCache$, null);
     const localeService = useDependency(LocaleService);
     const commandService = useDependency(ICommandService);
+    const layoutService = useDependency(ILayoutService);
 
     const [menuHovered, setMenuHovered] = useState(false);
     const [visible, setVisible] = useState(false);
@@ -145,8 +150,12 @@ export const ClipboardPopupMenu = () => {
                 onMouseEnter={() => setMenuHovered(true)}
                 onMouseLeave={() => setMenuHovered(false)}
             >
-                <DropdownMenu
+                <DropdownMenuComponent
                     align="start"
+                    onCloseAutoFocus={(event) => {
+                        event.preventDefault();
+                        layoutService.focus();
+                    }}
                     items={SheetPasteOptions.map((item) => ({
                         type: 'checkbox',
                         value: item.value,
@@ -164,18 +173,18 @@ export const ClipboardPopupMenu = () => {
                           dark:hover:!univer-bg-gray-800
                         `, borderClassName, {
                             'univer-bg-gray-100 dark:!univer-bg-gray-800': visible,
-                            'univer-bg-white dark:!univer-bg-gray-900': !visible,
+                            'univer-bg-gray-0 dark:!univer-bg-gray-900': !visible,
                         })}
                     >
                         <PasteSpecialDoubleIcon
                             className={`
                               univer-fill-primary-600 univer-text-gray-900
-                              dark:!univer-text-white
+                              dark:!univer-text-gray-0
                             `}
                         />
-                        {showMore && <MoreDownIcon className="dark:!univer-text-white" />}
+                        {showMore && <MoreDownIcon className="dark:!univer-text-gray-0" />}
                     </div>
-                </DropdownMenu>
+                </DropdownMenuComponent>
             </div>
         </div>
     );

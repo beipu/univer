@@ -15,29 +15,33 @@
  */
 
 import type { ICustomRange, IDocumentBody, IParagraph } from '../../../../types/interfaces';
-import { generateRandomId, Tools } from '../../../../shared';
+import { Tools } from '../../../../shared';
+import { generateRandomId } from '../../../../shared/random-id';
 import { CustomRangeType } from '../../../../types/interfaces';
+import { createParagraphId } from '../../../paragraph-id';
 import { DataStreamTreeTokenType } from '../../types';
 
 const tags = [
-    // DataStreamTreeTokenType.PARAGRAPH, // 段落
-    // DataStreamTreeTokenType.SECTION_BREAK, // 章节
-    DataStreamTreeTokenType.TABLE_START, // 表格开始
-    DataStreamTreeTokenType.TABLE_ROW_START, // 表格开始
-    DataStreamTreeTokenType.TABLE_CELL_START, // 表格开始
-    DataStreamTreeTokenType.TABLE_CELL_END, // 表格开始
-    DataStreamTreeTokenType.TABLE_ROW_END, // 表格开始
-    DataStreamTreeTokenType.TABLE_END, // 表格结束
-    // DataStreamTreeTokenType.COLUMN_BREAK, // 换列
-    // DataStreamTreeTokenType.PAGE_BREAK, // 换页
-    // DataStreamTreeTokenType.DOCS_END, // 文档结尾
-    // DataStreamTreeTokenType.TAB, // 制表符
-    // DataStreamTreeTokenType.CUSTOM_BLOCK, // 图片 mention 等不参与文档流的场景
+    // DataStreamTreeTokenType.PARAGRAPH, // paragraph
+    // DataStreamTreeTokenType.SECTION_BREAK, // section break
+    DataStreamTreeTokenType.TABLE_START, // table start
+    DataStreamTreeTokenType.TABLE_ROW_START, // table start
+    DataStreamTreeTokenType.TABLE_CELL_START, // table start
+    DataStreamTreeTokenType.TABLE_CELL_END, // table start
+    DataStreamTreeTokenType.TABLE_ROW_END, // table start
+    DataStreamTreeTokenType.TABLE_END, // table end
+    DataStreamTreeTokenType.BLOCK_START, // block start
+    DataStreamTreeTokenType.BLOCK_END, // block end
+    // DataStreamTreeTokenType.COLUMN_BREAK, // column break
+    // DataStreamTreeTokenType.PAGE_BREAK, // page break
+    // DataStreamTreeTokenType.DOCS_END, // document end
+    // DataStreamTreeTokenType.TAB, // tab
+    // DataStreamTreeTokenType.CUSTOM_BLOCK, // images, mentions, etc. that do not participate in document flow
 ];
 
 export const getPlainText = (dataStream: string) => {
-    const text = dataStream.endsWith('\r\n') ? dataStream.slice(0, -2) : dataStream;
-    return tags.reduce((res, curr) => res.replaceAll(curr, ''), text);
+    const text = tags.reduce((res, curr) => res.replaceAll(curr, ''), dataStream);
+    return text.endsWith('\r\n') ? text.slice(0, -2) : text;
 };
 
 export const isEmptyDocument = (dataStream?: string) => {
@@ -49,8 +53,9 @@ export const isEmptyDocument = (dataStream?: string) => {
 };
 
 export const fromPlainText = (text: string): IDocumentBody => {
-    const dataStream = text.replace(/\n/g, '\r');
+    const dataStream = text.replace(/\r\n?|\n/g, '\r');
     const paragraphs: IParagraph[] = [];
+    const existingParagraphIds = new Set<string>();
     const customRanges: ICustomRange[] = [];
     let cursor = 0;
     let newDataStream = '';
@@ -74,13 +79,13 @@ export const fromPlainText = (text: string): IDocumentBody => {
             cursor = i + 1;
             if (insertP) {
                 newDataStream += '\r';
-                paragraphs.push({ startIndex: i });
+                paragraphs.push({ startIndex: i, paragraphId: createParagraphId(existingParagraphIds) });
             }
         } else {
             newDataStream += dataStream.slice(cursor, i + 1);
             cursor = i + 1;
             if (insertP) {
-                paragraphs.push({ startIndex: i });
+                paragraphs.push({ startIndex: i, paragraphId: createParagraphId(existingParagraphIds) });
             }
         }
     };

@@ -17,23 +17,33 @@
 import type { Dependency } from '@univerjs/core';
 import type { IUniverDocsQuickInsertUIConfig } from './config/config';
 import { DependentOn, IConfigService, Inject, Injector, merge, Plugin, UniverInstanceType } from '@univerjs/core';
+import { UniverDocsPlugin } from '@univerjs/docs';
 import { UniverDocsDrawingPlugin } from '@univerjs/docs-drawing';
 import { UniverDocsDrawingUIPlugin } from '@univerjs/docs-drawing-ui';
+import { UniverDocsUIPlugin } from '@univerjs/docs-ui';
 import { UniverDrawingPlugin } from '@univerjs/drawing';
 import { UniverDrawingUIPlugin } from '@univerjs/drawing-ui';
-import { IRenderManagerService } from '@univerjs/engine-render';
-import { UniverUIPlugin } from '@univerjs/ui';
+import { IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render';
 import pkg from '../package.json';
-import { defaultPluginConfig, DOCS_QUICK_INSERT_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { defaultPluginConfig, DOCS_QUICK_INSERT_UI_PLUGIN_CONFIG_KEY, DOCS_QUICK_INSERT_UI_PLUGIN_NAME } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { DocQuickInsertTriggerController } from './controllers/doc-quick-insert-trigger.controller';
-import { DocQuickInsertUIController } from './controllers/doc-quick-insert-ui.controller';
+import { DocQuickInsertUIController } from './controllers/ui.controller';
 import { DocQuickInsertMenuController } from './menu/doc-quick-insert-menu.controller';
 import { DocQuickInsertPopupService } from './services/doc-quick-insert-popup.service';
 
-@DependentOn(UniverDrawingUIPlugin, UniverDrawingPlugin, UniverDocsDrawingUIPlugin, UniverDocsDrawingPlugin, UniverUIPlugin)
+@DependentOn(
+    UniverDocsPlugin,
+    UniverDrawingPlugin,
+    UniverRenderEnginePlugin,
+    UniverDocsDrawingPlugin,
+    UniverDocsUIPlugin,
+    UniverDrawingUIPlugin,
+    UniverDocsDrawingUIPlugin
+)
 export class UniverDocsQuickInsertUIPlugin extends Plugin {
     static override type = UniverInstanceType.UNIVER_DOC;
-    static override pluginName = 'DOC_QUICK_INSERT_UI_PLUGIN';
+    static override pluginName = DOCS_QUICK_INSERT_UI_PLUGIN_NAME;
     static override packageName = pkg.name;
     static override version = pkg.version;
 
@@ -59,6 +69,7 @@ export class UniverDocsQuickInsertUIPlugin extends Plugin {
 
     override onStarting(): void {
         const dependencies: Dependency[] = [
+            [ComponentsController],
             [DocQuickInsertUIController],
             [DocQuickInsertTriggerController],
             [DocQuickInsertPopupService],
@@ -66,6 +77,7 @@ export class UniverDocsQuickInsertUIPlugin extends Plugin {
 
         dependencies.forEach((dependency) => this._injector.add(dependency));
 
+        this._injector.get(ComponentsController);
         this._injector.get(DocQuickInsertUIController);
     }
 

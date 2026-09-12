@@ -16,9 +16,8 @@
 
 import type { DocumentDataModel, ICommand, IDocumentBody, IMutationInfo, PresetListType } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
-import { BuildTextUtils, CommandType, ICommandService, IUniverInstanceService, JSONX, UniverInstanceType } from '@univerjs/core';
+import { BuildTextUtils, CommandType, createParagraphId, getRichTextEditPath, ICommandService, IUniverInstanceService, JSONX, UniverInstanceType } from '@univerjs/core';
 import { DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
-import { getRichTextEditPath } from '../../util';
 
 interface IInsertBulletBelowCommandParams {
     listType: PresetListType;
@@ -46,8 +45,8 @@ export const InsertBulletBelowCommand: ICommand<IInsertBulletBelowCommandParams>
             return false;
         }
         const segment = docDataModel.getSelfOrHeaderFooterModel(textRanges[0].segmentId);
-        const paragraphs = segment.getBody()?.paragraphs ?? [];
-        const dataStream = segment.getBody()?.dataStream ?? '';
+        const paragraphs = segment?.getBody()?.paragraphs ?? [];
+        const dataStream = segment?.getBody()?.dataStream ?? '';
         const currentParagraph = BuildTextUtils.range.getParagraphsInRange(textRanges[0], paragraphs, dataStream)[0];
         if (!currentParagraph) {
             return false;
@@ -57,6 +56,7 @@ export const InsertBulletBelowCommand: ICommand<IInsertBulletBelowCommandParams>
             dataStream: '\r',
             paragraphs: [{
                 startIndex: 0,
+                paragraphId: createParagraphId(new Set(paragraphs.map((paragraph) => paragraph.paragraphId))),
                 bullet: {
                     listType,
                     listId: listType === currentParagraph.bullet?.listType ? currentParagraph.bullet.listId : '',

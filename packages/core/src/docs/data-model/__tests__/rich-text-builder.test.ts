@@ -16,9 +16,23 @@
 
 import type { IBullet } from '../../../types/interfaces';
 import { describe, expect, it } from 'vitest';
-import { BaselineOffset, BooleanNumber, HorizontalAlign, TextDecoration, TextDirection } from '../../../types/enum';
-import { CustomRangeType } from '../../../types/interfaces';
-import { ParagraphStyleBuilder, RichTextBuilder, RichTextValue, TextDecorationBuilder, TextStyleBuilder } from '../rich-text-builder';
+import {
+    BaselineOffset,
+    BooleanNumber,
+    HorizontalAlign,
+    TextDecoration,
+    TextDirection,
+    VerticalAlign,
+} from '../../../types/enum';
+import { CustomRangeType, SpacingRule } from '../../../types/interfaces';
+import { PresetListType } from '../preset-list-type';
+import {
+    ParagraphStyleBuilder,
+    RichTextBuilder,
+    RichTextValue,
+    TextDecorationBuilder,
+    TextStyleBuilder,
+} from '../rich-text-builder';
 
 describe('TextStyleBuilder', () => {
     it('should create empty text style', () => {
@@ -211,6 +225,16 @@ describe('RichTextValue', () => {
         expect(richText.toPlainText()).toBe('Hello World\nNew Line');
     });
 
+    it('should preserve control characters supplied through the raw document-data boundary', () => {
+        const richText = RichTextValue.createByBody({
+            dataStream: 'A\nB\r\n',
+            paragraphs: [{ startIndex: 3, paragraphId: 'paragraph-1' }],
+        });
+
+        expect(richText.getData().body?.dataStream).toBe('A\nB\r\n');
+        expect(richText.getData().body?.paragraphs?.map((paragraph) => paragraph.startIndex)).toEqual([3]);
+    });
+
     it('should get paragraph style', () => {
         const paragraphStyle = {
             horizontalAlign: HorizontalAlign.CENTER,
@@ -220,6 +244,7 @@ describe('RichTextValue', () => {
             textRuns: [],
             paragraphs: [{
                 startIndex: 11,
+                paragraphId: 'para_fixture_1007',
                 paragraphStyle,
             }],
         });
@@ -237,6 +262,7 @@ describe('RichTextValue', () => {
             textRuns: [],
             paragraphs: [{
                 startIndex: 11,
+                paragraphId: 'para_fixture_1008',
                 bullet,
             }],
         });
@@ -258,6 +284,29 @@ describe('RichTextValue', () => {
         expect(runs[0].st).toBe(0);
         expect(runs[0].ed).toBe(5);
         expect(runs[0].ts?.getValue()).toEqual(textRun.ts);
+    });
+
+    it('should expose complete paragraph runs without requiring copy', () => {
+        const richText = RichTextValue.createByBody({
+            dataStream: 'Unstyled\rSecond\r\n',
+            textRuns: [],
+            paragraphs: [
+                { startIndex: 8, paragraphId: 'paragraph-1' },
+                { startIndex: 15, paragraphId: 'paragraph-2' },
+            ],
+        });
+
+        const paragraphs = richText.getParagraphs();
+        const copiedParagraphs = richText.copy().getParagraphs();
+
+        expect(paragraphs.map((paragraph) => paragraph.toPlainText())).toEqual(['Unstyled', 'Second']);
+        expect(paragraphs.map((paragraph) => paragraph.getTextRuns().map(({ st, ed }) => ({ st, ed })))).toEqual([
+            [{ st: 0, ed: 8 }],
+            [{ st: 0, ed: 6 }],
+        ]);
+        expect(paragraphs.map((paragraph) => paragraph.getTextRuns().length)).toEqual(
+            copiedParagraphs.map((paragraph) => paragraph.getTextRuns().length)
+        );
     });
 
     it('should get links', () => {
@@ -297,6 +346,7 @@ describe('RichTextValue', () => {
             }],
             paragraphs: [{
                 startIndex: 11,
+                paragraphId: 'para_fixture_1009',
                 paragraphStyle: { horizontalAlign: HorizontalAlign.CENTER },
             }],
         };
@@ -312,7 +362,13 @@ describe('RichTextBuilder', () => {
     it('should create empty rich text builder', () => {
         const builder = RichTextBuilder.create();
         const emptyData = RichTextBuilder.newEmptyData();
-        expect(builder.getData()).toEqual(emptyData);
+        expect(builder.getData()).toMatchObject({
+            ...emptyData,
+            body: {
+                ...emptyData.body,
+                paragraphs: [{ startIndex: 0, paragraphId: expect.stringMatching(/^para_/) }],
+            },
+        });
     });
 
     describe('text insertion', () => {
@@ -343,6 +399,342 @@ describe('RichTextBuilder', () => {
             expect(data.textRuns![0].ts).toEqual(style.build());
             expect(data.textRuns![0].st).toBe(0);
             expect(data.textRuns![0].ed).toBe(5);
+        });
+
+        it('should offset inserted styles exactly once', () => {
+            const data = RichTextBuilder.create()
+                .text('Hello World')
+                .insertText(5, ' Bold', { bl: BooleanNumber.TRUE })
+                .getData();
+
+            expect(data.body?.dataStream).toBe('Hello Bold World\r\n');
+            expect(data.body?.textRuns).toEqual([{
+                st: 5,
+                ed: 10,
+                ts: { bl: BooleanNumber.TRUE },
+            }]);
+        });
+
+        it('should convert platform line endings into document paragraphs', () => {
+            const data = RichTextBuilder.create()
+                .text('First\r\nSecond\rThird\nFourth')
+                .getData();
+
+            expect(data.body?.dataStream).toBe('First\rSecond\rThird\rFourth\r\n');
+            expect(data.body?.paragraphs?.map((paragraph) => paragraph.startIndex)).toEqual([5, 12, 18, 25]);
+        });
+
+        it('should treat an inserted carriage return as a strict document paragraph break', () => {
+            const builder = RichTextBuilder.create()
+                .span('AB', {})
+                .insertText(1, '\r');
+
+            expect(builder.getData().body?.dataStream).toBe('A\rB\r\n');
+            expect(builder.getData().body?.paragraphs?.map((paragraph) => paragraph.startIndex)).toEqual([1, 3]);
+            expect(builder.toPlainText()).toBe('A\nB');
+            expect(builder.getParagraphs().map((paragraph) => paragraph.getText())).toEqual(['A', 'B']);
+        });
+
+        it('should keep multiline span styles aligned with normalized paragraphs', () => {
+            const data = RichTextBuilder.create()
+                .text('A')
+                .span('B\r\nC', { bold: true })
+                .getData();
+
+            expect(data.body?.dataStream).toBe('AB\rC\r\n');
+            expect(data.body?.paragraphs?.map((paragraph) => paragraph.startIndex)).toEqual([2, 4]);
+            expect(data.body?.textRuns).toEqual([{
+                st: 1,
+                ed: 4,
+                ts: { bl: BooleanNumber.TRUE },
+            }]);
+        });
+
+        it('should build agent-friendly styled spans', () => {
+            const builder = RichTextBuilder.create()
+                .text('Status: ')
+                .span('Important', { bold: true, italic: true, color: '#d92d20' })
+                .text(' ')
+                .bold('High')
+                .text(' ')
+                .italic('now');
+
+            const data = builder.getData().body!;
+
+            expect(data.dataStream).toBe('Status: Important High now\r\n');
+            expect(data.textRuns).toEqual([
+                {
+                    st: 8,
+                    ed: 17,
+                    ts: {
+                        bl: BooleanNumber.TRUE,
+                        it: BooleanNumber.TRUE,
+                        cl: { rgb: '#d92d20' },
+                    },
+                },
+                {
+                    st: 18,
+                    ed: 22,
+                    ts: {
+                        bl: BooleanNumber.TRUE,
+                    },
+                },
+                {
+                    st: 23,
+                    ed: 26,
+                    ts: {
+                        it: BooleanNumber.TRUE,
+                    },
+                },
+            ]);
+        });
+
+        it('should append an unstyled span when style is omitted', () => {
+            const data = RichTextBuilder.create()
+                .span('Text')
+                .getData();
+
+            expect(data.body?.dataStream).toBe('Text\r\n');
+            expect(data.body?.textRuns).toEqual([]);
+        });
+
+        it('should build inline code as a text style', () => {
+            const builder = RichTextBuilder.create()
+                .text('Run ')
+                .code('pnpm test')
+                .text(' before submitting.');
+
+            const data = builder.getData().body!;
+
+            expect(data.dataStream).toBe('Run pnpm test before submitting.\r\n');
+            expect(data.textRuns).toHaveLength(1);
+            const codeRun = data.textRuns![0]!;
+            expect(codeRun).toMatchObject({
+                st: 4,
+                ed: 13,
+                ts: {
+                    bg: { rgb: '#f3f4f6' },
+                },
+            });
+            expect(codeRun.ts!.ff).toContain('monospace');
+        });
+
+        it('should ignore empty styled spans', () => {
+            const builder = RichTextBuilder.create()
+                .text('Hello')
+                .span('', { bold: true, italic: true })
+                .text(' World');
+
+            const data = builder.getData().body!;
+
+            expect(data.dataStream).toBe('Hello World\r\n');
+            expect(data.textRuns).toHaveLength(0);
+        });
+    });
+
+    describe('editable text runs', () => {
+        it('replaces runs in forward order and rebases all later document offsets', () => {
+            const titleStyle = { ff: 'Arial', fs: 24, bl: BooleanNumber.TRUE };
+            const bodyStyle = { ff: 'Arial', fs: 14, cl: { rgb: '#334155' } };
+            const builder = RichTextBuilder.create({
+                id: 'translated-slide-text',
+                documentStyle: { textStyle: { ff: 'Arial' } },
+                body: {
+                    dataStream: '标题\r正文内容\r\n',
+                    textRuns: [
+                        { st: 0, ed: 2, ts: titleStyle },
+                        { st: 3, ed: 7, ts: bodyStyle },
+                    ],
+                    paragraphs: [
+                        {
+                            startIndex: 2,
+                            paragraphId: 'title-paragraph',
+                            paragraphStyle: { horizontalAlign: HorizontalAlign.CENTER },
+                        },
+                        {
+                            startIndex: 7,
+                            paragraphId: 'body-paragraph',
+                            paragraphStyle: { spaceAbove: { v: 6 } },
+                        },
+                    ],
+                    customRanges: [{
+                        startIndex: 3,
+                        endIndex: 6,
+                        rangeId: 'body-link',
+                        rangeType: CustomRangeType.HYPERLINK,
+                        properties: { url: 'https://example.com/report' },
+                    }],
+                    sectionBreaks: [{ startIndex: 8, sectionId: 'section-1' }],
+                },
+            });
+
+            const paragraphs = builder.getParagraphs();
+            const titleRun = paragraphs[0].getTextRuns()[0];
+            const bodyRun = paragraphs[1].getTextRuns()[0];
+
+            expect(paragraphs.map((paragraph) => paragraph.getText())).toEqual(['标题', '正文内容']);
+            titleRun.setText('Quarterly Review');
+            bodyRun.setText('Revenue increased by 18%.');
+
+            const body = builder.getData().body!;
+            const titleEnd = 'Quarterly Review'.length;
+            const bodyStart = titleEnd + 1;
+            const bodyEnd = bodyStart + 'Revenue increased by 18%.'.length;
+
+            expect(body.dataStream).toBe('Quarterly Review\rRevenue increased by 18%.\r\n');
+            expect(titleRun.getRange()).toEqual({ startOffset: 0, endOffset: titleEnd });
+            expect(bodyRun.getRange()).toEqual({ startOffset: bodyStart, endOffset: bodyEnd });
+            expect(body.textRuns).toEqual([
+                { st: 0, ed: titleEnd, ts: titleStyle },
+                { st: bodyStart, ed: bodyEnd, ts: bodyStyle },
+            ]);
+            expect(body.paragraphs).toEqual([
+                {
+                    startIndex: titleEnd,
+                    paragraphId: 'title-paragraph',
+                    paragraphStyle: { horizontalAlign: HorizontalAlign.CENTER },
+                },
+                {
+                    startIndex: bodyEnd,
+                    paragraphId: 'body-paragraph',
+                    paragraphStyle: { spaceAbove: { v: 6 } },
+                },
+            ]);
+            expect(body.customRanges).toEqual([{
+                startIndex: bodyStart,
+                endIndex: bodyEnd - 1,
+                rangeId: 'body-link',
+                rangeType: CustomRangeType.HYPERLINK,
+                properties: { url: 'https://example.com/report' },
+            }]);
+            expect(body.sectionBreaks).toEqual([{ startIndex: bodyEnd + 1, sectionId: 'section-1' }]);
+        });
+
+        it('includes unstyled gaps while preserving explicit styles', () => {
+            const builder = RichTextBuilder.create({
+                id: 'mixed-style-text',
+                documentStyle: {},
+                body: {
+                    dataStream: '状态：就绪\r\n',
+                    textRuns: [{
+                        st: 3,
+                        ed: 5,
+                        ts: { bl: BooleanNumber.TRUE, cl: { rgb: '#16a34a' } },
+                    }],
+                    paragraphs: [{ startIndex: 5, paragraphId: 'status-paragraph' }],
+                    sectionBreaks: [{ startIndex: 6, sectionId: 'section-1' }],
+                },
+            });
+
+            const runs = builder.getParagraphs()[0].getTextRuns();
+            expect(runs.map((run) => run.getText())).toEqual(['状态：', '就绪']);
+            expect(runs[0].hasTextStyle()).toBe(false);
+            expect(runs[0].getTextStyle()).toBeNull();
+            expect(runs[1].getTextStyle()?.getValue()).toEqual({
+                bl: BooleanNumber.TRUE,
+                cl: { rgb: '#16a34a' },
+            });
+
+            runs[0].setText('Status: ');
+            runs[1].setText('Ready');
+
+            expect(builder.toPlainText()).toBe('Status: Ready');
+            expect(builder.getData().body?.textRuns).toEqual([{
+                st: 8,
+                ed: 13,
+                ts: { bl: BooleanNumber.TRUE, cl: { rgb: '#16a34a' } },
+            }]);
+        });
+
+        it('rebases later handles when an earlier run becomes shorter', () => {
+            const builder = RichTextBuilder.create({
+                id: 'shorter-text',
+                documentStyle: {},
+                body: {
+                    dataStream: 'LongTitleBody\r\n',
+                    textRuns: [
+                        { st: 0, ed: 9, ts: { bl: BooleanNumber.TRUE } },
+                        { st: 9, ed: 13, ts: { it: BooleanNumber.TRUE } },
+                    ],
+                    paragraphs: [{ startIndex: 13, paragraphId: 'paragraph-1' }],
+                    sectionBreaks: [{ startIndex: 14, sectionId: 'section-1' }],
+                },
+            });
+
+            const [title, body] = builder.getTextRuns();
+            title.setText('T');
+            expect(body.getRange()).toEqual({ startOffset: 1, endOffset: 5 });
+            body.setText('Content');
+
+            expect(builder.getData().body).toMatchObject({
+                dataStream: 'TContent\r\n',
+                textRuns: [
+                    { st: 0, ed: 1, ts: { bl: BooleanNumber.TRUE } },
+                    { st: 1, ed: 8, ts: { it: BooleanNumber.TRUE } },
+                ],
+                paragraphs: [{ startIndex: 8, paragraphId: 'paragraph-1' }],
+                sectionBreaks: [{ startIndex: 9, sectionId: 'section-1' }],
+            });
+        });
+
+        it('keeps one hyperlink when its text crosses multiple style runs', () => {
+            const builder = RichTextBuilder.create({
+                id: 'linked-mixed-style-text',
+                documentStyle: {},
+                body: {
+                    dataStream: '查看报告\r\n',
+                    textRuns: [
+                        { st: 0, ed: 2, ts: { cl: { rgb: '#2563eb' } } },
+                        { st: 2, ed: 4, ts: { cl: { rgb: '#2563eb' }, bl: BooleanNumber.TRUE } },
+                    ],
+                    paragraphs: [{ startIndex: 4, paragraphId: 'paragraph-1' }],
+                    customRanges: [{
+                        startIndex: 0,
+                        endIndex: 3,
+                        rangeId: 'report-link',
+                        rangeType: CustomRangeType.HYPERLINK,
+                        properties: { url: 'https://example.com/report' },
+                    }],
+                    sectionBreaks: [{ startIndex: 5, sectionId: 'section-1' }],
+                },
+            });
+
+            const paragraph = builder.getParagraphs()[0];
+            const [prefix, emphasis] = paragraph.getTextRuns();
+            prefix.setText('View ');
+            emphasis.setText('report');
+
+            expect(builder.toPlainText()).toBe('View report');
+            expect(builder.getLinks()).toEqual([{
+                startIndex: 0,
+                endIndex: 10,
+                rangeId: 'report-link',
+                rangeType: CustomRangeType.HYPERLINK,
+                properties: { url: 'https://example.com/report' },
+            }]);
+            expect(paragraph.getLinks()).toEqual(builder.getLinks());
+        });
+
+        it('rejects paragraph changes through a text-run handle', () => {
+            const run = RichTextBuilder.create()
+                .text('Original')
+                .getParagraphs()[0]
+                .getTextRuns()[0];
+
+            expect(() => run.setText('First\nSecond')).toThrow(RangeError);
+            expect(run.getText()).toBe('Original');
+        });
+
+        it('invalidates existing child handles after a direct builder edit', () => {
+            const builder = RichTextBuilder.create().span('AB', {});
+            const paragraph = builder.getParagraphs()[0];
+            const run = paragraph.getTextRuns()[0];
+
+            builder.insertText(0, 'X');
+
+            expect(builder.getTextRuns().map((item) => item.getText())).toEqual(['XAB']);
+            expect(() => run.getText()).toThrow('Rich text child handle is no longer valid.');
+            expect(() => paragraph.getText()).toThrow('Rich text child handle is no longer valid.');
         });
     });
 
@@ -397,6 +789,21 @@ describe('RichTextBuilder', () => {
 
             expect(builder.getData().body!.dataStream).toBe('Hello World\r\n');
         });
+
+        it('should delete the requested number of characters from the end', () => {
+            const builder = RichTextBuilder.create()
+                .insertText('ABCDE')
+                .delete(2);
+
+            expect(builder.getData().body!.dataStream).toBe('ABC\r\n');
+        });
+
+        it('should clamp end deletion to content and reject negative counts', () => {
+            const builder = RichTextBuilder.create().insertText('ABC');
+
+            expect(() => builder.delete(-1)).toThrow(RangeError);
+            expect(builder.delete(10).getData().body!.dataStream).toBe('\r\n');
+        });
     });
 
     describe('style management', () => {
@@ -418,6 +825,24 @@ describe('RichTextBuilder', () => {
     });
 
     describe('link management', () => {
+        it('should append, update, and remove links with agent-friendly methods', () => {
+            const builder = RichTextBuilder.create()
+                .text('Read ')
+                .link('Univer documentation', 'https://docs.univer.ai')
+                .text(' for details.');
+
+            expect(builder.toPlainText()).toBe('Read Univer documentation for details.');
+            const [link] = builder.getLinks();
+            expect(link.properties?.url).toBe('https://docs.univer.ai');
+
+            builder.updateLink(link.rangeId, 'https://univer.ai/docs');
+            expect(builder.getLinks()[0].properties?.url).toBe('https://univer.ai/docs');
+
+            expect(builder.removeLink(link.rangeId)).toBe(builder);
+            expect(builder.toPlainText()).toBe('Read Univer documentation for details.');
+            expect(builder.getLinks()).toEqual([]);
+        });
+
         it('should set link for text range', () => {
             const builder = RichTextBuilder.create()
                 .insertText('Hello World')
@@ -493,6 +918,122 @@ describe('RichTextBuilder', () => {
     });
 
     describe('paragraph management', () => {
+        it('should apply portable horizontal and vertical block alignment', () => {
+            const builder = RichTextBuilder.create()
+                .align({
+                    horizontal: HorizontalAlign.CENTER,
+                    vertical: VerticalAlign.MIDDLE,
+                })
+                .text('First')
+                .paragraph()
+                .text('Second');
+
+            const data = builder.getData();
+
+            expect(data.documentStyle?.renderConfig).toMatchObject({
+                horizontalAlign: HorizontalAlign.CENTER,
+                verticalAlign: VerticalAlign.MIDDLE,
+            });
+            expect(data.body?.paragraphs?.[0]?.paragraphStyle?.horizontalAlign).toBe(HorizontalAlign.CENTER);
+        });
+
+        it('should set and clear rich text columns', () => {
+            const builder = RichTextBuilder.create()
+                .columns({ count: 2, spacing: 12 })
+                .text('Columns');
+
+            expect(builder.getData().body?.sectionBreaks?.[0]?.columnProperties).toEqual([
+                { width: 0, paddingEnd: 12 },
+                { width: 0, paddingEnd: 0 },
+            ]);
+
+            builder.columns({ count: 1 });
+
+            expect(builder.getData().body?.sectionBreaks?.[0]?.columnProperties).toBeUndefined();
+        });
+
+        it('should start a paragraph chain without a leading blank paragraph', () => {
+            const builder = RichTextBuilder.create()
+                .paragraph()
+                .text('Title')
+                .paragraph()
+                .span('Body', { bold: true, italic: true });
+
+            const data = builder.getData().body!;
+
+            expect(data.dataStream).toBe('Title\rBody\r\n');
+            expect(data.paragraphs).toHaveLength(2);
+            expect(data.textRuns).toEqual([
+                {
+                    st: 6,
+                    ed: 10,
+                    ts: {
+                        bl: BooleanNumber.TRUE,
+                        it: BooleanNumber.TRUE,
+                    },
+                },
+            ]);
+        });
+
+        it('should apply agent-friendly options to the following paragraph', () => {
+            const builder = RichTextBuilder.create()
+                .paragraph({
+                    align: HorizontalAlign.LEFT,
+                    lineHeight: 1.4,
+                    firstLineIndent: 16,
+                    indentStart: 8,
+                    spaceAfter: 6,
+                })
+                .text('First')
+                .paragraph({
+                    align: HorizontalAlign.RIGHT,
+                    lineHeight: 24,
+                    lineHeightRule: SpacingRule.EXACT,
+                    hangingIndent: { v: 10 },
+                    spaceBefore: 4,
+                    keepNext: true,
+                })
+                .text('Second');
+
+            const data = builder.getData().body!;
+
+            expect(data.dataStream).toBe('First\rSecond\r\n');
+            expect(data.paragraphs?.[0]?.paragraphStyle).toMatchObject({
+                horizontalAlign: HorizontalAlign.LEFT,
+                lineSpacing: 1.4,
+                indentFirstLine: { v: 16 },
+                indentStart: { v: 8 },
+                spaceBelow: { v: 6 },
+            });
+            expect(data.paragraphs?.[1]?.paragraphStyle).toMatchObject({
+                horizontalAlign: HorizontalAlign.RIGHT,
+                lineSpacing: 24,
+                spacingRule: SpacingRule.EXACT,
+                hanging: { v: 10 },
+                spaceAbove: { v: 4 },
+                keepNext: BooleanNumber.TRUE,
+            });
+        });
+
+        it('should build stable nested list items and end the list on a normal paragraph', () => {
+            const builder = RichTextBuilder.create()
+                .listItem('Plan', { listId: 'agent.tasks' })
+                .listItem('Implement', { listId: 'agent.tasks', level: 1 })
+                .listItem('Verify', { type: PresetListType.ORDER_LIST, listId: 'agent.steps' })
+                .paragraph()
+                .text('Summary');
+
+            const data = builder.getData().body!;
+
+            expect(data.dataStream).toBe('Plan\rImplement\rVerify\rSummary\r\n');
+            expect(data.paragraphs?.map((paragraph) => paragraph.bullet)).toEqual([
+                { listId: 'agent.tasks', listType: PresetListType.BULLET_LIST, nestingLevel: 0 },
+                { listId: 'agent.tasks', listType: PresetListType.BULLET_LIST, nestingLevel: 1 },
+                { listId: 'agent.steps', listType: PresetListType.ORDER_LIST, nestingLevel: 0 },
+                undefined,
+            ]);
+        });
+
         it('should insert paragraph at the end', () => {
             const style = ParagraphStyleBuilder.create()
                 .setHorizontalAlign(HorizontalAlign.CENTER);

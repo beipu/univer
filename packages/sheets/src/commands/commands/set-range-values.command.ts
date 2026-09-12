@@ -30,7 +30,6 @@ import {
 import { SheetsSelectionsService } from '../../services/selections/selection.service';
 import { SheetInterceptorService } from '../../services/sheet-interceptor/sheet-interceptor.service';
 import { SetRangeValuesMutation, SetRangeValuesUndoMutationFactory } from '../mutations/set-range-values.mutation';
-import { SetSelectionsOperation } from '../operations/selection.operation';
 import { followSelectionOperation } from './utils/selection-utils';
 import { getSheetCommandTarget } from './utils/target-util';
 
@@ -99,7 +98,11 @@ export const SetRangeValuesCommand: ICommand = {
             ranges = realCellValue ? [new ObjectMatrix(realCellValue).getStartEndScope()] : [];
         }
 
-        const setRangeValuesMutationRedoParams = { unitId, subUnitId, cellValue: realCellValue ?? cellValue.getMatrix() };
+        const setRangeValuesMutationRedoParams = {
+            unitId,
+            subUnitId,
+            cellValue: Tools.deepClone(realCellValue ?? cellValue.getMatrix()),
+        };
         const setRangeValuesMutationUndoParams = SetRangeValuesUndoMutationFactory(accessor, setRangeValuesMutationRedoParams);
         const cellHeights = mapObjectMatrix(setRangeValuesMutationRedoParams.cellValue, (row, col) => worksheet.getCellHeight(row, col) || undefined);
 
@@ -133,15 +136,7 @@ export const SetRangeValuesCommand: ICommand = {
             ];
 
             if (currentSelections && currentSelections.length) {
-                undoMutations.push({
-                    id: SetSelectionsOperation.id,
-                    params: {
-                        unitId,
-                        subUnitId,
-                        selections: currentSelections,
-                        reveal: true,
-                    },
-                });
+                undoMutations.push(followSelectionOperation(currentSelections[currentSelections.length - 1], workbook, worksheet));
             }
 
             undoRedoService.pushUndoRedo({

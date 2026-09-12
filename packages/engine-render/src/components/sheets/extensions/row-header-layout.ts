@@ -24,6 +24,7 @@ import { SheetRowHeaderExtensionRegistry } from '../../extension';
 import { SheetExtension } from './sheet-extension';
 
 const UNIQUE_KEY = 'DefaultRowHeaderLayoutExtension';
+const MIN_TEXT_RENDER_HEIGHT_IN_SCREEN_PX = 4;
 
 export interface IRowsHeaderCfgParam {
     headerStyle?: Partial<IRowStyleCfg>;
@@ -33,11 +34,18 @@ export interface IRowsHeaderCfgParam {
 const DEFAULT_ROW_STYLE = {
     fontSize: 13,
     fontFamily: DEFAULT_FONTFACE_PLANE,
+    fontColor: 'gray.900',
+    backgroundColor: 'gray.50',
+    borderColor: 'gray.200',
+    textAlign: 'center',
+    textBaseline: 'middle',
+} as const;
+
+const DEFAULT_PRINTING_ROW_STYLE = {
+    ...DEFAULT_ROW_STYLE,
     fontColor: '#000000',
     backgroundColor: getColor([248, 249, 250]),
     borderColor: getColor([217, 217, 217]),
-    textAlign: 'center',
-    textBaseline: 'middle',
 } as const;
 
 export class RowHeaderLayout extends SheetExtension {
@@ -72,9 +80,10 @@ export class RowHeaderLayout extends SheetExtension {
         return { ...this.rowsCfg, ...rowsCfg };
     }
 
-    getHeaderStyle(sheetId: string): IRowStyleCfg {
+    getHeaderStyle(sheetId: string, isPrinting = false): IRowStyleCfg {
         const headerStyle = this.headerStyleOfWorksheet.get(sheetId) ?? {};
-        return { ...DEFAULT_ROW_STYLE, ...this.headerStyle, ...headerStyle };
+        const defaultStyle = isPrinting ? DEFAULT_PRINTING_ROW_STYLE : DEFAULT_ROW_STYLE;
+        return { ...defaultStyle, ...this.headerStyle, ...headerStyle };
     }
 
     getCfgOfCurrentRow(rowsCfg: Record<number, IARowCfg>, headerStyle: IHeaderStyleCfg, rowIndex: number) {
@@ -124,7 +133,7 @@ export class RowHeaderLayout extends SheetExtension {
         }
 
         const rowsCfg = this.getRowsCfg(worksheet.getSheetId());
-        const headerStyle = this.getHeaderStyle(worksheet.getSheetId());
+        const headerStyle = this.getHeaderStyle(worksheet.getSheetId(), ctx.__mode === 'printing');
 
         const scale = this._getScale(parentScale);
         this.setStyleToCtx(ctx, headerStyle);
@@ -215,6 +224,11 @@ export class RowHeaderLayout extends SheetExtension {
             ctx.moveToByPrecision(cellBound.left, cellBound.bottom);
             ctx.lineToByPrecision(cellBound.right, cellBound.bottom);
             ctx.stroke();
+
+            if (cellBound.height * Math.abs(parentScale.scaleY ?? 1) < MIN_TEXT_RENDER_HEIGHT_IN_SCREEN_PX) {
+                preRowPosition = rowEndPosition;
+                continue;
+            }
 
             // row header text
             const textX = (() => {

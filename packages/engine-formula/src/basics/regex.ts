@@ -62,21 +62,28 @@ export const REFERENCE_REGEX_SINGLE_COLUMN = `^${UNIT_NAME_SHEET_NAME_REGEX}\\s*
 
 export const REFERENCE_REGEX_SINGLE_COLUMN_PRECOMPILING = new RegExp(REFERENCE_REGEX_SINGLE_COLUMN);
 
-const TABLE_NAME_REGEX = '((?![~!@#$%^&*()_+<>?:,./;’，。、‘：“《》？~！@#￥%……（）【】\\[\\]\\/\\\\]).)+';
+const TABLE_NAME_REGEX = '((?![~!@#$%^&*()+<>?:,./;’，。、‘：“《》？~！@#￥%……（）【】\\[\\]\\/\\\\]).)+';
 
 const TABLE_TITLE_REGEX = '\\[#.+\\]\\s*?,\\s*?';
 
-const TABLE_CONTENT_REGEX = '\\[((?<!#).)*\\]';
+const TABLE_CONTENT_REGEX = '\\[[^#]*#?\\]';
 
 const TABLE_MULTIPLE_COLUMN_REGEX = `${TABLE_CONTENT_REGEX}${RANGE_SYMBOL}${TABLE_CONTENT_REGEX}`;
 
-export const REFERENCE_TABLE_ALL_COLUMN_REGEX = `^(${UNIT_NAME_REGEX})?${TABLE_NAME_REGEX}$`;
+// Display formulas use Book!Table[Column], OOXML formulas use [n]!Table[Column],
+// and the legacy runtime-id form [unitId]Table[Column] remains accepted.
+// Univer display names are not Excel file names: characters such as `|` are valid,
+// and `]` is escaped as `]]` by the Formula reference builder.
+const TABLE_BRACKETED_UNIT_QUALIFIER_REGEX = '\\[(?:[^\\]]|\\]\\])+\\]';
+const TABLE_UNIT_QUALIFIER_REGEX = `(?:(?:${TABLE_BRACKETED_UNIT_QUALIFIER_REGEX}|'(?:[^']|'')+'|[^\\s!\\[\\]]+)!)?(?:${TABLE_BRACKETED_UNIT_QUALIFIER_REGEX})?`;
 
-export const REFERENCE_TABLE_SINGLE_COLUMN_REGEX = `^(${UNIT_NAME_REGEX})?${TABLE_NAME_REGEX}(${TABLE_CONTENT_REGEX}|\\[${TABLE_TITLE_REGEX}${TABLE_CONTENT_REGEX}\\])+$`; // =Table1[Column1] | =Table1[[#Title],[Column1]]
+export const REFERENCE_TABLE_ALL_COLUMN_REGEX = `^${TABLE_UNIT_QUALIFIER_REGEX}${TABLE_NAME_REGEX}$`;
 
-export const REFERENCE_TABLE_MULTIPLE_COLUMN_REGEX = `^(${UNIT_NAME_REGEX})?${TABLE_NAME_REGEX}(\\[${TABLE_MULTIPLE_COLUMN_REGEX}\\])?$|^${TABLE_NAME_REGEX}(\\[${TABLE_TITLE_REGEX}${TABLE_MULTIPLE_COLUMN_REGEX}\\])?$`; // =Table1[[#Title],[Column1]:[Column2]] | =Table1[[Column1]:[Column2]]
+export const REFERENCE_TABLE_SINGLE_COLUMN_REGEX = `^${TABLE_UNIT_QUALIFIER_REGEX}${TABLE_NAME_REGEX}(${TABLE_CONTENT_REGEX}|\\[${TABLE_TITLE_REGEX}${TABLE_CONTENT_REGEX}\\])+$`; // =Table1[Column1] | =Table1[[#Title],[Column1]]
 
-export const REFERENCE_TABLE_TITLE_ONLY_ANY_HASH_REGEX = `^(${UNIT_NAME_REGEX})?${TABLE_NAME_REGEX}\\[\\s*#([^\\]]+)\\s*\\]$`; // =Table1[#All] | =Table1[#Data] | =Table1[#Headers] | =Table1[#Totals] | =Table1[#This Row]
+export const REFERENCE_TABLE_MULTIPLE_COLUMN_REGEX = `^${TABLE_UNIT_QUALIFIER_REGEX}${TABLE_NAME_REGEX}(\\[${TABLE_MULTIPLE_COLUMN_REGEX}\\])?$|^${TABLE_UNIT_QUALIFIER_REGEX}${TABLE_NAME_REGEX}(\\[${TABLE_TITLE_REGEX}${TABLE_MULTIPLE_COLUMN_REGEX}\\])?$`; // =Table1[[#Title],[Column1]:[Column2]] | =Table1[[Column1]:[Column2]]
+
+export const REFERENCE_TABLE_TITLE_ONLY_ANY_HASH_REGEX = `^${TABLE_UNIT_QUALIFIER_REGEX}${TABLE_NAME_REGEX}\\[\\s*#([^\\]]+)\\s*\\]$`; // =Table1[#All] | =Table1[#Data] | =Table1[#Headers] | =Table1[#Totals] | =Table1[#This Row]
 
 export const REFERENCE_TABLE_ALL_COLUMN_REGEX_PRECOMPILING = new RegExp(REFERENCE_TABLE_ALL_COLUMN_REGEX);
 

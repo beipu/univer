@@ -29,4 +29,6 @@ export {
     SortRangeDescInCtxMenuCommand,
 } from './commands/commands/sheets-sort.command';
 export type { IUniverSheetsSortUIConfig } from './config/config';
+export { menuSchema as SheetsSortUIMenuSchema } from './menu/schema';
+export { UniverSheetsSortMobileUIPlugin } from './mobile-plugin';
 export { UniverSheetsSortUIPlugin } from './plugin';

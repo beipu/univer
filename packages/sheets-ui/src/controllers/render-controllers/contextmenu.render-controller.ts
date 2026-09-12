@@ -16,15 +16,20 @@
 
 import type { Workbook } from '@univerjs/core';
 import type { IRenderContext, IRenderModule, Spreadsheet, SpreadsheetColumnHeader, SpreadsheetHeader } from '@univerjs/engine-render';
+import type { ISheetEmbedRuntimeDomScope } from '../../services/sheet-embed-integration.service';
+import type { ISheetHostChromeOverride } from '../../services/sheet-host-chrome-override.service';
 import {
     Disposable,
     Inject,
+    Injector,
     RANGE_TYPE,
 } from '@univerjs/core';
 import { attachSelectionWithCoord, SheetsSelectionsService } from '@univerjs/sheets';
 import { ContextMenuPosition, IContextMenuService } from '@univerjs/ui';
 import { SHEET_VIEW_KEY } from '../../common/keys';
 import { ISheetSelectionRenderService } from '../../services/selection/base-selection-render.service';
+import { ISheetEmbedRuntimeFocusCoordinator } from '../../services/sheet-embed-integration.service';
+import { ISheetHostChromeOverrideService } from '../../services/sheet-host-chrome-override.service';
 
 /**
  * This controller subscribe to context menu events in sheet rendering views and invoke context menu at a correct
@@ -35,11 +40,13 @@ export class SheetContextMenuRenderController extends Disposable implements IRen
         private readonly _context: IRenderContext<Workbook>,
         @IContextMenuService private readonly _contextMenuService: IContextMenuService,
         @Inject(SheetsSelectionsService) private readonly _selectionManagerService: SheetsSelectionsService,
-        @ISheetSelectionRenderService private readonly _selectionRenderService: ISheetSelectionRenderService
+        @ISheetSelectionRenderService private readonly _selectionRenderService: ISheetSelectionRenderService,
+        @Inject(Injector) private readonly _injector: Injector
     ) {
         super();
 
         this._init();
+        this._initEmbedRuntimeSessionListener();
     }
 
     private _init(): void {
@@ -74,6 +81,9 @@ export class SheetContextMenuRenderController extends Disposable implements IRen
                 };
 
                 const triggerMenu = (position: string) => {
+                    if (this._shouldSuppressHostContextMenu()) {
+                        return;
+                    }
                     this._contextMenuService.triggerContextMenu(event, position);
                 };
                 if (!isPointerInRange()) {
@@ -94,6 +104,9 @@ export class SheetContextMenuRenderController extends Disposable implements IRen
         const spreadsheetRowHeader = this._context.components.get(SHEET_VIEW_KEY.ROW) as SpreadsheetHeader;
         const rowHeaderSub = spreadsheetRowHeader.onPointerDown$.subscribeEvent((event) => {
             if (event.button === 2) {
+                if (this._shouldSuppressHostContextMenu()) {
+                    return;
+                }
                 this._contextMenuService.triggerContextMenu(event, ContextMenuPosition.ROW_HEADER);
             }
         });
@@ -103,9 +116,61 @@ export class SheetContextMenuRenderController extends Disposable implements IRen
         const colHeaderPointerDownObserver = spreadsheetColumnHeader.onPointerDown$;
         const colHeaderObserver = colHeaderPointerDownObserver.subscribeEvent((event) => {
             if (event.button === 2) {
+                if (this._shouldSuppressHostContextMenu()) {
+                    return;
+                }
                 this._contextMenuService.triggerContextMenu(event, ContextMenuPosition.COL_HEADER);
             }
         });
         this.disposeWithMe(colHeaderObserver);
     }
+
+    private _initEmbedRuntimeSessionListener(): void {
+        const runtimeFocusCoordinator = this._getSheetEmbedRuntimeFocusCoordinator();
+        if (!runtimeFocusCoordinator) {
+            return;
+        }
+
+        this.disposeWithMe(runtimeFocusCoordinator.runtimeSessionChanged$.subscribe(() => {
+            if (shouldHideSheetHostContextMenuForEmbedSession(
+                this._context.unitId,
+                runtimeFocusCoordinator.resolveActiveChildSessionRuntimeScope()
+            )) {
+                this._contextMenuService.hideContextMenu();
+            }
+        }));
+    }
+
+    private _shouldSuppressHostContextMenu(): boolean {
+        return shouldSuppressSheetContextMenuForEmbedOverride(
+            this._context.unitId,
+            this._getSheetHostChromeOverrideService()?.getOverride?.()
+        );
+    }
+
+    private _getSheetHostChromeOverrideService(): ISheetHostChromeOverrideService | undefined {
+        return this._injector.has(ISheetHostChromeOverrideService)
+            ? this._injector.get(ISheetHostChromeOverrideService)
+            : undefined;
+    }
+
+    private _getSheetEmbedRuntimeFocusCoordinator(): ISheetEmbedRuntimeFocusCoordinator | undefined {
+        return this._injector.has(ISheetEmbedRuntimeFocusCoordinator)
+            ? this._injector.get(ISheetEmbedRuntimeFocusCoordinator)
+            : undefined;
+    }
+}
+
+export function shouldHideSheetHostContextMenuForEmbedSession(
+    hostUnitId: string,
+    activeScope: ISheetEmbedRuntimeDomScope | undefined
+): boolean {
+    return activeScope?.hostUnitId === hostUnitId && activeScope.sessionMode !== 'host-passive';
+}
+
+export function shouldSuppressSheetContextMenuForEmbedOverride(
+    hostUnitId: string,
+    override: Pick<ISheetHostChromeOverride, 'entry' | 'hostUnitId'> | null | undefined
+): boolean {
+    return override != null && override.hostUnitId === hostUnitId && override.entry === 'sheets-sheet-tab';
 }

@@ -73,10 +73,6 @@ describe('Test FWorkbook/FWorksheet UI mixin', () => {
         expect(worksheet.scrollToCell(10, 10, 0)).toBe(worksheet);
         expect(worksheet.getScrollState()).toBeTruthy();
 
-        const onScrollSpy = vi.fn();
-        const onScrollDis = worksheet.onScroll(onScrollSpy);
-        onScrollDis.dispose();
-
         const skeleton = worksheet.getSkeleton();
         expect(skeleton == null || typeof skeleton === 'object').toBe(true);
     });
@@ -162,11 +158,10 @@ describe('Test FWorkbook/FWorksheet UI mixin', () => {
         const workbook = testBed.univerAPI.getActiveWorkbook()!;
         const worksheet = workbook.getActiveSheet()!;
         const renderManagerService = testBed.get(IRenderManagerService);
-        vi.spyOn(renderManagerService, 'getRenderById').mockReturnValue(render as never);
+        vi.spyOn(renderManagerService, 'getRenderUnitById').mockReturnValue(render as never);
         const commandService = testBed.get(ICommandService);
         const executeSpy = vi.spyOn(commandService, 'executeCommand').mockResolvedValue(true as never);
         const syncExecuteSpy = vi.spyOn(commandService, 'syncExecuteCommand').mockReturnValue(true as never);
-        const onScrollSpy = vi.fn();
 
         expect(worksheet.refreshCanvas()).toBe(worksheet);
         expect(skeletonManager.reCalculate).toHaveBeenCalledTimes(1);
@@ -180,14 +175,10 @@ describe('Test FWorkbook/FWorksheet UI mixin', () => {
 
         expect(worksheet.getScrollState()).toEqual(scrollState);
 
-        const onScrollDisposable = worksheet.onScroll(onScrollSpy);
-        expect(onScrollSpy).toHaveBeenCalledWith(scrollState);
-        expect(onScrollDisposable).toBeTruthy();
-
         expect(worksheet.getSkeleton()).toEqual(worksheetSkeleton.skeleton);
 
-        expect(worksheet.autoResizeColumn(2)).toBe(worksheet);
-        expect(worksheet.setColumnAutoWidth(4, 3)).toBe(worksheet);
+        expect(worksheet.autoResizeColumns(2)).toBe(worksheet);
+        expect(worksheet.autoResizeColumns(4, 3)).toBe(worksheet);
         expect(worksheet.autoResizeRows(1, 2)).toBe(worksheet);
         expect(syncExecuteSpy).toHaveBeenCalledWith(SetWorksheetColAutoWidthCommand.id, {
             unitId: workbook.getId(),

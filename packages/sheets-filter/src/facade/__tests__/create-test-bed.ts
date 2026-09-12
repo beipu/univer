@@ -14,37 +14,21 @@
  * limitations under the License.
  */
 
-import type { Dependency, IWorkbookData, UnitModel } from '@univerjs/core';
+import type { Injector, IWorkbookData, UnitModel } from '@univerjs/core';
 import {
-    ICommandService,
     ILogService,
-    Inject,
-    Injector,
     IUniverInstanceService,
     LocaleService,
     LocaleType,
     LogLevel,
-    Plugin,
     set,
     ThemeService,
     Univer,
     UniverInstanceType,
 } from '@univerjs/core';
 import { FUniver } from '@univerjs/core/facade';
-import { ActiveDirtyManagerService, DefinedNamesService, FormulaDataModel, FunctionService, IActiveDirtyManagerService, IDefinedNamesService, IFunctionService, ISheetRowFilteredService, LexerTreeBuilder } from '@univerjs/engine-formula';
-import { SheetRowFilteredService } from '@univerjs/engine-formula/services/sheet-row-filtered.service.js';
-import {
-    MarkDirtyFilterChangeMutation,
-    RefRangeService,
-    SheetInterceptorService,
-    SheetRangeThemeModel,
-    SheetSkeletonService,
-    SheetsSelectionsService,
-    ZebraCrossingCacheController,
-} from '@univerjs/sheets';
 import { UniverSheetsFilterPlugin } from '@univerjs/sheets-filter';
 import enUS from '@univerjs/sheets/locale/en-US';
-
 import zhCN from '@univerjs/sheets/locale/zh-CN';
 import '@univerjs/sheets/facade';
 import '@univerjs/sheets-filter/facade';
@@ -104,51 +88,9 @@ export interface ITestBed {
     injector: Injector;
 }
 
-export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?: Dependency[]): ITestBed {
+export function createFacadeTestBed(workbookData?: IWorkbookData): ITestBed {
     const univer = new Univer();
     const injector = univer.__getInjector();
-
-    class TestPlugin extends Plugin {
-        static override pluginName = 'test-plugin';
-        static override type = UniverInstanceType.UNIVER_SHEET;
-
-        constructor(
-            _config: undefined,
-            @Inject(Injector) override readonly _injector: Injector
-        ) {
-            super();
-        }
-
-        override onStarting(): void {
-            const injector = this._injector;
-            injector.add([SheetsSelectionsService]);
-            injector.add([SheetInterceptorService]);
-            injector.add([IFunctionService, { useClass: FunctionService }]);
-            injector.add([SheetSkeletonService]);
-            injector.add([SheetRangeThemeModel]);
-            injector.add([ZebraCrossingCacheController]);
-            injector.add([FormulaDataModel]);
-            injector.add([LexerTreeBuilder]);
-            injector.add([RefRangeService]);
-            injector.add([IDefinedNamesService, { useClass: DefinedNamesService }]);
-
-            // register feature modules
-            ([
-                [IActiveDirtyManagerService, { useClass: ActiveDirtyManagerService }],
-                [ISheetRowFilteredService, { useClass: SheetRowFilteredService }],
-            ] as Dependency[]).forEach((d) => {
-                injector.add(d);
-            });
-
-            dependencies?.forEach((d) => injector.add(d));
-
-            this._injector.get(SheetInterceptorService);
-        }
-
-        override onReady(): void {
-
-        }
-    }
 
     // load i18n
     injector.get(LocaleService).load({ zhCN, enUS });
@@ -156,16 +98,12 @@ export function createFacadeTestBed(workbookData?: IWorkbookData, dependencies?:
     // load theme service
     const themeService = injector.get(ThemeService);
     const theme = themeService.getCurrentTheme();
-    const newTheme = set(theme, 'black', '#35322b');
+    const newTheme = set(theme, 'gray.1000', '#35322b');
     themeService.setTheme(newTheme);
 
     // register builtin plugins
     // note that UI plugins are not registered here, because the unit test environment does not have a UI
-    univer.registerPlugin(TestPlugin);
     univer.registerPlugin(UniverSheetsFilterPlugin);
-
-    const commandService = injector.get(ICommandService);
-    commandService.registerCommand(MarkDirtyFilterChangeMutation);
 
     const sheet = univer.createUnit<IWorkbookData, UnitModel<IWorkbookData>>(UniverInstanceType.UNIVER_SHEET, workbookData || getTestWorkbookDataDemo());
     const univerInstanceService = injector.get(IUniverInstanceService);

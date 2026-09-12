@@ -27,6 +27,8 @@ export class Match extends BaseFunction {
 
     override maxParams = 3;
 
+    override lazyIfReferenceArrayArgumentIndexes = [1];
+
     override calculate(
         lookupValue: BaseValueObject,
         lookupArray: ArrayValueObject,
@@ -56,7 +58,7 @@ export class Match extends BaseFunction {
             return ErrorValueObject.create(ErrorType.NA);
         }
 
-        const matchTypeValue = this.getMatchTypeValue(matchType);
+        const matchTypeValue = matchType?.isNull() ? 0 : this.getMatchTypeValue(matchType);
 
         if (matchTypeValue == null) {
             return ErrorValueObject.create(ErrorType.VALUE);

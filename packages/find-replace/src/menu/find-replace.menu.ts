@@ -16,13 +16,14 @@
 
 import type { IAccessor } from '@univerjs/core';
 import type { IMenuButtonItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { EDITOR_ACTIVATED, FOCUSING_SHEET, IContextService, UniverInstanceType } from '@univerjs/core';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
-import { combineLatest, map } from 'rxjs';
-
+import { combineLatest, map, startWith } from 'rxjs';
 import { OpenFindDialogOperation } from '../commands/operations/find-replace.operation';
+import { FIND_REPLACE_AVAILABLE } from '../services/context-keys';
 
-export function FindReplaceMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FindReplaceMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const contextService = accessor.get(IContextService);
 
     return {
@@ -34,6 +35,8 @@ export function FindReplaceMenuItemFactory(accessor: IAccessor): IMenuButtonItem
         disabled$: combineLatest([
             contextService.subscribeContextValue$(EDITOR_ACTIVATED),
             contextService.subscribeContextValue$(FOCUSING_SHEET),
-        ]).pipe(map(([editorActivated, focusingSheet]) => editorActivated || !focusingSheet)),
+            contextService.subscribeContextValue$(FIND_REPLACE_AVAILABLE)
+                .pipe(startWith(contextService.getContextValue(FIND_REPLACE_AVAILABLE))),
+        ]).pipe(map(([editorActivated, focusingSheet, available]) => editorActivated || !focusingSheet || !available)),
     };
 }

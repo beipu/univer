@@ -17,19 +17,49 @@
 import type { DocumentDataModel, IDocumentData } from '@univerjs/core';
 import type { IDrawingMapItem, IDrawingMapItemData } from '@univerjs/drawing';
 import type { IDocDrawing } from '../services/doc-drawing.service';
-import { Disposable, IResourceManagerService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import { BooleanNumber, Disposable, ICommandService, IResourceManagerService, IUniverInstanceService, PositionedObjectLayoutType, UniverInstanceType } from '@univerjs/core';
 import { IDrawingManagerService } from '@univerjs/drawing';
+import { InsertDocDrawingCommand } from '../commands/commands/insert-doc-drawing.command';
+import { RemoveDocDrawingCommand } from '../commands/commands/remove-doc-drawing.command';
+import { SetDocDrawingArrangeCommand } from '../commands/commands/set-drawing-arrange.command';
+import { UpdateDrawingDocTransformCommand } from '../commands/commands/update-doc-drawing-transform.command';
+import { UpdateDocDrawingWrappingStyleCommand } from '../commands/commands/update-doc-drawing-wrapping-style.command';
+import { collectDocDrawings } from '../services/doc-drawing-source';
 import { IDocDrawingService } from '../services/doc-drawing.service';
 
 export const DOCS_DRAWING_PLUGIN = 'DOC_DRAWING_PLUGIN';
-export interface IDocDrawingModel { drawings?: IDocumentData['drawings']; drawingsOrder?: IDocumentData['drawingsOrder'] };
+export interface IDocDrawingModel {
+    drawings?: IDocumentData['drawings'];
+    drawingsOrder?: IDocumentData['drawingsOrder'];
+};
+
+export function getDocDrawingRenderOrder(order: string[], drawings: IDocumentData['drawings'] = {}): string[] {
+    return order
+        .map((drawingId, index) => ({ drawingId, index }))
+        .sort((a, b) => {
+            const aBehind = isDocDrawingBehindText(drawings[a.drawingId]);
+            const bBehind = isDocDrawingBehindText(drawings[b.drawingId]);
+
+            if (aBehind !== bBehind) {
+                return aBehind ? -1 : 1;
+            }
+
+            return a.index - b.index;
+        })
+        .map(({ drawingId }) => drawingId);
+}
+
+function isDocDrawingBehindText(drawing: NonNullable<IDocumentData['drawings']>[string] | undefined): boolean {
+    return drawing?.layoutType === PositionedObjectLayoutType.WRAP_NONE && drawing.behindDoc === BooleanNumber.TRUE;
+}
 
 export class DocDrawingController extends Disposable {
     constructor(
         @IDocDrawingService private readonly _docDrawingService: IDocDrawingService,
         @IDrawingManagerService private readonly _drawingManagerService: IDrawingManagerService,
         @IResourceManagerService private _resourceManagerService: IResourceManagerService,
-        @IUniverInstanceService private _univerInstanceService: IUniverInstanceService
+        @IUniverInstanceService private _univerInstanceService: IUniverInstanceService,
+        @ICommandService private readonly _commandService: ICommandService
     ) {
         super();
 
@@ -38,6 +68,7 @@ export class DocDrawingController extends Disposable {
 
     private _init(): void {
         this._initSnapshot();
+        this._initCommands();
     }
 
     private _initSnapshot() {
@@ -61,7 +92,7 @@ export class DocDrawingController extends Disposable {
             }
             try {
                 return JSON.parse(json);
-            } catch (err) {
+            } catch {
                 return { data: {}, order: [] };
             }
         };
@@ -73,13 +104,23 @@ export class DocDrawingController extends Disposable {
                 toJson: (unitId) => toJson(unitId),
                 parseJson: (json) => parseJson(json),
                 onUnLoad: (unitId) => {
-                    this._setDrawingDataForUnit(unitId, { data: {}, order: [] });
+                    this._unloadDrawingDataForUnit(unitId);
                 },
                 onLoad: (unitId, value) => {
                     this._setDrawingDataForUnit(unitId, { data: value.data ?? {}, order: value.order ?? [] });
                 },
             })
         );
+    }
+
+    private _unloadDrawingDataForUnit(unitId: string): void {
+        const documentDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(
+            unitId,
+            UniverInstanceType.UNIVER_DOC
+        );
+        documentDataModel?.resetDrawing({}, []);
+        this._docDrawingService.removeDrawingDataForUnit(unitId);
+        this._drawingManagerService.removeDrawingDataForUnit(unitId);
     }
 
     private _setDrawingDataForUnit(unitId: string, drawingMapItem: IDrawingMapItem<IDocDrawing>) {
@@ -100,8 +141,7 @@ export class DocDrawingController extends Disposable {
 
         const subUnitId = unitId;
 
-        const drawingDataModels = dataModel.getDrawings();
-        const drawingOrderModel = dataModel.getDrawingsOrder();
+        const { drawings: drawingDataModels, drawingsOrder: drawingOrderModel } = collectDocDrawings(dataModel.getSnapshot());
 
         if (!drawingDataModels || !drawingOrderModel) {
             return false;
@@ -109,25 +149,45 @@ export class DocDrawingController extends Disposable {
 
         // TODO@wzhudev: should move to docs-drawing.
 
-        Object.keys(drawingDataModels).forEach((drawingId) => {
-            const drawingDataModel = drawingDataModels[drawingId];
-            // const docTransform = drawingDataModel.docTransform;
-            // const transform = docDrawingPositionToTransform(docTransform);
-
-            drawingDataModels[drawingId] = { ...drawingDataModel } as IDocDrawing;
-        });
+        const normalizedDrawingData: IDrawingMapItemData<IDocDrawing> = {};
+        for (const [drawingId, drawing] of Object.entries(drawingDataModels)) {
+            normalizedDrawingData[drawingId] = drawing.unitId === unitId && drawing.subUnitId === subUnitId
+                ? drawing
+                : { ...drawing, unitId, subUnitId };
+        }
 
         const subDrawings = {
             [subUnitId]: {
                 unitId,
                 subUnitId,
-                data: drawingDataModels as IDrawingMapItemData<IDocDrawing>,
+                data: normalizedDrawingData,
                 order: drawingOrderModel,
+            },
+        };
+        const renderDrawingData: IDrawingMapItemData<IDocDrawing> = {};
+        for (const [drawingId, drawing] of Object.entries(normalizedDrawingData)) {
+            renderDrawingData[drawingId] = { ...drawing, hidden: true };
+        }
+        const renderSubDrawings = {
+            [subUnitId]: {
+                ...subDrawings[subUnitId],
+                data: renderDrawingData,
+                order: getDocDrawingRenderOrder(drawingOrderModel, drawingDataModels),
             },
         };
 
         this._docDrawingService.registerDrawingData(unitId, subDrawings);
-        this._drawingManagerService.registerDrawingData(unitId, subDrawings);
+        this._drawingManagerService.registerDrawingData(unitId, renderSubDrawings);
         return true;
+    }
+
+    private _initCommands() {
+        [
+            InsertDocDrawingCommand,
+            RemoveDocDrawingCommand,
+            UpdateDrawingDocTransformCommand,
+            UpdateDocDrawingWrappingStyleCommand,
+            SetDocDrawingArrangeCommand,
+        ].forEach((command) => this.disposeWithMe(this._commandService.registerCommand(command)));
     }
 }

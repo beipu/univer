@@ -14,13 +14,21 @@
  * limitations under the License.
  */
 
-import type { IAccessor, ICommand } from '@univerjs/core';
-import type { IDocDrawing } from '@univerjs/docs-drawing';
-import type { IDrawingDocTransform, IUpdateDrawingDocTransformParams } from './update-doc-drawing.command';
-import { CommandType, Direction, ICommandService, IUniverInstanceService, PositionedObjectLayoutType } from '@univerjs/core';
-import { IDocDrawingService } from '@univerjs/docs-drawing';
+import type { DocumentDataModel, IAccessor, ICommand, IObjectPositionH, IObjectPositionV } from '@univerjs/core';
+import type { IDocDrawing, IDrawingDocTransform, IUpdateDrawingDocTransformCommandParams } from '@univerjs/docs-drawing';
+import type { IDocumentSkeletonCached } from '@univerjs/engine-render';
+import {
+    CommandType,
+    Direction,
+    ICommandService,
+    IUniverInstanceService,
+    PositionedObjectLayoutType,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { DocSkeletonManagerService } from '@univerjs/docs';
+import { IDocDrawingService, UpdateDrawingDocTransformCommand } from '@univerjs/docs-drawing';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { UpdateDrawingDocTransformCommand } from './update-doc-drawing.command';
+import { findDrawingAnchorInPage, resolveDrawingAnchorOffsets } from '../../utils/drawing-anchor-position';
 
 export interface IMoveDrawingsCommandParams {
     direction: Direction;
@@ -47,14 +55,15 @@ export const MoveDocDrawingsCommand: ICommand = {
 
         const unitId = drawings[0].unitId;
 
-        const renderObject = renderManagerService.getRenderById(unitId);
+        const renderObject = renderManagerService.getRenderUnitById(unitId);
         const scene = renderObject?.scene;
         if (scene == null) {
             return false;
         }
         const transformer = scene.getTransformerByCreate();
+        const skeletonData = renderObject?.with(DocSkeletonManagerService).getSkeleton()?.getSkeletonData();
 
-        const documentDataModel = univerInstanceService.getUniverDocInstance(unitId);
+        const documentDataModel = univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
 
         const newDrawings = drawings.map((drawing) => {
             const { drawingId } = drawing as IDocDrawing;
@@ -66,9 +75,25 @@ export const MoveDocDrawingsCommand: ICommand = {
             }
 
             const { positionH, positionV } = drawingData.docTransform;
+            const anchorLookup = skeletonData == null
+                ? { anchor: null, previewOnly: false }
+                : findDrawingAnchor(skeletonData, drawingId);
+            if (anchorLookup.previewOnly) {
+                return null;
+            }
 
-            const newPositionH = { ...positionH };
-            const newPositionV = { ...positionV };
+            const { anchor } = anchorLookup;
+            const offsets = anchor == null
+                ? { horizontal: positionH.posOffset ?? 0, vertical: positionV.posOffset ?? 0 }
+                : resolveDrawingAnchorOffsets(anchor, positionH, positionV);
+            const newPositionH = {
+                ...(positionH.relativeFrom == null ? {} : { relativeFrom: positionH.relativeFrom }),
+                posOffset: offsets.horizontal,
+            } as IObjectPositionH;
+            const newPositionV = {
+                ...(positionV.relativeFrom == null ? {} : { relativeFrom: positionV.relativeFrom }),
+                posOffset: offsets.vertical,
+            } as IObjectPositionV;
 
             if (direction === Direction.UP) {
                 newPositionV.posOffset = (newPositionV.posOffset ?? 0) - 2;
@@ -84,14 +109,14 @@ export const MoveDocDrawingsCommand: ICommand = {
                 drawingId,
                 key: direction === Direction.UP || direction === Direction.DOWN ? 'positionV' : 'positionH',
                 value: direction === Direction.UP || direction === Direction.DOWN ? newPositionV : newPositionH,
-            } as IDrawingDocTransform;
+            };
         }).filter((drawing) => drawing != null) as IDrawingDocTransform[];
 
         if (newDrawings.length === 0) {
             return false;
         }
 
-        const result = commandService.syncExecuteCommand<IUpdateDrawingDocTransformParams>(UpdateDrawingDocTransformCommand.id, {
+        const result = commandService.syncExecuteCommand<IUpdateDrawingDocTransformCommandParams>(UpdateDrawingDocTransformCommand.id, {
             unitId,
             subUnitId: unitId,
             drawings: newDrawings,
@@ -102,3 +127,39 @@ export const MoveDocDrawingsCommand: ICommand = {
         return Boolean(result);
     },
 };
+
+function findDrawingAnchor(
+    skeletonData: IDocumentSkeletonCached,
+    drawingId: string
+) {
+    let foundInPreview = false;
+
+    for (const page of skeletonData.pages) {
+        const bodyAnchor = findDrawingAnchorInPage(page, drawingId, page.marginTop, page.marginLeft);
+        const header = page.headerId == null
+            ? undefined
+            : skeletonData.skeHeaders.get(page.headerId)?.get(page.pageWidth);
+        const headerAnchor = header == null
+            ? null
+            : findDrawingAnchorInPage(header, drawingId, header.marginTop, page.marginLeft);
+        const footer = page.footerId == null
+            ? undefined
+            : skeletonData.skeFooters.get(page.footerId)?.get(page.pageWidth);
+        const footerTop = footer == null ? 0 : page.pageHeight - page.marginBottom + footer.marginTop;
+        const footerAnchor = footer == null
+            ? null
+            : findDrawingAnchorInPage(footer, drawingId, footerTop, page.marginLeft);
+        const anchor = bodyAnchor ?? headerAnchor ?? footerAnchor;
+        if (anchor == null) {
+            continue;
+        }
+
+        if (!page.isLayoutPlaceholder && !page.isMaterializationPlaceholder) {
+            return { anchor, previewOnly: false };
+        }
+
+        foundInPreview = true;
+    }
+
+    return { anchor: null, previewOnly: foundInPreview };
+}

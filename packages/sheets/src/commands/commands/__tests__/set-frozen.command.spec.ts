@@ -106,7 +106,7 @@ describe('Test set frozen commands', () => {
     describe('set frozen', () => {
         describe('set frozen', async () => {
             it('correct situation: ', async () => {
-                const workbook = get(IUniverInstanceService).getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+                const workbook = get(IUniverInstanceService).getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
                 if (!workbook) throw new Error('This is an error');
 
                 const targetActiveSheet = workbook.getActiveSheet()!;
@@ -157,6 +157,20 @@ describe('Test set frozen commands', () => {
                         ySplit: 1,
                     })
                 ).toBeFalsy();
+            });
+
+            it('should reject incomplete freeze params without changing the worksheet', async () => {
+                const workbook = get(IUniverInstanceService).getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+                const worksheet = workbook.getActiveSheet()!;
+                const originFreeze = worksheet.getFreeze();
+                const params = {
+                    startRow: 1,
+                    startColumn: 0,
+                    xSplit: 0,
+                };
+
+                expect(await commandService.executeCommand(SetFrozenCommand.id, params)).toBeFalsy();
+                expect(worksheet.getFreeze()).toEqual(originFreeze);
             });
         });
     });

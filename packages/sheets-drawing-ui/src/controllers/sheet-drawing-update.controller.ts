@@ -14,11 +14,18 @@
  * limitations under the License.
  */
 
-import type { IAccessor, IDrawingParam, IRange, Nullable, Workbook } from '@univerjs/core';
-import type { IImageData, IImageIoServiceParam } from '@univerjs/drawing';
+import type { IAccessor, IDrawingParam, IImageIoServiceParam, IRange, Nullable, Workbook } from '@univerjs/core';
+import type { IImageData } from '@univerjs/drawing';
 import type { IRenderContext, IRenderModule, SpreadsheetSkeleton } from '@univerjs/engine-render';
 import type { ISheetLocationBase, WorkbookSelectionModel } from '@univerjs/sheets';
-import type { IInsertDrawingCommandParams, ISetDrawingArrangeCommandParams, ISetDrawingCommandParams, ISheetDrawing, ISheetDrawingPosition } from '@univerjs/sheets-drawing';
+import type {
+    IInsertSheetDrawingCommandParams,
+    ISetDrawingArrangeCommandParams,
+    ISetDrawingCommandParams,
+    ISheetDrawing,
+    ISheetDrawingPosition,
+} from '@univerjs/sheets-drawing';
+import type { LocaleKey } from '../locale/types';
 import {
     BooleanNumber,
     BuildTextUtils,
@@ -29,32 +36,36 @@ import {
     generateRandomId,
     ICommandService,
     IContextService,
+    IImageIoService,
     ImageSourceType,
+    ImageUploadStatusType,
     Inject,
     Injector,
     IURLImageService,
     LocaleService,
-    ObjectRelativeFromH,
-    ObjectRelativeFromV,
     PositionedObjectLayoutType,
     WrapTextType,
 } from '@univerjs/core';
 import { MessageType } from '@univerjs/design';
-import { docDrawingPositionToTransform } from '@univerjs/docs-ui';
+import { buildDocTransform, docDrawingPositionToTransform } from '@univerjs/docs';
 import {
     DRAWING_IMAGE_ALLOW_IMAGE_LIST,
-    DRAWING_IMAGE_ALLOW_SIZE,
     DRAWING_IMAGE_COUNT_LIMIT,
     DRAWING_IMAGE_HEIGHT_LIMIT,
     DRAWING_IMAGE_WIDTH_LIMIT,
+    getDrawingImageAllowSize,
     getImageSize,
     IDrawingManagerService,
-    IImageIoService,
-    ImageUploadStatusType,
     SetDrawingSelectedOperation,
 } from '@univerjs/drawing';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { attachRangeWithCoord, SetRangeValuesCommand, SheetInterceptorService, SheetSkeletonService, SheetsSelectionsService } from '@univerjs/sheets';
+import {
+    attachRangeWithCoord,
+    SetRangeValuesCommand,
+    SheetInterceptorService,
+    SheetSkeletonService,
+    SheetsSelectionsService,
+} from '@univerjs/sheets';
 import {
     drawingPositionToTransform,
     InsertSheetDrawingCommand,
@@ -101,7 +112,7 @@ export function getDrawingSizeByCell(
 ) {
     const { rotatedHeight, rotatedWidth } = rotatedBoundingBox(originImageWidth, originImageHeight, angle);
     const renderManagerService = accessor.get(IRenderManagerService);
-    const currentRender = renderManagerService.getRenderById(location.unitId);
+    const currentRender = renderManagerService.getRenderUnitById(location.unitId);
     if (!currentRender) {
         return false;
     }
@@ -110,7 +121,7 @@ export function getDrawingSizeByCell(
     if (skeleton == null) {
         return false;
     }
-    const cellInfo = skeleton.getCellByIndex(location.row, location.col);
+    const cellInfo = skeleton.getCellWithCoordByIndex(location.row, location.col);
 
     const cellWidth = cellInfo.mergeInfo.endX - cellInfo.mergeInfo.startX - 2;
     const cellHeight = cellInfo.mergeInfo.endY - cellInfo.mergeInfo.startY - 2;
@@ -164,7 +175,7 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
         if (fileLength > DRAWING_IMAGE_COUNT_LIMIT) {
             this._messageService.show({
                 type: MessageType.Error,
-                content: this._localeService.t('update-status.exceedMaxCount', String(DRAWING_IMAGE_COUNT_LIMIT)),
+                content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.exceedMaxCount', String(DRAWING_IMAGE_COUNT_LIMIT)),
             });
             return false;
         } else if (fileLength === 0) {
@@ -202,17 +213,17 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
             if (type === ImageUploadStatusType.ERROR_EXCEED_SIZE) {
                 this._messageService.show({
                     type: MessageType.Error,
-                    content: this._localeService.t('update-status.exceedMaxSize', String(DRAWING_IMAGE_ALLOW_SIZE / (1024 * 1024))),
+                    content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.exceedMaxSize', String(getDrawingImageAllowSize() / (1024 * 1024))),
                 });
             } else if (type === ImageUploadStatusType.ERROR_IMAGE_TYPE) {
                 this._messageService.show({
                     type: MessageType.Error,
-                    content: this._localeService.t('update-status.invalidImageType'),
+                    content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.invalidImageType'),
                 });
             } else if (type === ImageUploadStatusType.ERROR_IMAGE) {
                 this._messageService.show({
                     type: MessageType.Error,
-                    content: this._localeService.t('update-status.invalidImage'),
+                    content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.invalidImage'),
                 });
             }
         }
@@ -258,10 +269,10 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
             axisAlignSheetTransform: transformToAxisAlignPosition(newTransform, skeleton) ?? sheetTransform,
         };
 
-        return this._commandService.executeCommand(InsertSheetDrawingCommand.id, {
+        return this._commandService.executeCommand<IInsertSheetDrawingCommandParams>(InsertSheetDrawingCommand.id, {
             unitId,
             drawings: [sheetDrawingParam],
-        } as IInsertDrawingCommandParams);
+        });
     }
 
     // eslint-disable-next-line max-lines-per-function
@@ -274,17 +285,17 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
             if (type === ImageUploadStatusType.ERROR_EXCEED_SIZE) {
                 this._messageService.show({
                     type: MessageType.Error,
-                    content: this._localeService.t('update-status.exceedMaxSize', String(DRAWING_IMAGE_ALLOW_SIZE / (1024 * 1024))),
+                    content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.exceedMaxSize', String(getDrawingImageAllowSize() / (1024 * 1024))),
                 });
             } else if (type === ImageUploadStatusType.ERROR_IMAGE_TYPE) {
                 this._messageService.show({
                     type: MessageType.Error,
-                    content: this._localeService.t('update-status.invalidImageType'),
+                    content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.invalidImageType'),
                 });
             } else if (type === ImageUploadStatusType.ERROR_IMAGE) {
                 this._messageService.show({
                     type: MessageType.Error,
-                    content: this._localeService.t('update-status.invalidImage'),
+                    content: this._localeService.t<LocaleKey>('sheets-drawing-ui.update-status.invalidImage'),
                 });
             }
         }
@@ -325,21 +336,7 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
         if (!imageSize) {
             return false;
         }
-        const docTransform = {
-            size: {
-                width: imageSize.width,
-                height: imageSize.height,
-            },
-            positionH: {
-                relativeFrom: ObjectRelativeFromH.PAGE,
-                posOffset: 0,
-            },
-            positionV: {
-                relativeFrom: ObjectRelativeFromV.PARAGRAPH,
-                posOffset: 0,
-            },
-            angle: 0,
-        };
+        const docTransform = buildDocTransform(imageSize.width, imageSize.height);
         const docDrawingParam = {
             unitId: docDataModel.getUnitId(),
             subUnitId: docDataModel.getUnitId(),
@@ -390,7 +387,6 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
         return false;
     }
 
-    // eslint-disable-next-line max-lines-per-function
     async insertCellImageByUrl(url: string, location?: ISheetLocationBase) {
         let src = url;
         try {
@@ -421,21 +417,7 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
         if (!imageSize) {
             return false;
         }
-        const docTransform = {
-            size: {
-                width: imageSize.width,
-                height: imageSize.height,
-            },
-            positionH: {
-                relativeFrom: ObjectRelativeFromH.PAGE,
-                posOffset: 0,
-            },
-            positionV: {
-                relativeFrom: ObjectRelativeFromV.PARAGRAPH,
-                posOffset: 0,
-            },
-            angle: 0,
-        };
+        const docTransform = buildDocTransform(imageSize.width, imageSize.height);
         const docDrawingParam = {
             unitId: docDataModel.getUnitId(),
             subUnitId: docDataModel.getUnitId(),
@@ -671,7 +653,8 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
         this.disposeWithMe(this._drawingManagerService.featurePluginGroupUpdate$.subscribe((params) => {
             const grpParams = [];
             for (const param of params) {
-                const grpSheetTransform = this._getSheetTransformByParam(param.parent, true);
+                const parent = param.parent;
+                const grpSheetTransform = this._getSheetTransformByParam(parent, true);
 
                 const children = [];
                 for (const child of param.children) {
@@ -686,7 +669,7 @@ export class SheetDrawingUpdateController extends Disposable implements IRenderM
                 }
 
                 const grpParam = {
-                    parent: { ...param.parent, sheetTransform: grpSheetTransform?.sheetTransform, axisAlignSheetTransform: grpSheetTransform?.axisAlignSheetTransform },
+                    parent: { ...parent, sheetTransform: grpSheetTransform?.sheetTransform, axisAlignSheetTransform: grpSheetTransform?.axisAlignSheetTransform },
                     children,
 
                 };

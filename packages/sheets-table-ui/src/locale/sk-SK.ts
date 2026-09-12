@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Tabuľka',
         selectRange: 'Vyberte rozsah tabuľky',
         rename: 'Premenovať tabuľku',
+        renamePlaceholder: 'Zadajte názov tabuľky',
         updateRange: 'Aktualizovať rozsah tabuľky',
         tableRangeWithMergeError: 'Rozsah tabuľky sa nemôže prekrývať so zlúčenými bunkami',
         tableRangeWithOtherTableError: 'Rozsah tabuľky sa nemôže prekrývať s inými tabuľkami',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'Päta',
         firstLine: 'Prvý riadok',
         secondLine: 'Druhý riadok',
-        columnPrefix: 'Stĺpec',
-        tablePrefix: 'Tabuľka',
         tableNameError: 'Názov tabuľky nesmie obsahovať medzery, nesmie začínať číslom a nesmie byť zhodný s existujúcim názvom tabuľky',
+        columnMenu: {
+            'insert-left': 'Vložiť 1 stĺpec tabuľky vľavo',
+            'insert-right': 'Vložiť 1 stĺpec tabuľky vpravo',
+            delete: 'Odstrániť stĺpec tabuľky',
+        },
+
+        sort: {
+            'sort-asc': 'Vzostupne',
+            'sort-desc': 'Zostupne',
+        },
 
         insert: {
             main: 'Vložiť tabuľku',
@@ -131,12 +140,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'Filter',
             'by-values': 'Podľa hodnôt',
+            'by-colors': 'Podľa farieb',
             'by-conditions': 'Podľa podmienok',
+            back: 'Späť',
+            resize: 'Zmeniť veľkosť',
+            'filter-by-cell-fill-color': 'Farba výplne bunky',
+            'filter-by-cell-text-color': 'Farba textu bunky',
+            'filter-by-color-none': 'Tento stĺpec obsahuje iba jednu farbu',
             'clear-filter': 'Vymazať filter',
             cancel: 'Zrušiť',
             confirm: 'Potvrdiť',
             'search-placeholder': 'Použite medzeru na oddelenie kľúčových slov',
+            'input-values-placeholder': 'Zadajte hodnoty',
             'select-all': 'Vybrať všetko',
         },
     },

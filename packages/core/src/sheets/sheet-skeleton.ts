@@ -34,8 +34,8 @@ import type {
     IWorksheetData,
 } from './typedef';
 import type { Worksheet } from './worksheet';
-import { Inject, Injector } from '@wendellhu/redi';
 import { AUTO_HEIGHT_FOR_MERGED_CELLS, IS_ROW_STYLE_PRECEDE_COLUMN_STYLE } from '../common/const';
+import { Inject, Injector } from '../common/di';
 import { DocumentDataModel } from '../docs/data-model/document-data-model';
 import { IConfigService } from '../services/config/config.service';
 import { IContextService } from '../services/context/context.service';
@@ -46,6 +46,7 @@ import { ImageCacheMap } from '../shared/cache/image-cache';
 import { getIntersectRange } from '../shared/range';
 import { Skeleton } from '../skeleton';
 import { BooleanNumber, HorizontalAlign } from '../types/enum';
+import { DocumentFlavor } from '../types/interfaces';
 
 /**
  * Configuration for a single gap (visual separator between rows or columns).
@@ -130,8 +131,8 @@ export interface IGetRowColByPosOptions {
 
 export class SheetSkeleton extends Skeleton {
     /**
-     * @deprecated avoid use `IWorksheetData` directly, use API provided by `Worksheet`, otherwise
-     * `ViewModel` will be not working.
+     * Avoid using `IWorksheetData` directly when an API is provided by `Worksheet`, otherwise
+     * `ViewModel` will not work.
      */
     protected _worksheetData: IWorksheetData;
     protected _renderRawFormula = false;
@@ -165,13 +166,6 @@ export class SheetSkeleton extends Skeleton {
     }
 
     resetCache() {
-    }
-
-    /**
-     * @deprecated should never expose a property that is provided by another module!
-     */
-    getWorksheetConfig(): IWorksheetData {
-        return this._worksheetData;
     }
 
     /**
@@ -318,8 +312,8 @@ export class SheetSkeleton extends Skeleton {
 
         return {
             ...config,
-            defaultBackgroundColor: config.defaultBackgroundColor ?? `rgba(${r}, ${g}, ${b}, 0.08)`,
-            defaultStripeColor: config.defaultStripeColor ?? `rgba(${r}, ${g}, ${b}, 0.25)`,
+            defaultBackgroundColor: config.defaultBackgroundColor ?? `rgba(${r}, ${g}, ${b}, 0.025)`,
+            defaultStripeColor: config.defaultStripeColor ?? `rgba(${r}, ${g}, ${b}, 0.08)`,
         };
     }
 
@@ -1174,6 +1168,8 @@ export class SheetSkeleton extends Skeleton {
             width: Number.POSITIVE_INFINITY,
             height: Number.POSITIVE_INFINITY,
         };
+        documentData.documentStyle.documentFlavor = DocumentFlavor.UNSPECIFIED;
+        documentData.documentStyle.paragraphLineGapDefault = 0;
 
         documentData.documentStyle.renderConfig = {
             ...documentData.documentStyle.renderConfig,

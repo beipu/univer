@@ -17,11 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    threadCommentUI: {
+    'thread-comment-ui': {
+        mobile: { back: 'بازگشت' },
         panel: {
             title: 'مدیریت نظرات',
             empty: 'هنوز نظری وجود ندارد',
-            filterEmpty: 'نتیجه ای یافت نشد',
             reset: 'بازنشانی فیلتر',
             addComment: 'افزودن نظر',
             solved: 'حل شده',
@@ -35,6 +35,7 @@ const locale: typeof enUS = {
         item: {
             edit: 'ویرایش',
             delete: 'حذف این نظر',
+            more: 'بیشتر',
         },
         filter: {
             sheet: {

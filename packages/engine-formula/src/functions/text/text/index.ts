@@ -88,7 +88,9 @@ export class Text extends BaseFunction {
                 } else {
                     // The text parameter needs to check if it can be converted to a number format. If convertible, format it as the converted number.
                     // The format text does not need this check and is processed directly as a string.
-                    const parsedValue = getNumfmtParseValueFilter(`${textValueNumber}`);
+                    const parsedValue = getNumfmtParseValueFilter(`${textValueNumber}`, {
+                        dateSystem: textValue.getDateSystem(),
+                    });
 
                     if (parsedValue && parsedValue.v != null && typeof parsedValue.v === 'number') {
                         textValueNumber = parsedValue.v;
@@ -101,8 +103,13 @@ export class Text extends BaseFunction {
             }
 
             const formatTextValueString = `${formatTextValue.getValue()}`;
+            const normalizedFormatTextValueString = normalizeExcelWeekdayFormat(formatTextValueString);
 
-            const previewText = getFormatPreview(formatTextValueString, textValueNumber);
+            const previewText = getFormatPreview(
+                normalizedFormatTextValueString,
+                textValueNumber,
+                textValue.getDateSystem()
+            );
 
             return StringValueObject.create(formatTextValueString === ' ' ? previewText.trimEnd() : previewText);
         });
@@ -113,4 +120,12 @@ export class Text extends BaseFunction {
 
         return resultArray;
     }
+}
+
+function normalizeExcelWeekdayFormat(formatText: string): string {
+    if (!formatText.includes('\u00C5')) {
+        return formatText;
+    }
+
+    return formatText.replace(/\u00C5{4,}/g, 'dddd').replace(/\u00C5{1,3}/g, 'ddd');
 }

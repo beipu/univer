@@ -64,8 +64,30 @@ describe('Test ref regex', () => {
         expect(new RegExp(REFERENCE_TABLE_SINGLE_COLUMN_REGEX).test('Table1[[#Title],[#Data],[Column1]]')).toBe(true);
     });
 
+    it('allows a hash only at the end of a table column name', () => {
+        const regex = new RegExp(REFERENCE_TABLE_SINGLE_COLUMN_REGEX);
+
+        expect(regex.test('Table1[Column#]')).toBe(true);
+        expect(regex.test('Table1[Column#Name]')).toBe(false);
+    });
+
     it('Table multiple range', () => {
         expect(new RegExp(REFERENCE_TABLE_MULTIPLE_COLUMN_REGEX).test('Table1[[#Title],[#Data],[Column1]:[Column10]]')).toBe(true);
+    });
+
+    it('distinguishes A1 workbook qualifiers from Table qualifiers', () => {
+        expect(regexTestSingeRange('[Book]Sheet1!A1')).toBe(true);
+        expect(regexTestSingeRange('[1]Sheet1!A1')).toBe(true);
+        expect(new RegExp(REFERENCE_TABLE_SINGLE_COLUMN_REGEX).test('[Book]Sheet1!A1')).toBe(false);
+        expect(new RegExp(REFERENCE_TABLE_SINGLE_COLUMN_REGEX).test('[1]!SalesTable[Amount]')).toBe(true);
+        expect(new RegExp(REFERENCE_TABLE_SINGLE_COLUMN_REGEX).test('Sales.xlsx!SalesTable[Amount]')).toBe(true);
+    });
+
+    it('accepts escaped Univer display names as Table qualifiers', () => {
+        const regex = new RegExp(REFERENCE_TABLE_SINGLE_COLUMN_REGEX);
+
+        expect(regex.test('[Urban Nomad retail operations hub | Official showcase]!Inventory[Safety stock]')).toBe(true);
+        expect(regex.test('[Base name with ]] bracket]!Inventory[Safety stock]')).toBe(true);
     });
 
     it('isReferenceString', () => {
@@ -169,6 +191,13 @@ describe('Test ref regex', () => {
             expect(RE_SINGLE.test('Table1[[Order-ID]]')).toBe(true);
         });
 
+        it('matches line-break column name', () => {
+            RE_SINGLE.lastIndex = 0;
+            expect(RE_SINGLE.test('Table1[CASH\r\nOUT]')).toBe(true);
+            RE_SINGLE.lastIndex = 0;
+            expect(RE_SINGLE.test('Table1[[#Totals],[CASH\r\nOUT]]')).toBe(true);
+        });
+
         it('matches pure unicode column name', () => {
             RE_SINGLE.lastIndex = 0;
             expect(RE_SINGLE.test('Table1[[中文列名]]')).toBe(true);
@@ -260,6 +289,11 @@ describe('Test ref regex', () => {
         it('matches column range with spaced colon and tag', () => {
             RE_MULTI.lastIndex = 0;
             expect(RE_MULTI.test('Table1[[#Data], [ Column1 ] : [ Column10 ]]')).toBe(true);
+        });
+
+        it('matches line-break column names in range', () => {
+            RE_MULTI.lastIndex = 0;
+            expect(RE_MULTI.test('Table1[[CASH\r\nOUT]:[CASH\r\nIN]]')).toBe(true);
         });
 
         it('matches unicode/special char names in range', () => {
@@ -412,10 +446,13 @@ describe('Test ref regex', () => {
             expect(TITLE_ONLY.test('Table1[#This Row]')).toBe(true);
         });
 
-        // Should allow sheet/unit prefix if UNIT_NAME_REGEX supports it
-        it('rejects unit prefix', () => {
+        it('accepts external Unit qualifiers', () => {
             TITLE_ONLY.lastIndex = 0;
-            expect(TITLE_ONLY.test('Sheet1!TableA[#Data]')).toBe(false);
+            expect(TITLE_ONLY.test('Book.xlsx!TableA[#Data]')).toBe(true);
+            TITLE_ONLY.lastIndex = 0;
+            expect(TITLE_ONLY.test("'Customer Base'!TableA[#Data]")).toBe(true);
+            TITLE_ONLY.lastIndex = 0;
+            expect(TITLE_ONLY.test('[1]!TableA[#Data]')).toBe(true);
         });
 
         // Should reject non-hash titles

@@ -22,16 +22,43 @@ import {
     Inject,
     Injector,
     merge,
+    ObjectPermissionService,
     Plugin,
 } from '@univerjs/core';
+import { UnitObject } from '@univerjs/protocol';
 import pkg from '../package.json';
+import { DeleteTextCommand, InsertTextCommand, UpdateTextCommand } from './commands/commands/core-editing.command';
+import { CreateHeaderFooterCommand } from './commands/commands/create-header-footer.command';
+import {
+    SetDocumentDefaultParagraphStyleCommand,
+} from './commands/commands/set-document-default-paragraph-style.command';
+import { SetDocumentNameCommand } from './commands/commands/set-document-name.command';
+import { SetDocumentPermissionCommand } from './commands/commands/set-document-permission.command';
+import { SetDocumentPermissionsCommand } from './commands/commands/set-document-permissions.command';
+import { SetSectionHeaderFooterLinkCommand } from './commands/commands/set-section-header-footer-link.command';
+import { UpdateDocumentParagraphStyleCommand } from './commands/commands/update-document-paragraph-style.command';
+import {
+    DeleteDocumentSectionBreakCommand,
+    InsertDocumentColumnBreakCommand,
+    InsertDocumentSectionBreakCommand,
+    UpdateDocumentSectionCommand,
+} from './commands/commands/update-document-section.command';
 import { RichTextEditingMutation } from './commands/mutations/core-editing.mutation';
 import { DocsRenameMutation } from './commands/mutations/docs-rename.mutation';
+import { SetDocumentPermissionRuleMutation } from './commands/mutations/set-document-permission-rule.mutation';
+import { SetDocumentPermissionRulesMutation } from './commands/mutations/set-document-permission-rules.mutation';
 import { SetTextSelectionsOperation } from './commands/operations/text-selection.operation';
 import { defaultPluginConfig, DOCS_PLUGIN_CONFIG_KEY } from './config/config';
 import { DocCustomRangeController } from './controllers/custom-range.controller';
+import { DocPermissionController } from './controllers/doc-permission.controller';
+import { DocBlockMoveValidatorService } from './services/doc-block-move-validator.service';
+import { DocContentInsertService } from './services/doc-content-insert.service';
+import { DocLayoutExecutorService } from './services/doc-layout-executor.service';
 import { DocSelectionManagerService } from './services/doc-selection-manager.service';
+import { DocStateChangeManagerService } from './services/doc-state-change-manager.service';
 import { DocStateEmitService } from './services/doc-state-emit.service';
+import { DocTextResolverService } from './services/doc-text-resolver.service';
+import { DocumentPermissionRuleModel } from './services/permission/document-permission-rule.model';
 
 export class UniverDocsPlugin extends Plugin {
     static override pluginName = 'DOCS_PLUGIN';
@@ -56,6 +83,15 @@ export class UniverDocsPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([DocumentPermissionRuleModel]);
+        this.disposeWithMe(this._injector.get(ICommandService).registerCommand(SetDocumentPermissionRuleMutation));
+        this.disposeWithMe(this._injector.get(ICommandService).registerCommand(SetDocumentPermissionRulesMutation));
+        this.disposeWithMe(this._injector.get(ObjectPermissionService).registerRuleModel(
+            UnitObject.Document,
+            this._injector.get(DocumentPermissionRuleModel),
+            SetDocumentPermissionRuleMutation.id,
+            SetDocumentPermissionRulesMutation.id
+        ));
         this._initializeDependencies();
         this._initializeCommands();
     }
@@ -63,6 +99,20 @@ export class UniverDocsPlugin extends Plugin {
     private _initializeCommands(): void {
         (
             [
+                InsertTextCommand,
+                DeleteTextCommand,
+                UpdateTextCommand,
+                CreateHeaderFooterCommand,
+                SetDocumentPermissionCommand,
+                SetDocumentPermissionsCommand,
+                SetDocumentDefaultParagraphStyleCommand,
+                SetDocumentNameCommand,
+                SetSectionHeaderFooterLinkCommand,
+                UpdateDocumentParagraphStyleCommand,
+                UpdateDocumentSectionCommand,
+                InsertDocumentSectionBreakCommand,
+                InsertDocumentColumnBreakCommand,
+                DeleteDocumentSectionBreakCommand,
                 RichTextEditingMutation,
                 DocsRenameMutation,
                 SetTextSelectionsOperation,
@@ -77,12 +127,20 @@ export class UniverDocsPlugin extends Plugin {
             [
                 [DocSelectionManagerService],
                 [DocStateEmitService],
+                [DocStateChangeManagerService],
+                [DocBlockMoveValidatorService],
+                [DocContentInsertService],
+                [DocLayoutExecutorService],
+                [DocTextResolverService],
                 [DocCustomRangeController],
+                [DocPermissionController],
             ] as Dependency[]
         ).forEach((d) => this._injector.add(d));
     }
 
     override onReady(): void {
+        this._injector.get(DocStateChangeManagerService);
         this._injector.get(DocCustomRangeController);
+        this._injector.get(DocPermissionController);
     }
 }

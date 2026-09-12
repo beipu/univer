@@ -25,7 +25,6 @@ import {
     IActiveDirtyManagerService,
     RemoveDefinedNameMutation,
     SetDefinedNameMutation,
-    SetTriggerFormulaCalculationStartMutation,
 } from '@univerjs/engine-formula';
 import {
     InsertSheetMutation,
@@ -39,7 +38,6 @@ import {
     SetStyleCommand,
 } from '@univerjs/sheets';
 import { afterEach, describe, expect, it } from 'vitest';
-
 import { createFacadeTestBed } from '../../facade/__tests__/create-test-bed';
 import { ActiveDirtyController } from '../active-dirty.controller';
 
@@ -81,6 +79,12 @@ function getDirtyData(testBed: ITestBed, command: ICommandInfo) {
     return conversion!.getDirtyData(command);
 }
 
+function shouldTrigger(testBed: ITestBed, command: ICommandInfo) {
+    const conversion = testBed.injector.get(IActiveDirtyManagerService).get(command.id);
+    expect(conversion).toBeDefined();
+    return conversion!.shouldTrigger?.(command);
+}
+
 describe('ActiveDirtyController', () => {
     let testBed: ITestBed;
 
@@ -110,7 +114,7 @@ describe('ActiveDirtyController', () => {
 
         testBed.injector.get(ActiveDirtyController);
 
-        expect(getDirtyData(testBed, {
+        expect(shouldTrigger(testBed, {
             id: SetRangeValuesMutation.id,
             params: {
                 unitId: 'test',
@@ -122,7 +126,7 @@ describe('ActiveDirtyController', () => {
                     },
                 },
             },
-        } as ICommandInfo)).toEqual({});
+        } as ICommandInfo)).toBe(false);
 
         expect(getDirtyData(testBed, {
             id: SetRangeValuesMutation.id,
@@ -333,27 +337,6 @@ describe('ActiveDirtyController', () => {
                 name: 'Added Sheet',
             },
         } as IInsertSheetMutationParams;
-
-        expect(getDirtyData(testBed, {
-            id: SetTriggerFormulaCalculationStartMutation.id,
-            params: {
-                forceCalculation: true,
-                dirtyRanges: [],
-                dirtyNameMap: { test: { sheet1: 'Sheet1' } },
-                dirtyDefinedNameMap: {},
-                dirtyUnitFeatureMap: {},
-                dirtyUnitOtherFormulaMap: {},
-                clearDependencyTreeCache: {},
-            },
-        } as ICommandInfo)).toEqual({
-            forceCalculation: true,
-            dirtyRanges: [],
-            dirtyNameMap: { test: { sheet1: 'Sheet1' } },
-            dirtyDefinedNameMap: {},
-            dirtyUnitFeatureMap: {},
-            dirtyUnitOtherFormulaMap: {},
-            clearDependencyTreeCache: {},
-        });
 
         expect(getDirtyData(testBed, {
             id: RemoveSheetMutation.id,

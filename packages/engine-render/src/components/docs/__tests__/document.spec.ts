@@ -14,17 +14,31 @@
  * limitations under the License.
  */
 
+import { ColumnSeparatorType, CustomRangeType, DashStyleType, DocumentFlavor } from '@univerjs/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setupRenderTestEnv } from '../../../__tests__/render-test-utils';
-import { DocumentSkeletonPageType, GlyphType, LineType, PageLayoutType } from '../../../basics/i-document-skeleton-cached';
+import {
+    DocumentSkeletonPageType,
+    GlyphType,
+    LineType,
+    PageLayoutType,
+} from '../../../basics/i-document-skeleton-cached';
+import { Vector2 } from '../../../basics/vector2';
 import { Canvas } from '../../../canvas';
+import { UniverRenderingContext } from '../../../context';
 import { Engine } from '../../../engine';
 import { MAIN_VIEW_PORT_KEY, Scene } from '../../../scene';
+import { Path, Rect } from '../../../shape';
 import { Viewport } from '../../../viewport';
+import { DocBackground } from '../doc-background';
 import { DOCS_EXTENSION_TYPE } from '../doc-extension';
-import { Documents } from '../document';
+import { Documents, drawSectionColumnSeparators, resolveHeaderFooterFieldGlyph } from '../document';
+import { getDocumentCompatibilityPolicy } from '../document-compatibility';
+import { createParagraphLayoutTestBed } from '../layout/block/paragraph/__tests__/create-paragraph-layout-test-bed';
+import { DocumentSkeleton } from '../layout/doc-skeleton';
+import { setDocsTableRenderViewportProvider } from '../table-render-viewport';
 
-function createGlyph(content: string, left: number, width = 16) {
+function createGlyph(content: string, left: number, width = 16, backgroundColor?: string) {
     return {
         glyphType: GlyphType.WORD,
         streamType: 'word',
@@ -51,6 +65,11 @@ function createGlyph(content: string, left: number, width = 16) {
             fs: 12,
             ff: 'Arial',
             cl: { rgb: '#222222' },
+            ...(backgroundColor
+                ? {
+                    bg: { rgb: backgroundColor },
+                }
+                : {}),
         },
         fontStyle: {
             fontString: '12px Arial',
@@ -66,9 +85,9 @@ function createGlyph(content: string, left: number, width = 16) {
     } as any;
 }
 
-function createLine(type: LineType, top: number, withBorder = false) {
-    const glyphA = createGlyph('A', 0);
-    const glyphB = createGlyph('B', 18);
+function createLine(type: LineType, top: number, withBorder = false, backgroundColor?: string) {
+    const glyphA = createGlyph('A', 0, 16, backgroundColor);
+    const glyphB = createGlyph('B', 18, 16, backgroundColor);
     const divide = {
         glyphGroup: [glyphA, glyphB],
         width: 120,
@@ -114,9 +133,9 @@ function createLine(type: LineType, top: number, withBorder = false) {
     return line;
 }
 
-function createPage(pageType: DocumentSkeletonPageType, segmentId: string) {
-    const lineBlock = createLine(LineType.BLOCK, 0);
-    const lineText = createLine(LineType.PARAGRAPH, 24, true);
+function createPage(pageType: DocumentSkeletonPageType, segmentId: string, backgroundColor?: string) {
+    const lineBlock = createLine(LineType.BLOCK, 0, false, backgroundColor);
+    const lineText = createLine(LineType.PARAGRAPH, 24, true, backgroundColor);
     const column = {
         lines: [lineBlock, lineText],
         left: 0,
@@ -162,6 +181,7 @@ function createPage(pageType: DocumentSkeletonPageType, segmentId: string) {
         ed: 2,
         skeDrawings: new Map(),
         skeTables: new Map(),
+        skeColumnGroups: new Map(),
         segmentId,
         type: pageType,
         renderConfig: {
@@ -228,7 +248,82 @@ function attachTable(page: any) {
     page.skeTables.set('table-1', table);
 }
 
+function setFirstTextGlyph(page: any, content: string) {
+    const glyph = page.sections[0].columns[0].lines[1].divides[0].glyphGroup[0];
+    glyph.content = content;
+    glyph.raw = content;
+    glyph.count = content.length;
+}
+
+function attachColumnGroup(page: any) {
+    const leftPage = createPage(DocumentSkeletonPageType.BODY, 'column-left');
+    const rightPage = createPage(DocumentSkeletonPageType.BODY, 'column-right');
+    leftPage.marginLeft = 0;
+    leftPage.marginTop = 0;
+    leftPage.marginRight = 0;
+    leftPage.marginBottom = 0;
+    rightPage.marginLeft = 0;
+    rightPage.marginTop = 0;
+    rightPage.marginRight = 0;
+    rightPage.marginBottom = 0;
+    setFirstTextGlyph(leftPage, 'L');
+    setFirstTextGlyph(rightPage, 'R');
+
+    const columnGroup = {
+        columns: [
+            {
+                columnId: 'column-left',
+                left: 0,
+                top: 0,
+                width: 70,
+                height: 80,
+                st: 0,
+                ed: 10,
+                page: leftPage,
+            },
+            {
+                columnId: 'column-right',
+                left: 90,
+                top: 0,
+                width: 70,
+                height: 80,
+                st: 11,
+                ed: 20,
+                page: rightPage,
+            },
+        ],
+        width: 160,
+        height: 80,
+        top: 20,
+        left: 12,
+        st: 0,
+        ed: 20,
+        columnGroupId: 'column-group-1',
+        columnGroupSource: {
+            columnGroupId: 'column-group-1',
+            gap: { v: 20 },
+            columns: [],
+        },
+        parent: page,
+    } as any;
+
+    columnGroup.columns.forEach((column: any) => {
+        column.parent = columnGroup;
+        column.page.parent = column;
+    });
+    page.skeColumnGroups.set(columnGroup.columnGroupId, columnGroup);
+}
+
 describe('documents render', () => {
+    it('resolves PAGE and NUMPAGES fields without mutating the model glyph', () => {
+        const glyph = { st: 0, ed: 0, content: '1' } as any;
+        const pageRange = { startIndex: 0, endIndex: 0, properties: { fieldType: 'PAGE' } } as any;
+        const pageCountRange = { startIndex: 0, endIndex: 0, properties: { fieldType: 'NUMPAGES' } } as any;
+
+        expect(resolveHeaderFooterFieldGlyph(glyph, 0, 0, [pageRange], 15, 16).content).toBe('15');
+        expect(resolveHeaderFooterFieldGlyph(glyph, 0, 0, [pageCountRange], 15, 16).content).toBe('16');
+        expect(glyph.content).toBe('1');
+    });
     let restoreEnv: () => void;
     let container: HTMLDivElement;
     let engine: Engine;
@@ -274,13 +369,1484 @@ describe('documents render', () => {
         container.remove();
         document.body.innerHTML = '';
         vi.restoreAllMocks();
+        setDocsTableRenderViewportProvider(null);
+    });
+
+    it.each(['separator', 'continuationSeparator', 'continuationNotice'] as const)('renders each note kind with its own %s fields', (kind) => {
+        const fieldBody = (fieldType: string) => ({
+            dataStream: '\uFFFC\r\n',
+            paragraphs: [{ startIndex: 1, paragraphId: 'field' }],
+            sectionBreaks: [{ startIndex: 2, sectionId: 'field-section' }],
+            customRanges: [{ rangeId: fieldType, rangeType: CustomRangeType.FIELD, startIndex: 0, endIndex: 0, properties: { fieldType } }],
+        });
+        const footnoteBody = fieldBody('PAGE');
+        const endnoteBody = fieldBody('NUMPAGES');
+        const bed = createParagraphLayoutTestBed('Reference\uFFFC\uFFFC', {
+            documentStyle: { documentFlavor: DocumentFlavor.TRADITIONAL },
+            body: {
+                customRanges: ['footnote', 'endnote'].map((type, index) => ({
+                    rangeId: type,
+                    rangeType: index === 0 ? CustomRangeType.FOOTNOTE : CustomRangeType.ENDNOTE,
+                    startIndex: 9 + index,
+                    endIndex: 9 + index,
+                    wholeEntity: true,
+                    properties: { noteId: type },
+                })),
+            },
+            notes: Object.fromEntries(['footnote', 'endnote'].map((type) => [type, { noteId: type, type, body: fieldBody('PAGE') }])),
+            noteSettings: { footnote: { [kind]: footnoteBody }, endnote: { [kind]: endnoteBody } },
+        });
+        const skeleton = DocumentSkeleton.create(bed.viewModel, bed.ctx.docsConfig.localeService);
+        const documents = new Documents('note-fields', skeleton);
+        try {
+            skeleton.calculate();
+            const page = skeleton.getSkeletonData()!.pages[0];
+            const fragments = page.notes!;
+            // Render both kinds on the same body page, including continuation decorations.
+            page.noteDecorations = fragments.map((note) => ({
+                noteType: bed.dataModel.getSnapshot().notes![note.noteId].type,
+                kind,
+                left: note.left,
+                top: note.top,
+                page: note.page,
+            }));
+            const render = vi.spyOn(documents as unknown as { _drawHeaderFooter: (...args: unknown[]) => void }, '_drawHeaderFooter');
+            documents.draw(canvas.getContext());
+            for (const decoration of page.noteDecorations) {
+                const call = render.mock.calls.find((args) => args[0] === decoration.page);
+                expect(call).toBeDefined();
+                expect(call![14]).toEqual(decoration.noteType === 'endnote' ? endnoteBody.customRanges : footnoteBody.customRanges);
+            }
+            expect(page.noteDecorations.map((note) => note.noteType).sort()).toEqual(['endnote', 'footnote']);
+        } finally {
+            documents.dispose();
+            skeleton.dispose();
+            bed.viewModel.dispose();
+            bed.dataModel.dispose();
+        }
+    });
+
+    it('hit tests table content and controls that overflow the document bounds', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        attachTable(bodyPage);
+        const table = bodyPage.skeTables.get('table-1')!;
+        table.width = 260;
+        table.rows[0].cells[0].pageWidth = 260;
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map(),
+            skeFooters: new Map(),
+        };
+        const documents = new Documents('docs-overflow-hit', {
+            getSkeletonData: () => skeletonData,
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        documents.transformByState({
+            left: 0,
+            top: 0,
+            width: 200,
+            height: 420,
+        });
+        scene.addObject(documents, 1);
+
+        expect(documents.isHit(Vector2.create(250, 50))).toBe(true);
+        expect(documents.isHit(Vector2.create(250, 12))).toBe(true);
+        expect(documents.isHit(Vector2.create(250, 130))).toBe(false);
+
+        documents.dispose();
+    });
+
+    it('hit tests a horizontally projected table to the left of the document bounds', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        attachTable(bodyPage);
+        const table = bodyPage.skeTables.get('table-1')!;
+        table.width = 260;
+        table.rows[0].cells[0].pageWidth = 260;
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map(),
+            skeFooters: new Map(),
+        };
+        const documents = new Documents('docs-left-overflow-hit', {
+            getSkeletonData: () => skeletonData,
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        documents.transformByState({
+            left: 0,
+            top: 0,
+            width: 200,
+            height: 420,
+        });
+        scene.addObject(documents, 1);
+        setDocsTableRenderViewportProvider((unitId, tableId) => unitId === 'docs-left-overflow-hit' && tableId === 'table-1'
+            ? {
+                contentWidth: 260,
+                leadingInsetLeft: 80,
+                scrollLeft: 0,
+                viewportLeft: -20,
+                viewportWidth: 200,
+            }
+            : null);
+
+        expect(documents.isHit(Vector2.create(-40, 50))).toBe(true);
+        expect(documents.isHit(Vector2.create(-40, 12))).toBe(true);
+        expect(documents.isHit(Vector2.create(-70, 50))).toBe(false);
+
+        documents.dispose();
+    });
+
+    it('uses explicit table cell border width inside table render path', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-border', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const cell = createPage(DocumentSkeletonPageType.CELL, 'cell-seg');
+        cell.marginLeft = 0;
+        cell.marginTop = 0;
+        cell.pageWidth = 120;
+        cell.pageHeight = 60;
+        const row = {
+            cells: [cell],
+            rowSource: {
+                tableCells: [{
+                    borderTop: { color: { rgb: '#ff0000' }, width: { v: 5 } },
+                    borderBottom: { color: { rgb: 'transparent' }, width: { v: 0 } },
+                    borderLeft: { color: { rgb: 'transparent' }, width: { v: 0 } },
+                    borderRight: { color: { rgb: 'transparent' }, width: { v: 0 } },
+                }],
+            },
+        } as any;
+        cell.parent = row;
+        (documents as any)._drawLiquid = { x: 0, y: 0 };
+
+        const lineWidths: number[] = [];
+        const strokeStyles: string[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            fillRectByPrecision: vi.fn(),
+            setLineWidthByPrecision: vi.fn((width: number) => lineWidths.push(width)),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn(),
+            lineToByPrecision: vi.fn(),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set strokeStyle(value: string) {
+                strokeStyles.push(value);
+            },
+        } as any;
+
+        (documents as any)._drawTableCellBordersAndBg(ctx, { marginLeft: 0, marginTop: 0 }, cell);
+
+        expect(lineWidths).toEqual([5]);
+        expect(strokeStyles).toEqual(['#ff0000']);
+        expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+        documents.dispose();
+    });
+
+    it('draws section column separators between columns', () => {
+        const nativeContext = document.createElement('canvas').getContext('2d');
+        if (!nativeContext) {
+            throw new Error('Expected a canvas 2D context.');
+        }
+        const ctx = new UniverRenderingContext(nativeContext);
+        vi.spyOn(ctx, 'moveToByPrecision');
+        vi.spyOn(ctx, 'lineToByPrecision');
+        vi.spyOn(ctx, 'stroke');
+
+        drawSectionColumnSeparators(ctx, {
+            height: 300,
+            colCount: 2,
+            top: 0,
+            st: 0,
+            ed: 0,
+            columns: [
+                {
+                    lines: [],
+                    left: 0,
+                    width: 120,
+                    spaceWidth: 20,
+                    separator: ColumnSeparatorType.BETWEEN_EACH_COLUMN,
+                    st: 0,
+                    ed: 0,
+                    drawingLRIds: [],
+                    isFull: false,
+                },
+                {
+                    lines: [],
+                    left: 140,
+                    width: 120,
+                    spaceWidth: 0,
+                    separator: ColumnSeparatorType.BETWEEN_EACH_COLUMN,
+                    st: 0,
+                    ed: 0,
+                    drawingLRIds: [],
+                    isFull: false,
+                },
+            ],
+        }, 500, 96, 72);
+
+        expect(ctx.moveToByPrecision).toHaveBeenCalledWith(226, 72);
+        expect(ctx.lineToByPrecision).toHaveBeenCalledWith(226, 572);
+        expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    });
+
+    it('aligns table cell background to precise start and end edges', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-background-precision', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const cell = createPage(DocumentSkeletonPageType.CELL, 'cell-background-precision');
+        cell.marginLeft = 0;
+        cell.marginTop = 0;
+        cell.pageWidth = 10.25;
+        cell.pageHeight = 6.25;
+        const noBorder = { color: { rgb: 'transparent' }, width: { v: 0 } };
+        const row = {
+            cells: [cell],
+            rowSource: {
+                tableCells: [{
+                    backgroundColor: { rgb: '#bf125d' },
+                    borderTop: noBorder,
+                    borderBottom: noBorder,
+                    borderLeft: noBorder,
+                    borderRight: noBorder,
+                }],
+            },
+        } as any;
+        cell.parent = row;
+        (documents as any)._drawLiquid = { x: 0.25, y: 0.25 };
+
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            getScale: vi.fn(() => ({ scaleX: 2, scaleY: 2 })),
+            fillRect: vi.fn(),
+            fillRectByPrecision: vi.fn(),
+            setLineWidthByPrecision: vi.fn(),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn(),
+            lineToByPrecision: vi.fn(),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set fillStyle(_value: string) {},
+            set strokeStyle(_value: string) {},
+        } as any;
+
+        (documents as any)._drawTableCellBordersAndBg(ctx, { marginLeft: 0, marginTop: 0 }, cell);
+
+        expect(ctx.fillRect).toHaveBeenCalledWith(0.5, 0.5, 10, 6);
+        expect(ctx.fillRectByPrecision).not.toHaveBeenCalled();
+
+        documents.dispose();
+    });
+
+    it('draws a docs workspace background behind traditional pages', () => {
+        const page = createPage(DocumentSkeletonPageType.BODY, '');
+        const skeleton = {
+            getSkeletonData: () => ({ pages: [page] }),
+            getViewModel: () => ({
+                getDataModel: () => ({
+                    getSnapshot: () => ({
+                        documentStyle: {
+                            documentFlavor: DocumentFlavor.TRADITIONAL,
+                        },
+                    }),
+                }),
+            }),
+        } as any;
+        const docBackground = new DocBackground('docs-background', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 20,
+            pageMarginTop: 20,
+        });
+        docBackground.resize(260, 480);
+
+        const rectDraw = vi.spyOn(Rect, 'drawWith').mockImplementation(() => {});
+        vi.spyOn(Path, 'drawWith').mockImplementation(() => {});
+
+        const translate = vi.fn();
+        docBackground.draw({
+            restore: vi.fn(),
+            save: vi.fn(),
+            translate,
+        } as any, {
+            viewBound: { left: 100, top: 50, right: 700, bottom: 450 },
+            cacheBound: { left: 80, top: 30, right: 760, bottom: 490 },
+        } as any);
+
+        expect(rectDraw).toHaveBeenCalledTimes(2);
+        expect(rectDraw.mock.calls[0][1]).toMatchObject({
+            width: 680,
+            height: 460,
+        });
+        expect(translate.mock.calls[0]).toEqual([80, 30]);
+
+        docBackground.dispose();
+    });
+
+    it('draws DOCX page background images on every traditional page', () => {
+        const firstPage = createPage(DocumentSkeletonPageType.BODY, 'first');
+        const secondPage = createPage(DocumentSkeletonPageType.BODY, 'second');
+        const backgroundImage = { complete: true };
+        vi.spyOn(document, 'createElement').mockReturnValue(backgroundImage as any);
+        const skeleton = {
+            getSkeletonData: () => ({ pages: [firstPage, secondPage] }),
+            getViewModel: () => ({
+                getDataModel: () => ({
+                    getSnapshot: () => ({
+                        documentStyle: {
+                            documentFlavor: DocumentFlavor.TRADITIONAL,
+                            background: {
+                                source: 'data:image/png;base64,background',
+                            },
+                        },
+                    }),
+                }),
+            }),
+        } as any;
+        const docBackground = new DocBackground('docs-background-docx', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 20,
+            pageMarginTop: 20,
+        });
+
+        vi.spyOn(Rect, 'drawWith').mockImplementation(() => {});
+        vi.spyOn(Path, 'drawWith').mockImplementation(() => {});
+        const drawImage = vi.fn();
+
+        docBackground.draw({
+            restore: vi.fn(),
+            save: vi.fn(),
+            translate: vi.fn(),
+            drawImage,
+        } as any);
+
+        expect(drawImage).toHaveBeenCalledTimes(2);
+        expect(drawImage).toHaveBeenNthCalledWith(1, backgroundImage, 0, 0, 200, 420);
+        expect(drawImage).toHaveBeenNthCalledWith(2, backgroundImage, 0, 0, 200, 420);
+
+        docBackground.dispose();
+    });
+
+    it('treats unspecified document flavor as traditional when drawing the page background', () => {
+        const page = createPage(DocumentSkeletonPageType.BODY, '');
+        const skeleton = {
+            getSkeletonData: () => ({ pages: [page] }),
+            getViewModel: () => ({
+                getDataModel: () => ({
+                    getSnapshot: () => ({
+                        documentStyle: {
+                            documentFlavor: DocumentFlavor.UNSPECIFIED,
+                        },
+                    }),
+                }),
+            }),
+        } as any;
+        const docBackground = new DocBackground('docs-background-unspecified', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 20,
+            pageMarginTop: 20,
+        });
+        docBackground.resize(260, 480);
+
+        const rectDraw = vi.spyOn(Rect, 'drawWith').mockImplementation(() => {});
+        vi.spyOn(Path, 'drawWith').mockImplementation(() => {});
+
+        docBackground.draw({
+            restore: vi.fn(),
+            save: vi.fn(),
+            translate: vi.fn(),
+        } as any);
+
+        expect(rectDraw).toHaveBeenCalledTimes(2);
+
+        docBackground.dispose();
+    });
+
+    it('draws the docs workspace background for modern documents', () => {
+        const page = createPage(DocumentSkeletonPageType.BODY, '');
+        const skeleton = {
+            getSkeletonData: () => ({ pages: [page] }),
+            getViewModel: () => ({
+                getDataModel: () => ({
+                    getSnapshot: () => ({
+                        documentStyle: {
+                            documentFlavor: DocumentFlavor.MODERN,
+                        },
+                    }),
+                }),
+            }),
+        } as any;
+        const docBackground = new DocBackground('docs-background-modern', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 20,
+            pageMarginTop: 20,
+        });
+        docBackground.resize(260, 480);
+
+        const rectDraw = vi.spyOn(Rect, 'drawWith').mockImplementation(() => {});
+        vi.spyOn(Path, 'drawWith').mockImplementation(() => {});
+
+        const translate = vi.fn();
+        docBackground.draw({
+            restore: vi.fn(),
+            save: vi.fn(),
+            translate,
+        } as any, {
+            viewBound: { left: 120, top: 60, right: 640, bottom: 420 },
+            cacheBound: { left: 90, top: 40, right: 700, bottom: 480 },
+        } as any);
+
+        expect(rectDraw).toHaveBeenCalledTimes(1);
+        expect(rectDraw.mock.calls[0][1]).toMatchObject({
+            width: 610,
+            height: 440,
+        });
+        expect(translate.mock.calls[0]).toEqual([90, 40]);
+
+        docBackground.dispose();
+    });
+
+    it('uses configured transparent fills for embedded editor backgrounds', () => {
+        const page = createPage(DocumentSkeletonPageType.BODY, '');
+        const skeleton = {
+            getSkeletonData: () => ({ pages: [page] }),
+            getViewModel: () => ({
+                getDataModel: () => ({
+                    getSnapshot: () => ({
+                        documentStyle: {
+                            documentFlavor: DocumentFlavor.TRADITIONAL,
+                        },
+                    }),
+                }),
+            }),
+        } as any;
+        const docBackground = new DocBackground('docs-background-editor', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 20,
+            pageMarginTop: 20,
+            backgroundFillColor: 'transparent',
+            pageFillColor: 'transparent',
+            pageStrokeColor: 'transparent',
+            marginStrokeColor: 'transparent',
+        });
+        docBackground.resize(260, 480);
+
+        const rectDraw = vi.spyOn(Rect, 'drawWith').mockImplementation(() => {});
+        vi.spyOn(Path, 'drawWith').mockImplementation(() => {});
+
+        docBackground.draw({
+            restore: vi.fn(),
+            save: vi.fn(),
+            translate: vi.fn(),
+        } as any);
+
+        expect(rectDraw.mock.calls.map(([, props]) => props.fill)).toEqual([
+            'transparent',
+            'transparent',
+        ]);
+        expect(rectDraw.mock.calls[1][1].stroke).toBe('transparent');
+        expect((Path.drawWith as any).mock.calls[0][1].stroke).toBe('transparent');
+
+        docBackground.dispose();
+    });
+
+    it('draws unspecified table borders with the default table grid color', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-border-default', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const cell = createPage(DocumentSkeletonPageType.CELL, 'cell-seg');
+        cell.marginLeft = 0;
+        cell.marginTop = 0;
+        cell.pageWidth = 120;
+        cell.pageHeight = 60;
+        const row = {
+            cells: [cell],
+            rowSource: {
+                tableCells: [{}],
+            },
+        } as any;
+        cell.parent = row;
+        (documents as any)._drawLiquid = { x: 0, y: 0 };
+
+        const strokeStyles: string[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            fillRectByPrecision: vi.fn(),
+            setLineWidthByPrecision: vi.fn(),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn(),
+            lineToByPrecision: vi.fn(),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set strokeStyle(value: string) {
+                strokeStyles.push(value);
+            },
+        } as any;
+
+        (documents as any)._drawTableCellBordersAndBg(ctx, { marginLeft: 0, marginTop: 0 }, cell);
+
+        expect(strokeStyles).toEqual(['#c7c9cc', '#c7c9cc', '#c7c9cc', '#c7c9cc']);
+
+        documents.dispose();
+    });
+
+    it('draws all paragraph borders with their own style, padding, and paragraph indentation', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-paragraph-border', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const page = createPage(DocumentSkeletonPageType.BODY, '');
+        const line = page.sections[0].columns[0].lines[1];
+        line.paragraphPaddingLeft = 8;
+        line.paragraphPaddingRight = 12;
+        line.borderTop = {
+            color: { rgb: 'auto' },
+            width: 1,
+            padding: 3,
+            dashStyle: DashStyleType.DOT,
+        };
+        line.borderBottom = {
+            color: { rgb: '#444444' },
+            width: 4,
+            padding: 6,
+            dashStyle: DashStyleType.DASH,
+        };
+        line.borderLeft = {
+            color: { rgb: '#222222' },
+            width: 2,
+            padding: 4,
+            dashStyle: DashStyleType.SOLID,
+        };
+        line.borderRight = {
+            color: { rgb: '#333333' },
+            width: 3,
+            padding: 5,
+            dashStyle: DashStyleType.DASH,
+        };
+        (documents as any)._drawLiquid = { x: 0, y: 0 };
+
+        const strokeStyles: string[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            setLineWidthByPrecision: vi.fn(),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn(),
+            lineToByPrecision: vi.fn(),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set strokeStyle(value: string) {
+                strokeStyles.push(value);
+            },
+        } as any;
+
+        (documents as any)._drawParagraphBorders(ctx, page, line, 72);
+
+        expect(ctx.setLineWidthByPrecision.mock.calls).toEqual([[1], [4], [2], [3]]);
+        expect(ctx.setLineDash.mock.calls).toEqual([[[2]], [[6]], [[0]], [[6]]]);
+        expect(ctx.lineToByPrecision.mock.calls).toEqual([
+            [75, 7],
+            [75, 35],
+            [14, 35],
+            [75, 35],
+        ]);
+        expect(strokeStyles).toEqual(['rgb(0,0,0)', '#444444', '#222222', '#333333']);
+        expect(ctx.stroke).toHaveBeenCalledTimes(4);
+
+        documents.dispose();
+    });
+
+    it('limits paragraph backgrounds to the current column width', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-paragraph-background', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const page = createPage(DocumentSkeletonPageType.BODY, '');
+        const line = page.sections[0].columns[0].lines[1];
+        line.backgroundColor = { rgb: '#ffeecc' };
+        (documents as any)._drawLiquid = { x: 0, y: 0 };
+
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            fillRect: vi.fn(),
+            getScale: () => ({ scaleX: 1, scaleY: 1 }),
+            set fillStyle(_value: string) {},
+        } as any;
+
+        (documents as any)._drawLineBackground(ctx, page, line, 72);
+
+        expect(ctx.fillRect).toHaveBeenCalledWith(10, 9, 72, 20);
+
+        documents.dispose();
+    });
+
+    it('draws each physical table grid line only once', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-border-canonical', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const cells = Array.from({ length: 4 }, (_, index) => {
+            const cell = createPage(DocumentSkeletonPageType.CELL, `cell-${index}`);
+            cell.marginLeft = 0;
+            cell.marginTop = 0;
+            cell.pageWidth = 50;
+            cell.pageHeight = 30;
+            return cell;
+        });
+        const row0 = {
+            cells: [cells[0], cells[1]],
+            index: 0,
+            rowSource: { tableCells: [{}, {}] },
+        } as any;
+        const row1 = {
+            cells: [cells[2], cells[3]],
+            index: 1,
+            rowSource: { tableCells: [{}, {}] },
+        } as any;
+        const table = { rows: [row0, row1] } as any;
+        row0.parent = table;
+        row1.parent = table;
+        cells[0].parent = row0;
+        cells[1].parent = row0;
+        cells[2].parent = row1;
+        cells[3].parent = row1;
+
+        let currentSegment = '';
+        const drawnSegments: string[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            fillRectByPrecision: vi.fn(),
+            setLineWidthByPrecision: vi.fn(),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn((x: number, y: number) => {
+                currentSegment = `${x},${y}`;
+            }),
+            lineToByPrecision: vi.fn((x: number, y: number) => {
+                currentSegment += `-${x},${y}`;
+                drawnSegments.push(currentSegment);
+            }),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set strokeStyle(_value: string) {},
+        } as any;
+
+        [
+            { cell: cells[0], x: 0, y: 0 },
+            { cell: cells[1], x: 50, y: 0 },
+            { cell: cells[2], x: 0, y: 30 },
+            { cell: cells[3], x: 50, y: 30 },
+        ].forEach(({ cell, x, y }) => {
+            (documents as any)._drawLiquid = { x, y };
+            (documents as any)._drawTableCellBordersAndBg(ctx, { marginLeft: 0, marginTop: 0 }, cell);
+        });
+
+        expect(ctx.stroke).toHaveBeenCalledTimes(12);
+        expect(new Set(drawnSegments).size).toBe(12);
+
+        documents.dispose();
+    });
+
+    it('uses neighboring table cell borders for internal canonical edges', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-border-neighbor', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const cells = Array.from({ length: 2 }, (_, index) => {
+            const cell = createPage(DocumentSkeletonPageType.CELL, `neighbor-cell-${index}`);
+            cell.marginLeft = 0;
+            cell.marginTop = 0;
+            cell.pageWidth = 50;
+            cell.pageHeight = 30;
+            return cell;
+        });
+        const noBorder = { color: { rgb: 'transparent' }, width: { v: 0 } };
+        const row = {
+            cells,
+            index: 0,
+            rowSource: {
+                tableCells: [
+                    {
+                        borderTop: noBorder,
+                        borderBottom: noBorder,
+                        borderLeft: noBorder,
+                    },
+                    {
+                        borderTop: noBorder,
+                        borderBottom: noBorder,
+                        borderLeft: { color: { rgb: '#ff0000' }, width: { v: 3 } },
+                        borderRight: noBorder,
+                    },
+                ],
+            },
+        } as any;
+        const table = { rows: [row] } as any;
+        row.parent = table;
+        cells[0].parent = row;
+        cells[1].parent = row;
+
+        const strokeStyles: string[] = [];
+        const lineWidths: number[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            fillRectByPrecision: vi.fn(),
+            setLineWidthByPrecision: vi.fn((width: number) => lineWidths.push(width)),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn(),
+            lineToByPrecision: vi.fn(),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set strokeStyle(value: string) {
+                strokeStyles.push(value);
+            },
+        } as any;
+
+        [
+            { cell: cells[0], x: 0 },
+            { cell: cells[1], x: 50 },
+        ].forEach(({ cell, x }) => {
+            (documents as any)._drawLiquid = { x, y: 0 };
+            (documents as any)._drawTableCellBordersAndBg(ctx, { marginLeft: 0, marginTop: 0 }, cell);
+        });
+
+        expect(ctx.stroke).toHaveBeenCalledTimes(1);
+        expect(lineWidths).toEqual([3]);
+        expect(strokeStyles).toEqual(['#ff0000']);
+
+        documents.dispose();
+    });
+
+    it('batches adjacent table cell backgrounds into a shared path', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.marginLeft = 0;
+        bodyPage.marginTop = 0;
+        const cells = Array.from({ length: 2 }, (_, index) => {
+            const cell = createPage(DocumentSkeletonPageType.CELL, `background-batch-cell-${index}`);
+            cell.marginLeft = 0;
+            cell.marginTop = 0;
+            cell.pageWidth = 10.25;
+            cell.pageHeight = 6.25;
+            cell.left = index * 10.25;
+            return cell;
+        });
+        const noBorder = { color: { rgb: 'transparent' }, width: { v: 0 } };
+        const row = {
+            cells,
+            index: 0,
+            height: 6.25,
+            top: 0,
+            rowSource: {
+                tableCells: [
+                    {
+                        backgroundColor: { rgb: '#000000' },
+                        borderTop: noBorder,
+                        borderBottom: noBorder,
+                        borderLeft: noBorder,
+                        borderRight: noBorder,
+                    },
+                    {
+                        backgroundColor: { rgb: '#000000' },
+                        borderTop: noBorder,
+                        borderBottom: noBorder,
+                        borderLeft: noBorder,
+                        borderRight: noBorder,
+                    },
+                ],
+            },
+        } as any;
+        const table = {
+            rows: [row],
+            width: 20.5,
+            height: 6.25,
+            top: 0.25,
+            left: 0.25,
+            tableId: 'table-background-batch',
+            tableSource: {},
+            parent: bodyPage,
+        } as any;
+        row.parent = table;
+        cells.forEach((cell) => {
+            cell.parent = row;
+        });
+        bodyPage.skeTables.set('table-background-batch', table);
+
+        const documents = new Documents('docs-background-batch', {
+            getSkeletonData: () => ({ pages: [bodyPage] }),
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+
+        const rects: Array<[number, number, number, number]> = [];
+        const fillStyles: string[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            getScale: vi.fn(() => ({ scaleX: 2, scaleY: 2 })),
+            beginPath: vi.fn(),
+            rect: vi.fn((x: number, y: number, width: number, height: number) => rects.push([x, y, width, height])),
+            fill: vi.fn(),
+            closePath: vi.fn(),
+            set fillStyle(value: string) {
+                fillStyles.push(value);
+            },
+        } as any;
+
+        vi.spyOn(documents as any, '_drawTableCell').mockImplementation(() => {});
+
+        (documents as any)._drawTable(
+            ctx,
+            bodyPage,
+            bodyPage.skeTables,
+            [],
+            null,
+            [],
+            [],
+            {} as any,
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(fillStyles).toEqual(['#000000']);
+        expect(ctx.fill).toHaveBeenCalledTimes(1);
+        expect(rects).toEqual([
+            [0.5, 0.5, 10, 6],
+            [10.5, 0.5, 10.5, 6],
+        ]);
+
+        documents.dispose();
+    });
+
+    it('uses the document unit id to apply table horizontal viewport while drawing', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        attachTable(bodyPage);
+
+        const skeleton = {
+            getViewModel: () => ({
+                getDataModel: () => ({
+                    getUnitId: () => 'doc-unit-1',
+                }),
+            }),
+        } as any;
+        const documents = new Documents('not-the-unit-id', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+
+        const queriedUnitIds: string[] = [];
+        setDocsTableRenderViewportProvider((unitId, tableId) => {
+            queriedUnitIds.push(`${unitId}:${tableId}`);
+            if (unitId !== 'doc-unit-1' || tableId !== 'table-1') {
+                return null;
+            }
+
+            return {
+                contentWidth: 240,
+                leadingInsetLeft: 40,
+                scrollLeft: 80,
+                viewportWidth: 120,
+            };
+        });
+
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            getScale: vi.fn(() => ({ scaleX: 1, scaleY: 1 })),
+            beginPath: vi.fn(),
+            rect: vi.fn(),
+            fill: vi.fn(),
+            rectByPrecision: vi.fn(),
+            closePath: vi.fn(),
+            clip: vi.fn(),
+            set fillStyle(_value: string) {},
+        } as any;
+
+        const translateCalls: Array<[number | undefined, number | undefined]> = [];
+        const liquid = (documents as any)._drawLiquid;
+        vi.spyOn(liquid, 'translate').mockImplementation((...args: unknown[]) => {
+            const [x, y] = args as [number | undefined, number | undefined];
+            translateCalls.push([x, y]);
+            liquid.translateBy(liquid.x + (x ?? 0), liquid.y + (y ?? 0));
+        });
+        vi.spyOn(documents as any, '_drawTableCell').mockImplementation(() => {});
+
+        (documents as any)._drawTable(
+            ctx,
+            bodyPage,
+            bodyPage.skeTables,
+            [],
+            null,
+            [],
+            [],
+            {} as any,
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(queriedUnitIds).toEqual(['doc-unit-1:table-1']);
+        expect(ctx.clip).toHaveBeenCalledTimes(1);
+        expect(ctx.rectByPrecision).toHaveBeenCalledWith(-20, 30, 124, 64);
+        expect(translateCalls).toContainEqual([-80, 0]);
+
+        documents.dispose();
+    });
+
+    it('clips oversized tables on first render before a table viewport state exists', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        attachTable(bodyPage);
+        const table = bodyPage.skeTables.get('table-1')!;
+        table.width = 260;
+        table.rows[0].cells[0].pageWidth = 260;
+
+        const documents = new Documents('docs-main', {
+            getSkeletonData: () => ({ pages: [bodyPage] }),
+            getViewModel: () => ({
+                getSnapshot: () => ({
+                    documentStyle: {
+                        documentFlavor: DocumentFlavor.TRADITIONAL,
+                    },
+                }),
+            }),
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            getScale: vi.fn(() => ({ scaleX: 1, scaleY: 1 })),
+            beginPath: vi.fn(),
+            rect: vi.fn(),
+            fill: vi.fn(),
+            rectByPrecision: vi.fn(),
+            closePath: vi.fn(),
+            clip: vi.fn(),
+            set fillStyle(_value: string) {},
+        } as any;
+
+        vi.spyOn(documents as any, '_drawTableCell').mockImplementation(() => {});
+
+        (documents as any)._drawTable(
+            ctx,
+            bodyPage,
+            bodyPage.skeTables,
+            [],
+            null,
+            [],
+            [],
+            {} as any,
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(ctx.clip).toHaveBeenCalledTimes(1);
+        expect(ctx.rectByPrecision).toHaveBeenCalledWith(20, 30, 172, 64);
+
+        documents.dispose();
+    });
+
+    it('does not clip traditional tables with a model width that extend into margins', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        attachTable(bodyPage);
+        const table = bodyPage.skeTables.get('table-1')!;
+        table.left = -6;
+        table.width = 190;
+        table.tableSource = {
+            size: {
+                width: {
+                    v: 190,
+                },
+            },
+        };
+        table.rows[0].cells[0].pageWidth = 190;
+
+        const documents = new Documents('docs-main', {
+            getSkeletonData: () => ({ pages: [bodyPage] }),
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            getScale: vi.fn(() => ({ scaleX: 1, scaleY: 1 })),
+            beginPath: vi.fn(),
+            rect: vi.fn(),
+            fill: vi.fn(),
+            rectByPrecision: vi.fn(),
+            closePath: vi.fn(),
+            clip: vi.fn(),
+            set fillStyle(_value: string) {},
+        } as any;
+
+        vi.spyOn(documents as any, '_drawTableCell').mockImplementation(() => {});
+        vi.spyOn(documents as any, '_getDocumentCompatibilityPolicy').mockReturnValue(
+            getDocumentCompatibilityPolicy(DocumentFlavor.TRADITIONAL)
+        );
+
+        (documents as any)._drawTable(
+            ctx,
+            bodyPage,
+            bodyPage.skeTables,
+            [],
+            null,
+            [],
+            [],
+            {} as any,
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(ctx.clip).not.toHaveBeenCalled();
+
+        documents.dispose();
+    });
+
+    it('uses explicit table cell border width and skips no-border markers', () => {
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-border', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const cell = createPage(DocumentSkeletonPageType.CELL, 'cell-seg');
+        cell.marginLeft = 0;
+        cell.marginTop = 0;
+        cell.pageWidth = 120;
+        cell.pageHeight = 60;
+        const row = {
+            cells: [cell],
+            rowSource: {
+                tableCells: [{
+                    borderTop: { color: { rgb: '#ff0000' }, width: { v: 5 } },
+                    borderBottom: { color: { rgb: 'transparent' }, width: { v: 0 } },
+                    borderLeft: { color: { rgb: 'transparent' }, width: { v: 0 } },
+                    borderRight: { color: { rgb: 'transparent' }, width: { v: 0 } },
+                }],
+            },
+        } as any;
+        cell.parent = row;
+        (documents as any)._drawLiquid = { x: 0, y: 0 };
+
+        const lineWidths: number[] = [];
+        const strokeStyles: string[] = [];
+        const ctx = {
+            save: vi.fn(),
+            restore: vi.fn(),
+            fillRectByPrecision: vi.fn(),
+            setLineWidthByPrecision: vi.fn((width: number) => lineWidths.push(width)),
+            beginPath: vi.fn(),
+            moveToByPrecision: vi.fn(),
+            lineToByPrecision: vi.fn(),
+            setLineDash: vi.fn(),
+            stroke: vi.fn(),
+            closePathByEnv: vi.fn(),
+            set strokeStyle(value: string) {
+                strokeStyles.push(value);
+            },
+        } as any;
+
+        (documents as any)._drawTableCellBordersAndBg(ctx, { marginLeft: 0, marginTop: 0 }, cell);
+
+        expect(lineWidths).toEqual([5]);
+        expect(strokeStyles).toEqual(['#ff0000']);
+        expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+        documents.dispose();
+    });
+
+    it('draws column group child pages at their column offsets', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.sections[0].columns[0].lines = [];
+        bodyPage.marginLeft = 0;
+        bodyPage.marginTop = 0;
+        bodyPage.renderConfig.centerAngle = 0;
+        bodyPage.renderConfig.vertexAngle = 0;
+        attachColumnGroup(bodyPage);
+
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map(),
+            skeFooters: new Map(),
+        };
+        bodyPage.parent = skeletonData;
+
+        const documents = new Documents('docs-column-group', {
+            getSkeletonData: () => skeletonData,
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        documents.transformByState({
+            left: 0,
+            top: 0,
+            width: 260,
+            height: 180,
+        });
+        scene.addObject(documents, 1);
+
+        const spanRecords: Array<{ content: string; x: number }> = [];
+        const spanExtension = {
+            uKey: 'DocsSpanExtension',
+            type: DOCS_EXTENSION_TYPE.SPAN,
+            extensionOffset: {},
+            clearCache: vi.fn(),
+            draw: vi.fn(function (this: any, _ctx: unknown, _parentScale: unknown, glyph: any) {
+                if (['L', 'R'].includes(glyph.content)) {
+                    spanRecords.push({
+                        content: glyph.content,
+                        x: this.extensionOffset.spanStartPoint.x,
+                    });
+                }
+            }),
+        };
+        vi.spyOn(documents as any, 'getExtensionsByOrder').mockReturnValue([
+            spanExtension,
+        ] as any);
+
+        documents.draw(canvas.getContext(), {
+            viewBound: { left: 0, top: 0, right: 900, bottom: 700 },
+            cacheBound: { left: 0, top: 0, right: 900, bottom: 700 },
+        } as any);
+
+        expect(spanRecords.map((record) => record.content)).toEqual(['L', 'R']);
+        expect(spanRecords[1].x - spanRecords[0].x).toBeGreaterThanOrEqual(90);
+
+        documents.dispose();
+    });
+
+    it('clips table cell content with parent page margins', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.marginLeft = 30;
+        bodyPage.marginTop = 40;
+        const cell = createPage(DocumentSkeletonPageType.CELL, 'cell-seg');
+        cell.marginLeft = 4;
+        cell.marginTop = 6;
+        cell.pageWidth = 120;
+        cell.pageHeight = 60;
+        cell.sections[0].columns[0].lines = [];
+
+        const documents = new Documents('docs-table-cell-clip');
+        (documents as any)._drawLiquid = {
+            x: 12,
+            y: 20,
+            translateSave: vi.fn(),
+            translateRestore: vi.fn(),
+            translateSection: vi.fn(),
+            translateColumn: vi.fn(),
+        };
+        const ctx = {
+            beginPath: vi.fn(),
+            clip: vi.fn(),
+            closePath: vi.fn(),
+            rectByPrecision: vi.fn(),
+            restore: vi.fn(),
+            save: vi.fn(),
+        } as any;
+
+        (documents as any)._drawNestedPageContent(
+            ctx,
+            bodyPage,
+            cell,
+            [],
+            null,
+            [],
+            [],
+            { x: 0, y: 0 },
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(ctx.rectByPrecision).toHaveBeenCalledWith(42, 60, 120, 60);
+
+        documents.dispose();
+    });
+
+    it('offsets table cell paragraph backgrounds by parent page margins', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.marginLeft = 30;
+        bodyPage.marginTop = 40;
+        const cell = createPage(DocumentSkeletonPageType.CELL, 'cell-seg');
+        const line = createLine(LineType.PARAGRAPH, 0);
+        line.backgroundColor = { rgb: '#ffeecc' };
+        const column = cell.sections[0].columns[0];
+        column.lines = [line];
+        line.parent = column;
+
+        const documents = new Documents('docs-table-cell-background');
+        (documents as any)._drawLiquid = {
+            x: 12,
+            y: 20,
+            translateSave: vi.fn(),
+            translateRestore: vi.fn(),
+            translateSection: vi.fn(),
+            translateColumn: vi.fn(),
+            translateLine: vi.fn(),
+            translateDivide: vi.fn(),
+        };
+        const drawLineBackground = vi.spyOn(documents as any, '_drawLineBackground').mockImplementation(() => {});
+        const ctx = {
+            beginPath: vi.fn(),
+            clip: vi.fn(),
+            closePath: vi.fn(),
+            rectByPrecision: vi.fn(),
+            restore: vi.fn(),
+            save: vi.fn(),
+        } as any;
+
+        (documents as any)._drawNestedPageContent(
+            ctx,
+            bodyPage,
+            cell,
+            [],
+            null,
+            [],
+            [],
+            { x: 0, y: 0 },
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(drawLineBackground).toHaveBeenCalledWith(ctx, cell, line, column.width, 30, 40);
+
+        documents.dispose();
+    });
+
+    it('clips column group nested page content with the column align offset', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.marginLeft = 30;
+        bodyPage.marginTop = 40;
+        attachColumnGroup(bodyPage);
+        const columnGroup = bodyPage.skeColumnGroups.get('column-group-1')!;
+        const nestedPage = columnGroup.columns[0].page;
+        nestedPage.marginLeft = 4;
+        nestedPage.marginTop = 6;
+        nestedPage.sections[0].columns[0].lines = [];
+
+        const documents = new Documents('docs-column-group-clip');
+        (documents as any)._drawLiquid = {
+            x: 12,
+            y: 20,
+            translateSave: vi.fn(),
+            translateRestore: vi.fn(),
+            translateSection: vi.fn(),
+            translateColumn: vi.fn(),
+        };
+        const ctx = {
+            beginPath: vi.fn(),
+            clip: vi.fn(),
+            closePath: vi.fn(),
+            rectByPrecision: vi.fn(),
+            restore: vi.fn(),
+            save: vi.fn(),
+        } as any;
+
+        (documents as any)._drawNestedPageContent(
+            ctx,
+            bodyPage,
+            nestedPage,
+            [],
+            null,
+            [],
+            [],
+            { x: 100, y: 200 },
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(ctx.rectByPrecision).toHaveBeenCalledWith(116, 226, 200, 420);
+
+        documents.dispose();
+    });
+
+    it('draws tables inside column group nested pages', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        attachColumnGroup(bodyPage);
+        const nestedPage = bodyPage.skeColumnGroups.get('column-group-1')!.columns[0].page;
+        attachTable(nestedPage);
+        nestedPage.marginLeft = 4;
+        nestedPage.marginTop = 6;
+        nestedPage.sections[0].columns[0].lines = [];
+
+        const documents = new Documents('docs-column-group-table');
+        const translate = vi.fn();
+        (documents as any)._drawLiquid = {
+            x: 12,
+            y: 20,
+            translateSave: vi.fn(),
+            translateRestore: vi.fn(),
+            translate,
+            translateSection: vi.fn(),
+            translateColumn: vi.fn(),
+        };
+        const ctx = {
+            beginPath: vi.fn(),
+            clip: vi.fn(),
+            closePath: vi.fn(),
+            rectByPrecision: vi.fn(),
+            restore: vi.fn(),
+            save: vi.fn(),
+        } as any;
+        const drawTable = vi.spyOn(documents as any, '_drawTable').mockImplementation(() => undefined);
+
+        (documents as any)._drawNestedPageContent(
+            ctx,
+            bodyPage,
+            nestedPage,
+            [],
+            null,
+            [],
+            [],
+            { x: 0, y: 0 },
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(drawTable).toHaveBeenCalledWith(
+            ctx,
+            expect.objectContaining({
+                marginLeft: 0,
+                marginTop: 0,
+            }),
+            nestedPage.skeTables,
+            [],
+            null,
+            [],
+            [],
+            { x: 0, y: 0 },
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+        expect(translate).toHaveBeenCalledWith(4, 6);
+
+        documents.dispose();
+    });
+
+    it('does not draw persistent backgrounds behind column group columns', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.marginLeft = 3;
+        bodyPage.marginTop = 5;
+        attachColumnGroup(bodyPage);
+        const documents = new Documents('docs-column-group-background');
+        const translateSave = vi.fn();
+        const translateRestore = vi.fn();
+        const translate = vi.fn();
+        (documents as any)._drawLiquid = {
+            x: 10,
+            y: 20,
+            translateSave,
+            translateRestore,
+            translate,
+        };
+        const rects: Array<{ x: number; y: number; width: number; height: number }> = [];
+        const fillStyles: string[] = [];
+        const ctx = {
+            beginPath: vi.fn(),
+            closePath: vi.fn(),
+            fill: vi.fn(),
+            getScale: () => ({ scaleX: 1, scaleY: 1 }),
+            rect: vi.fn((x: number, y: number, width: number, height: number) => {
+                rects.push({ x, y, width, height });
+            }),
+            restore: vi.fn(),
+            save: vi.fn(),
+            set fillStyle(value: string) {
+                fillStyles.push(value);
+            },
+        } as any;
+        const drawNestedPageContent = vi
+            .spyOn(documents as any, '_drawNestedPageContent')
+            .mockImplementation(() => undefined);
+
+        (documents as any)._drawColumnGroups(
+            ctx,
+            bodyPage,
+            bodyPage.skeColumnGroups,
+            [],
+            null,
+            [],
+            [],
+            { x: 0, y: 0 },
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 }
+        );
+
+        expect(fillStyles).toEqual([]);
+        expect(rects).toEqual([]);
+        expect(ctx.fill).not.toHaveBeenCalled();
+        expect(drawNestedPageContent).toHaveBeenCalledTimes(2);
+
+        documents.dispose();
     });
 
     it('draws body/header/footer/table flows with extension dispatch and page events', () => {
         const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
         const headerPage = createPage(DocumentSkeletonPageType.HEADER, 'header-main');
         const footerPage = createPage(DocumentSkeletonPageType.FOOTER, 'footer-main');
+        bodyPage.marginLeft = 48;
+        headerPage.marginLeft = 0;
         attachTable(bodyPage);
+        attachTable(headerPage);
 
         const skeletonData = {
             pages: [bodyPage],
@@ -310,7 +1876,9 @@ describe('documents render', () => {
 
         const lineDraw = vi.fn();
         const bgDraw = vi.fn();
-        const spanDraw = vi.fn();
+        const drawOrder: Array<{ glyph: unknown; phase: 'background' | 'span' }> = [];
+        const preTextBackgroundDraw = vi.fn((_ctx, _parentScale, glyph) => drawOrder.push({ glyph, phase: 'background' }));
+        const spanDraw = vi.fn((_ctx, _parentScale, glyph) => drawOrder.push({ glyph, phase: 'span' }));
         const clearCache = vi.fn();
 
         vi.spyOn(documents as any, 'getExtensionsByOrder').mockReturnValue([
@@ -320,6 +1888,13 @@ describe('documents render', () => {
                 extensionOffset: {},
                 clearCache,
                 draw: bgDraw,
+            },
+            {
+                uKey: 'DocsPreTextBackgroundExtension',
+                type: DOCS_EXTENSION_TYPE.BACKGROUND,
+                extensionOffset: {},
+                clearCache,
+                draw: preTextBackgroundDraw,
             },
             {
                 uKey: 'DocsLineExtension',
@@ -345,6 +1920,7 @@ describe('documents render', () => {
         const offsetConfig = documents.getOffsetConfig();
         expect(offsetConfig.pageMarginLeft).toBe(6);
         expect(documents.getEngine()).toBe(engine);
+        const tableDraw = vi.spyOn(documents as any, '_drawTable');
 
         documents.draw(canvas.getContext(), {
             viewBound: { left: 0, top: 0, right: 900, bottom: 700 },
@@ -354,8 +1930,18 @@ describe('documents render', () => {
         expect(pageEvents.length).toBe(1);
         expect(clearCache).toHaveBeenCalled();
         expect(lineDraw).toHaveBeenCalled();
-        expect(bgDraw).toHaveBeenCalled();
+        expect(preTextBackgroundDraw).toHaveBeenCalled();
         expect(spanDraw).toHaveBeenCalled();
+        drawOrder.forEach((entry, index) => {
+            if (entry.phase === 'span') {
+                expect(drawOrder.slice(0, index)).toContainEqual({ glyph: entry.glyph, phase: 'background' });
+            }
+        });
+        expect(tableDraw).toHaveBeenCalledTimes(2);
+        expect(tableDraw.mock.calls[1][1]).toMatchObject({
+            marginLeft: 48,
+            type: DocumentSkeletonPageType.HEADER,
+        });
 
         documents.draw(canvas.getContext(), {
             viewBound: { left: 2000, top: 2000, right: 2200, bottom: 2200 },
@@ -370,6 +1956,309 @@ describe('documents render', () => {
             viewBound: { left: 0, top: 0, right: 300, bottom: 300 },
         } as any);
 
+        documents.dispose();
+    });
+
+    it('draws footer table backgrounds relative to the footer parent area', () => {
+        const parentPage = createPage(DocumentSkeletonPageType.BODY, '');
+        parentPage.marginLeft = 48;
+        parentPage.marginTop = 12;
+
+        const footerPage = createPage(DocumentSkeletonPageType.FOOTER, 'footer-main');
+        footerPage.sections = [];
+        attachTable(footerPage);
+
+        const skeleton = { getSkeletonData: () => ({ pages: [] }) } as any;
+        const documents = new Documents('docs-footer-table-offset', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+
+        const rects: Array<{ x: number; y: number; width: number; height: number }> = [];
+        const ctx = {
+            beginPath: vi.fn(),
+            closePath: vi.fn(),
+            fill: vi.fn(),
+            getScale: () => ({ scaleX: 1, scaleY: 1 }),
+            rect: vi.fn((x: number, y: number, width: number, height: number) => {
+                rects.push({ x, y, width, height });
+            }),
+            restore: vi.fn(),
+            save: vi.fn(),
+            set fillStyle(_value: string) {},
+        } as any;
+        vi.spyOn(documents as any, '_drawTableCell').mockImplementation(() => undefined);
+
+        (documents as any)._drawHeaderFooter(
+            footerPage,
+            ctx,
+            [],
+            null,
+            [],
+            [],
+            Vector2.create(0, 300),
+            0,
+            0,
+            {},
+            { scaleX: 1, scaleY: 1 },
+            parentPage,
+            false
+        );
+
+        expect(rects).toEqual([{
+            x: 60,
+            y: 332,
+            width: 120,
+            height: 60,
+        }]);
+
+        documents.dispose();
+    });
+
+    it('restores the section offset before advancing to the next page', () => {
+        const firstPage = createPage(DocumentSkeletonPageType.BODY, 'first');
+        const secondPage = createPage(DocumentSkeletonPageType.BODY, 'second');
+        firstPage.sections.push({
+            columns: [],
+            height: 80,
+            top: 90,
+        } as any);
+        secondPage.pageNumber = 2;
+        attachTable(secondPage);
+
+        const skeletonData = {
+            pages: [firstPage, secondPage],
+            skeFooters: new Map(),
+            skeHeaders: new Map(),
+        };
+        const documents = new Documents('docs-section-page-offset', { getSkeletonData: () => skeletonData } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 8,
+        });
+        const tableOrigins: Array<{ x: number; y: number }> = [];
+
+        vi.spyOn(documents as any, 'getExtensionsByOrder').mockReturnValue([]);
+        vi.spyOn(documents as any, '_drawTable').mockImplementation(() => {
+            tableOrigins.push({
+                x: (documents as any)._drawLiquid.x,
+                y: (documents as any)._drawLiquid.y,
+            });
+        });
+
+        documents.draw(canvas.getContext());
+
+        expect(tableOrigins).toEqual([{
+            x: 0,
+            y: firstPage.pageHeight + 8,
+        }]);
+
+        documents.dispose();
+    });
+
+    it('draws lower-page header content for DOCX page-relative header backgrounds', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.sections[0].columns[0].lines = [];
+        bodyPage.skeTables.clear();
+
+        const headerPage = createPage(DocumentSkeletonPageType.HEADER, 'header-main');
+        const headerLine = createLine(LineType.PARAGRAPH, 260);
+        headerLine.parent = headerPage.sections[0].columns[0];
+        headerPage.sections[0].columns[0].lines = [headerLine];
+        headerPage.skeTables.clear();
+
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map([['header-main', new Map([[bodyPage.pageWidth, headerPage]])]]),
+            skeFooters: new Map(),
+        };
+        bodyPage.parent = skeletonData;
+        headerPage.parent = skeletonData;
+
+        const documents = new Documents('docs-page-header-background', { getSkeletonData: () => skeletonData } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        documents.transformByState({
+            left: 0,
+            top: 0,
+            width: 260,
+            height: 480,
+        });
+        scene.addObject(documents, 1);
+
+        const spanDraw = vi.fn();
+        vi.spyOn(documents as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                uKey: 'DocsSpanExtension',
+                type: DOCS_EXTENSION_TYPE.SPAN,
+                extensionOffset: {},
+                clearCache: vi.fn(),
+                draw: spanDraw,
+            },
+        ] as any);
+
+        documents.draw(canvas.getContext(), {
+            viewBound: { left: 0, top: 0, right: 900, bottom: 700 },
+            cacheBound: { left: 0, top: 0, right: 900, bottom: 700 },
+        } as any);
+
+        expect(spanDraw).toHaveBeenCalled();
+
+        documents.dispose();
+    });
+
+    it('merges adjacent glyph backgrounds with the same color into one draw per line', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '', '#d9eaf7');
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map(),
+            skeFooters: new Map(),
+        };
+        bodyPage.parent = skeletonData;
+
+        const skeleton = {
+            getSkeletonData: () => skeletonData,
+        } as any;
+
+        const documents = new Documents('docs-merged-background', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        documents.transformByState({
+            left: 0,
+            top: 0,
+            width: 260,
+            height: 180,
+        });
+        scene.addObject(documents, 1);
+
+        const bgDraw = vi.fn();
+        vi.spyOn(documents as any, 'getExtensionsByOrder').mockReturnValue([
+            {
+                uKey: 'DefaultDocsBackgroundExtension',
+                type: DOCS_EXTENSION_TYPE.SPAN,
+                extensionOffset: {},
+                clearCache: vi.fn(),
+                draw: bgDraw,
+            },
+        ] as any);
+
+        documents.draw(canvas.getContext(), {
+            viewBound: { left: 0, top: 0, right: 900, bottom: 700 },
+            cacheBound: { left: 0, top: 0, right: 900, bottom: 700 },
+        } as any);
+
+        expect(bgDraw).toHaveBeenCalledTimes(1);
+        expect(bgDraw.mock.calls.map((call) => call[2].width)).toEqual([34]);
+
+        documents.dispose();
+    });
+
+    it('draws paragraph background colors behind line text', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        const paragraphLine = createLine(LineType.PARAGRAPH, 24);
+        paragraphLine.backgroundColor = { rgb: '#ffffff' };
+        paragraphLine.parent = bodyPage.sections[0].columns[0];
+        bodyPage.sections[0].columns[0].lines = [paragraphLine];
+        bodyPage.skeTables.clear();
+
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map(),
+            skeFooters: new Map(),
+        };
+        bodyPage.parent = skeletonData;
+
+        const skeleton = {
+            getSkeletonData: () => skeletonData,
+        } as any;
+
+        const documents = new Documents('docs-paragraph-background', skeleton, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        documents.transformByState({
+            left: 0,
+            top: 0,
+            width: 260,
+            height: 180,
+        });
+        scene.addObject(documents, 1);
+
+        const ctx = canvas.getContext();
+        const fillRect = vi.spyOn(ctx, 'fillRect');
+
+        documents.draw(ctx, {
+            viewBound: { left: 0, top: 0, right: 900, bottom: 700 },
+            cacheBound: { left: 0, top: 0, right: 900, bottom: 700 },
+        } as any);
+
+        expect(fillRect).toHaveBeenCalled();
+
+        documents.dispose();
+    });
+
+    it('visits only viewport-adjacent lines when imported modern geometry keeps a finite page height', () => {
+        const bodyPage = createPage(DocumentSkeletonPageType.BODY, '');
+        bodyPage.pageHeight = 120;
+        bodyPage.height = 100_020;
+        bodyPage.skeTables.clear();
+        bodyPage.renderConfig.centerAngle = 0;
+        bodyPage.renderConfig.vertexAngle = 0;
+
+        const column = bodyPage.sections[0].columns[0];
+        const lines = Array.from({ length: 5_000 }, (_, index) => createLine(LineType.PARAGRAPH, index * 20));
+        for (const line of lines) {
+            line.parent = column;
+        }
+        let numericLineReads = 0;
+        column.lines = new Proxy(lines, {
+            get(target, property, receiver) {
+                if (typeof property === 'string' && /^\d+$/.test(property)) {
+                    numericLineReads++;
+                }
+                return Reflect.get(target, property, receiver);
+            },
+        });
+
+        const skeletonData = {
+            pages: [bodyPage],
+            skeHeaders: new Map(),
+            skeFooters: new Map(),
+        };
+        bodyPage.parent = skeletonData;
+
+        const documents = new Documents('docs-modern-viewport', {
+            getSkeletonData: () => skeletonData,
+            getViewModel: () => ({
+                getDataModel: () => ({ documentStyle: { documentFlavor: DocumentFlavor.MODERN } }),
+            }),
+        } as any, {
+            pageLayoutType: PageLayoutType.VERTICAL,
+            pageMarginLeft: 0,
+            pageMarginTop: 0,
+        });
+        const spanDraw = vi.fn();
+        vi.spyOn(documents as any, 'getExtensionsByOrder').mockReturnValue([{
+            uKey: 'DocsSpanExtension',
+            type: DOCS_EXTENSION_TYPE.SPAN,
+            extensionOffset: {},
+            clearCache: vi.fn(),
+            draw: spanDraw,
+        }] as any);
+
+        documents.draw(canvas.getContext(), {
+            viewBound: { left: 0, top: 50_000, right: 900, bottom: 50_100 },
+            cacheBound: { left: 0, top: 50_000, right: 900, bottom: 50_100 },
+        } as any);
+
+        expect(spanDraw).toHaveBeenCalled();
+        expect(numericLineReads).toBeLessThan(160);
         documents.dispose();
     });
 });

@@ -18,12 +18,21 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     'action-recorder': {
+        panel: {
+            recording: 'Запись...',
+            startRecording: 'Начать запись',
+            cancel: 'Отмена',
+            close: 'Закрыть',
+            save: 'Сохранить',
+            start: 'Начать',
+            startWithId: 'Начать (N)',
+        },
         menu: {
-            title: 'Record Actions',
-            record: 'Record Actions...',
-            'replay-local': 'Replace Local Record...',
-            'replay-local-name': 'Replace Local Record by Subunit...',
-            'replay-local-active': 'Replace Local Record by Current Subunit...',
+            title: 'Запись действий',
+            record: 'Записать действия...',
+            'replay-local': 'Заменить локальную запись...',
+            'replay-local-name': 'Заменить локальную запись по подразделению...',
+            'replay-local-active': 'Заменить локальную запись по текущему подразделению...',
         },
     },
 };

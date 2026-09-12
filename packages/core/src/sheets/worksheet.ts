@@ -14,28 +14,44 @@
  * limitations under the License.
  */
 
-import type { IDisposable } from '@wendellhu/redi';
+import type { IDisposable } from '../common/di';
 import type { IInterceptor } from '../common/interceptor';
 import type { IObjectMatrixPrimitiveType, Nullable } from '../shared';
 import type { BooleanNumber, HorizontalAlign, TextDirection, VerticalAlign, WrapStrategy } from '../types/enum';
 import type { IDocumentData, IDocumentRenderConfig, IPaddingData, IStyleData, ITextRotation } from '../types/interfaces';
 import type { Styles } from './styles';
-import type { CustomData, ICellData, ICellDataForSheetInterceptor, ICellDataWithSpanAndDisplay, IFreeze, IRange, ISelectionCell, IWorksheetData } from './typedef';
+import type {
+    CustomData,
+    ICellData,
+    ICellDataForSheetInterceptor,
+    ICellDataWithSpanAndDisplay,
+    IFreeze,
+    IRange,
+    ISelectionCell,
+    IWorksheetData,
+} from './typedef';
 import { BuildTextUtils, DocumentDataModel } from '../docs';
 import { convertTextRotation, getFontStyleString } from '../docs/data-model/utils';
 import { composeStyles, ObjectMatrix, toDisposable, Tools } from '../shared';
+import { generateRandomId } from '../shared/random-id';
 import { createRowColIter } from '../shared/row-col-iter';
-import { generateRandomId } from '../shared/tools';
 import { DEFAULT_STYLES } from '../types/const';
 import { CellValueType } from '../types/enum';
-import { cloneWorksheetData } from './clone';
+import { DocumentFlavor } from '../types/interfaces';
 import { ColumnManager } from './column-manager';
 import { Range } from './range';
 import { RowManager } from './row-manager';
 import { mergeWorksheetSnapshotWithDefault } from './sheet-snapshot-utils';
 import { SpanModel } from './span-model';
 import { CellModeEnum } from './typedef';
-import { addLinkToDocumentModel, createDocumentModelWithStyle, DEFAULT_PADDING_DATA, extractOtherStyle, getFontFormat, isNotNullOrUndefined } from './util';
+import {
+    addLinkToDocumentModel,
+    createDocumentModelWithStyle,
+    DEFAULT_PADDING_DATA,
+    extractOtherStyle,
+    getFontFormat,
+    isNotNullOrUndefined,
+} from './util';
 import { SheetViewModel } from './view-model';
 
 export interface IDocumentLayoutObject {
@@ -450,18 +466,6 @@ export class Worksheet {
      */
     getName(): string {
         return this._snapshot.name;
-    }
-
-    /**
-     * Returns WorkSheet Clone Object
-     * @returns WorkSheet Clone Object
-     * @deprecated
-     */
-    clone(): Worksheet {
-        const { _snapshot: _config } = this;
-        const copy = cloneWorksheetData(_config);
-
-        return new Worksheet(this.unitId, copy, this._styles);
     }
 
     /**
@@ -1269,6 +1273,8 @@ export class Worksheet {
             width: Number.POSITIVE_INFINITY,
             height: Number.POSITIVE_INFINITY,
         };
+        documentData.documentStyle.documentFlavor = DocumentFlavor.UNSPECIFIED;
+        documentData.documentStyle.paragraphLineGapDefault = 0;
 
         documentData.documentStyle.renderConfig = {
             ...documentData.documentStyle.renderConfig,
@@ -1303,19 +1309,14 @@ export class Worksheet {
             return documentModelObject;
         }
 
-        const content = '';
-
-        let fontString = 'document';
-
+        const cellOtherConfig = extractOtherStyle(style);
         const textRotation: ITextRotation = DEFAULT_STYLES.tr;
-        const horizontalAlign: HorizontalAlign = DEFAULT_STYLES.ht;
-        const verticalAlign: VerticalAlign = DEFAULT_STYLES.vt;
-        const wrapStrategy: WrapStrategy = DEFAULT_STYLES.tb;
-        const paddingData: IPaddingData = DEFAULT_PADDING_DATA;
-
-        fontString = getFontStyleString({}).fontCache;
-
-        const documentModel = createDocumentModelWithStyle(content, textStyle);
+        const horizontalAlign: HorizontalAlign = cellOtherConfig.horizontalAlign ?? DEFAULT_STYLES.ht;
+        const verticalAlign: VerticalAlign = cellOtherConfig.verticalAlign ?? DEFAULT_STYLES.vt;
+        const wrapStrategy: WrapStrategy = cellOtherConfig.wrapStrategy ?? DEFAULT_STYLES.tb;
+        const paddingData: IPaddingData = cellOtherConfig.paddingData ?? DEFAULT_PADDING_DATA;
+        const fontString = getFontStyleString(textStyle).fontCache;
+        const documentModel = createDocumentModelWithStyle('', textStyle);
 
         return {
             documentModel,
@@ -1325,6 +1326,7 @@ export class Worksheet {
             verticalAlign,
             horizontalAlign,
             paddingData,
+            fill: style?.bg?.rgb,
         };
     }
 
@@ -1398,6 +1400,39 @@ export function extractPureTextFromCell(cell: Nullable<ICellData>): string {
     if (typeof rawValue === 'boolean') return rawValue ? 'TRUE' : 'FALSE';
 
     return '';
+}
+
+export function getDisplayValueFromCell(cell: Nullable<ICellDataForSheetInterceptor>): string {
+    if (!cell) {
+        return '';
+    }
+
+    const richTextValue = cell.p?.body?.dataStream;
+    if (richTextValue) {
+        return BuildTextUtils.transform.getPlainText(richTextValue);
+    }
+
+    const displayValue = cell.v;
+
+    if (displayValue === null || displayValue === undefined) {
+        return '';
+    }
+
+    if (cell.t === CellValueType.BOOLEAN) {
+        if (typeof displayValue === 'string') {
+            return displayValue.toUpperCase();
+        }
+
+        if (typeof displayValue === 'number') {
+            return displayValue ? 'TRUE' : 'FALSE';
+        }
+    }
+
+    if (typeof displayValue === 'boolean') {
+        return displayValue ? 'TRUE' : 'FALSE';
+    }
+
+    return String(displayValue);
 }
 
 export function getOriginCellValue(cell: Nullable<ICellData>) {

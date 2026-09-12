@@ -14,17 +14,64 @@
  * limitations under the License.
  */
 
-import type { IDrawingSearch, Workbook } from '@univerjs/core';
+import type { IDrawingParam, IDrawingSearch, Workbook } from '@univerjs/core';
 import type { IDocFloatDomData, IImageData } from '@univerjs/drawing';
-import type { IImageProps, IRectProps, Scene } from '@univerjs/engine-render';
-import { DrawingTypeEnum, Inject, IUniverInstanceService, IURLImageService, UniverInstanceType } from '@univerjs/core';
-import { getDrawingShapeKeyByDrawingSearch, IDrawingManagerService, IImageIoService, ImageSourceType } from '@univerjs/drawing';
+import type { BaseObject, IImageProps, IRectProps, Scene } from '@univerjs/engine-render';
+import {
+    BooleanNumber,
+    DrawingTypeEnum,
+    IImageIoService,
+    ImageSourceType,
+    Inject,
+    IUniverInstanceService,
+    IURLImageService,
+    PositionedObjectLayoutType,
+    UniverInstanceType,
+} from '@univerjs/core';
+import {
+    getDrawingShapeKeyByDrawingSearch,
+    IDrawingManagerService,
+} from '@univerjs/drawing';
 import { DRAWING_OBJECT_LAYER_INDEX, Image, Rect } from '@univerjs/engine-render';
 import { IGalleryService } from '@univerjs/ui';
 import { insertGroupObject } from '../controllers/utils';
 import { DrawingImageClipService } from './drawing-image-clip.service';
 
 // const IMAGE_VIEWER_DROPDOWN_PADDING = 50;
+
+interface IDrawingTransformStateWithClipBounds {
+    clipBounds?: { left: number; top: number; width: number; height: number } | null;
+}
+
+type IDrawingParamWithBehindText = (Partial<IDrawingParam> | Partial<IImageData>) & {
+    behindText?: boolean | BooleanNumber;
+    behindDoc?: BooleanNumber;
+    layoutType?: PositionedObjectLayoutType;
+    docxHeaderFooterDrawing?: boolean;
+};
+
+export const DOC_DRAWING_BEHIND_TEXT_LAYER_INDEX = 1;
+
+export function getDrawingRenderLayerIndex(param: IDrawingParamWithBehindText): number {
+    return param.behindText === true || param.behindText === BooleanNumber.TRUE
+        || (param.layoutType === PositionedObjectLayoutType.WRAP_NONE && param.behindDoc === BooleanNumber.TRUE)
+        ? DOC_DRAWING_BEHIND_TEXT_LAYER_INDEX
+        : DRAWING_OBJECT_LAYER_INDEX;
+}
+
+export function ensureDrawingRenderLayer(scene: Scene, object: BaseObject, param: IDrawingParamWithBehindText): void {
+    const layerIndex = getDrawingRenderLayerIndex(param);
+    if (object.layer == null || object.layer.zIndex === layerIndex) {
+        return;
+    }
+
+    scene.removeObject(object);
+    scene.addObject(object, layerIndex);
+}
+
+function isRenderableImageCache(image: HTMLImageElement | null | undefined | void): image is HTMLImageElement {
+    return image?.complete === true && image.naturalWidth > 0 && image.naturalHeight > 0;
+}
 
 export class DrawingRenderService {
     constructor(
@@ -37,7 +84,7 @@ export class DrawingRenderService {
     ) { }
 
     // eslint-disable-next-line max-lines-per-function, complexity
-    async renderImages(imageParam: IImageData, scene: Scene) {
+    async renderImages(imageParam: IImageData, scene: Scene, options?: { allowInactiveSheet?: boolean }) {
         const {
             transform: singleTransform,
             drawingType,
@@ -54,6 +101,10 @@ export class DrawingRenderService {
             adjustValues,
             hidden,
         } = imageParam;
+        const { docxHeaderFooterDrawing, layoutType } = imageParam as IImageData & {
+            docxHeaderFooterDrawing?: boolean;
+            layoutType?: PositionedObjectLayoutType;
+        };
 
         if (drawingType !== DrawingTypeEnum.DRAWING_IMAGE) {
             return;
@@ -63,7 +114,8 @@ export class DrawingRenderService {
             return;
         }
 
-        if (this._univerInstanceService.getUnitType(unitId) === UniverInstanceType.UNIVER_SHEET && subUnitId !== this._getActiveSheetId()) {
+        // Isolated print scenes may target a worksheet that is not active in the editor.
+        if (!options?.allowInactiveSheet && this._univerInstanceService.getUnitType(unitId) === UniverInstanceType.UNIVER_SHEET && subUnitId !== this._getActiveSheetId()) {
             return;
         }
 
@@ -82,6 +134,11 @@ export class DrawingRenderService {
             const imageShape = scene.getObject(imageShapeKey);
             if (imageShape != null) {
                 imageShape.transformByState({ left, top, width, height, angle, flipX, flipY, skewX, skewY });
+                (imageShape as Image).setClipBounds?.((transform as IDrawingTransformStateWithClipBounds).clipBounds);
+                if ('hidden' in imageParam) {
+                    hidden ? imageShape.hide() : imageShape.show();
+                }
+                ensureDrawingRenderLayer(scene, imageShape, imageParam as IDrawingParamWithBehindText);
                 continue;
             }
 
@@ -91,7 +148,7 @@ export class DrawingRenderService {
             const imageNativeCache = this._imageIoService.getImageSourceCache(source, imageSourceType);
 
             let shouldBeCache = false;
-            if (imageNativeCache != null) {
+            if (isRenderableImageCache(imageNativeCache)) {
                 imageConfig.image = imageNativeCache;
             } else {
                 if (imageSourceType === ImageSourceType.UUID) {
@@ -115,7 +172,9 @@ export class DrawingRenderService {
                 }
             }
 
-            if (hidden) {
+            const shouldWaitForInlineTransform =
+                docxHeaderFooterDrawing === true && layoutType === PositionedObjectLayoutType.INLINE;
+            if (hidden || shouldWaitForInlineTransform) {
                 imageConfig.visible = false;
             }
 
@@ -131,7 +190,7 @@ export class DrawingRenderService {
                 this._imageIoService.addImageSourceCache(source, imageSourceType, image.getNative());
             }
 
-            scene.addObject(image, DRAWING_OBJECT_LAYER_INDEX);
+            scene.addObject(image, getDrawingRenderLayerIndex(imageParam as IDrawingParamWithBehindText));
             if (this._drawingManagerService.getDrawingEditable()) {
                 scene.attachTransformerTo(image);
             }
@@ -226,7 +285,7 @@ export class DrawingRenderService {
         return rects;
     }
 
-    renderDrawing(param: IDrawingSearch, scene: Scene) {
+    renderDrawing(param: IDrawingSearch, scene: Scene, options?: { allowInactiveSheet?: boolean }) {
         const drawingParam = this._drawingManagerService.getDrawingByParam(param);
         if (drawingParam == null) {
             return;
@@ -234,7 +293,7 @@ export class DrawingRenderService {
 
         switch (drawingParam.drawingType) {
             case DrawingTypeEnum.DRAWING_IMAGE:
-                return this.renderImages(drawingParam as IImageData, scene);
+                return this.renderImages(drawingParam as IImageData, scene, options);
             default:
         }
     }

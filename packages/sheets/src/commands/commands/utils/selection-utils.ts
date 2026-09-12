@@ -14,12 +14,23 @@
  * limitations under the License.
  */
 
-import type { ICellData, IInterceptor, IObjectMatrixPrimitiveType, IRange, ISelectionCell, Nullable, Workbook, Worksheet } from '@univerjs/core';
+import type {
+    ICellData,
+    IInterceptor,
+    IObjectMatrixPrimitiveType,
+    IRange,
+    ISelectionCell,
+    Nullable,
+    Workbook,
+    Worksheet,
+} from '@univerjs/core';
 import type { ISelectionWithStyle } from '../../../basics/selection';
-
 import type { ISetSelectionsOperationParams } from '../../operations/selection.operation';
 import { RANGE_TYPE, Rectangle, selectionToArray, Tools } from '@univerjs/core';
-import { IgnoreRangeThemeInterceptorKey, RangeThemeInterceptorId } from '../../../services/sheet-interceptor/interceptor-const';
+import {
+    IgnoreRangeThemeInterceptorKey,
+    RangeThemeInterceptorId,
+} from '../../../services/sheet-interceptor/interceptor-const';
 import { SetSelectionsOperation } from '../../operations/selection.operation';
 
 export interface IExpandParams {
@@ -126,7 +137,7 @@ export function setEndForRange(range: IRange, rowCount: number, columnCount: num
  * @param range
  * @param worksheet
  */
-export function getPrimaryForRange(range: IRange, worksheet: Worksheet): ISelectionCell {
+export function getPrimaryForRange(range: IRange, worksheet: Pick<Worksheet, 'getMergedCell'>): ISelectionCell {
     const startRow = Number.isNaN(range.startRow) ? 0 : range.startRow;
     const startColumn = Number.isNaN(range.startColumn) ? 0 : range.startColumn;
     const mergedRange = worksheet.getMergedCell(startRow, startColumn);
@@ -161,7 +172,7 @@ export interface IInterval {
 /**
  * Calculate the real length of the intervals
  * @param intervalsObject
- * @returns
+ * @returns The combined length covered by all intervals.
  */
 export function calculateTotalLength(intervalsObject: IInterval): number {
     const points: number[] = [];

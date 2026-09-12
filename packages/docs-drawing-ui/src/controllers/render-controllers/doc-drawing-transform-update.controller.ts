@@ -14,42 +14,489 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, ICommandInfo, IDrawingParam, ITransformState } from '@univerjs/core';
+import type { DocumentDataModel, ICommandInfo, IDocDrawingBase, IDrawingParam, IExecutionOptions, ITransformState } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
-import type { Documents, DocumentSkeleton, IDocumentSkeletonHeaderFooter, IDocumentSkeletonPage, Image, IRenderContext, IRenderModule } from '@univerjs/engine-render';
+import type {
+    DocumentSkeleton,
+    IDocsCustomBlockRenderViewport,
+    IDocsTableRenderViewport,
+    IDocumentLayoutProgress,
+    IDocumentSkeletonCached,
+    IDocumentSkeletonDrawing,
+    IDocumentSkeletonHeaderFooter,
+    IDocumentSkeletonPage,
+    IDocumentSkeletonRow,
+    IDocumentSkeletonTable,
+    Image,
+    IRenderContext,
+    IRenderModule,
+} from '@univerjs/engine-render';
 import {
+    AlignTypeH,
+    AlignTypeV,
     BooleanNumber,
     Disposable,
-    DOCS_ZEN_EDITOR_UNIT_ID_KEY,
     fromEventSubject,
     ICommandService,
     Inject,
     IUniverInstanceService,
     LifecycleService,
     LifecycleStages,
+    ObjectRelativeFromH,
+    ObjectRelativeFromV,
     PositionedObjectLayoutType,
 } from '@univerjs/core';
 import { DocSkeletonManagerService, RichTextEditingMutation } from '@univerjs/docs';
 import { IEditorService, SetDocZoomRatioOperation } from '@univerjs/docs-ui';
 import { IDrawingManagerService } from '@univerjs/drawing';
-import { Liquid, TRANSFORM_CHANGE_OBSERVABLE_TYPE } from '@univerjs/engine-render';
-import { debounceTime, filter } from 'rxjs';
+import {
+    Documents,
+    getDocsTableRenderViewport,
+    getTableIdAndSliceIndex,
+    Liquid,
+    TRANSFORM_CHANGE_OBSERVABLE_TYPE,
+} from '@univerjs/engine-render';
+import { animationFrames, debounceTime, EMPTY, filter, map, merge, startWith, switchMap, take } from 'rxjs';
 import { DocRefreshDrawingsService } from '../../services/doc-refresh-drawings.service';
+import { getDocMutationAffectedDrawingIds } from './doc-drawing-mutation';
 
 interface IDrawingParamsWithBehindText {
     unitId: string;
     subUnitId: string;
     drawingId: string;
     behindText: boolean;
+    hidden?: boolean;
+    selectable: boolean;
     transform: ITransformState;
     transforms: ITransformState[];
+    customBlockRenderViewport?: Partial<Pick<IDocsCustomBlockRenderViewport, 'bleedLeft' | 'bleedWidth' | 'contentHeight' | 'contentWidth' | 'height' | 'pageContentWidth' | 'viewportHeight'>>;
     // The same drawing render in different place, like image in header and footer.
     // The default value is BooleanNumber.FALSE. if it's true, Please use transforms.
     isMultiTransform: BooleanNumber;
 }
 
+interface IDrawingClipBounds {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+
+function mergePublishedDrawing(
+    drawings: Record<string, IDrawingParamsWithBehindText>,
+    next: IDrawingParamsWithBehindText
+): void {
+    const current = drawings[next.drawingId];
+    if (current == null) {
+        drawings[next.drawingId] = next;
+        return;
+    }
+
+    if (next.selectable && !current.selectable) {
+        current.selectable = true;
+        current.transform = next.transform;
+    }
+    if (next.isMultiTransform === BooleanNumber.TRUE) {
+        current.transforms.push(next.transform);
+    }
+}
+
+interface IDrawingTransformStateWithClipBounds extends ITransformState {
+    clipBounds?: IDrawingClipBounds;
+}
+
+type DrawingRefreshParam = Partial<IDrawingParam & IDrawingParamsWithBehindText>;
+
+function isSameTransformValue(left: unknown, right: unknown): boolean {
+    return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function shouldRefreshDocDrawingTransform(
+    current: DrawingRefreshParam | null | undefined,
+    next: DrawingRefreshParam
+): boolean {
+    if (!current || next.customBlockRenderViewport != null) {
+        return true;
+    }
+
+    return !isSameTransformValue(current.transform, next.transform)
+        || !isSameTransformValue(current.transforms, next.transforms)
+        || current.isMultiTransform !== next.isMultiTransform
+        || current.hidden !== next.hidden
+        || current.behindText !== next.behindText
+        || current.selectable !== next.selectable;
+}
+
+interface IDrawingPositionContext {
+    unitId: string;
+    page: IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter;
+    docsLeft: number;
+    docsTop: number;
+    pageOffsetLeft: number;
+    pageOffsetTop: number;
+    updateDrawingMap: Record<string, IDrawingParamsWithBehindText>;
+    selectable: boolean;
+    hostPage?: IDocumentSkeletonPage;
+    clipOffset?: { left: number; top: number };
+}
+
+/**
+ * Overlay drawings do not participate in text layout. While their skeleton
+ * anchor remains valid, use the latest model transform so drag/resize/front-
+ * behind changes can paint immediately without rebuilding document pages.
+ */
+export function getDocsOverlayRuntimeDrawing(
+    skeletonDrawing: Pick<IDocDrawingBase, 'docTransform' | 'layoutType'> & Partial<IDocDrawingBase>,
+    currentDrawing: (Pick<IDocDrawingBase, 'docTransform' | 'layoutType'> & Partial<IDocDrawingBase>) | undefined
+): Pick<IDocDrawingBase, 'docTransform' | 'layoutType'> & Partial<IDocDrawingBase> {
+    return skeletonDrawing.layoutType === PositionedObjectLayoutType.WRAP_NONE &&
+        currentDrawing?.layoutType === PositionedObjectLayoutType.WRAP_NONE
+        ? currentDrawing
+        : skeletonDrawing;
+}
+
+export type DocumentDrawingPublicationProgress = Pick<
+    IDocumentLayoutProgress,
+    'generation' | 'didPublish' | 'complete' | 'publishedPageCount' | 'reason' | 'didPublishAnchor'
+>;
+
+interface IDocumentDrawingPublicationNestedPage {
+    notes?: Array<{ page: IDocumentDrawingPublicationNestedPage }>;
+    skeDrawings: ReadonlyMap<string, unknown>;
+    skeTables?: ReadonlyMap<string, {
+        rows: Array<{ cells: IDocumentDrawingPublicationNestedPage[] }>;
+    }>;
+    skeColumnGroups?: ReadonlyMap<string, {
+        columns: Array<{ page: IDocumentDrawingPublicationNestedPage }>;
+    }>;
+}
+
+interface IDocumentDrawingPublicationPage extends IDocumentDrawingPublicationNestedPage {
+    headerId: string;
+    footerId: string;
+    pageWidth: number;
+}
+
+type DocumentDrawingPublicationSkeletonData = Pick<
+    IDocumentSkeletonCached,
+    'skeHeaders' | 'skeFooters'
+> & { pages: IDocumentDrawingPublicationPage[] };
+
+export class DocDrawingPublicationTracker {
+    private _generation = -1;
+    private _publishedPageCount = 0;
+    private _drawingOccurrenceCount = 0;
+
+    reset(): void {
+        this._generation = -1;
+        this._publishedPageCount = 0;
+        this._drawingOccurrenceCount = 0;
+    }
+
+    shouldRefresh(
+        skeleton: {
+            getSkeletonData: () => DocumentDrawingPublicationSkeletonData | null | undefined | void;
+        },
+        progress: DocumentDrawingPublicationProgress
+    ): boolean {
+        if (!progress.didPublish && !progress.complete) {
+            return false;
+        }
+
+        const isNewGeneration = progress.generation !== this._generation;
+        if (isNewGeneration) {
+            this._generation = progress.generation;
+            this._publishedPageCount = 0;
+            this._drawingOccurrenceCount = 0;
+        }
+
+        const skeletonData = skeleton.getSkeletonData();
+        if (skeletonData == null) {
+            return false;
+        }
+
+        const previousPublishedPageCount = this._publishedPageCount;
+        const publishedPageCount = Math.min(progress.publishedPageCount, skeletonData.pages.length);
+        this._publishedPageCount = Math.max(previousPublishedPageCount, publishedPageCount);
+
+        const drawingOccurrenceCount = countPublishedDrawingOccurrences(skeletonData, publishedPageCount);
+        const didDrawingOccurrencesChange = !(isNewGeneration && progress.reason === 'edit') &&
+            drawingOccurrenceCount !== this._drawingOccurrenceCount;
+        this._drawingOccurrenceCount = drawingOccurrenceCount;
+
+        if (progress.complete || progress.didPublishAnchor || didDrawingOccurrencesChange) {
+            return true;
+        }
+        if (isNewGeneration && progress.reason === 'edit') {
+            return false;
+        }
+
+        return hasNewPublishedPageDrawings(skeletonData, previousPublishedPageCount, publishedPageCount);
+    }
+}
+
+export function getDocsDrawingPageClipBounds(config: {
+    docsLeft: number;
+    docsTop: number;
+    pageOffsetLeft: number;
+    pageOffsetTop: number;
+    clipOffsetLeft?: number;
+    clipOffsetTop?: number;
+    page: Pick<IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter, 'pageWidth' | 'pageHeight'>;
+}): IDrawingClipBounds | undefined {
+    const { docsLeft, docsTop, pageOffsetLeft, pageOffsetTop, clipOffsetLeft = 0, clipOffsetTop = 0, page } = config;
+    const { pageWidth, pageHeight } = page;
+    if (!Number.isFinite(pageWidth) || !Number.isFinite(pageHeight) || pageWidth <= 0 || pageHeight <= 0) {
+        return;
+    }
+
+    return {
+        left: docsLeft + pageOffsetLeft + clipOffsetLeft,
+        top: docsTop + pageOffsetTop + clipOffsetTop,
+        width: pageWidth,
+        height: pageHeight,
+    };
+}
+
+export function getDocsDrawingClipPage(config: {
+    drawing: Pick<IDrawingParamsWithBehindText, 'behindText'> & {
+        transform?: Pick<ITransformState, 'width' | 'height'>;
+    };
+    hostPage?: Pick<IDocumentSkeletonPage, 'pageWidth' | 'pageHeight'>;
+    page: Pick<IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter, 'pageWidth' | 'pageHeight'>;
+}): Pick<IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter, 'pageWidth' | 'pageHeight'> {
+    const { drawing, hostPage, page } = config;
+    if (hostPage == null || drawing.behindText !== true || drawing.transform == null) {
+        return page;
+    }
+
+    const { width, height } = drawing.transform;
+    if (width == null || height == null) {
+        return page;
+    }
+
+    if (width > page.pageWidth || height > page.pageHeight) {
+        return hostPage;
+    }
+
+    const widthRatio = width / hostPage.pageWidth;
+    const heightRatio = height / hostPage.pageHeight;
+    if (widthRatio >= 0.8 && heightRatio >= 0.8) {
+        return hostPage;
+    }
+
+    return page;
+}
+
+export function getDocsPageRelativeDrawingLeft(config: {
+    hostPage: Pick<IDocumentSkeletonPage, 'pageWidth'>;
+    positionH: {
+        align?: AlignTypeH;
+        posOffset?: number;
+        relativeFrom?: ObjectRelativeFromH;
+    };
+    width: number;
+}): number | undefined {
+    const { hostPage, positionH, width } = config;
+    if (positionH.relativeFrom !== ObjectRelativeFromH.PAGE) {
+        return;
+    }
+
+    if (positionH.align === AlignTypeH.RIGHT) {
+        return hostPage.pageWidth - width;
+    }
+    if (positionH.align === AlignTypeH.CENTER) {
+        return hostPage.pageWidth / 2 - width / 2;
+    }
+    if (positionH.posOffset != null) {
+        return positionH.posOffset;
+    }
+
+    return 0;
+}
+
+export function getDocsPageRelativeDrawingTop(config: {
+    hostPage: Pick<IDocumentSkeletonPage, 'pageHeight'>;
+    positionV: {
+        align?: AlignTypeV;
+        posOffset?: number;
+        relativeFrom?: ObjectRelativeFromV;
+    };
+    height: number;
+}): number | undefined {
+    const { hostPage, positionV, height } = config;
+    if (positionV.relativeFrom !== ObjectRelativeFromV.PAGE) {
+        return;
+    }
+
+    if (positionV.align === AlignTypeV.BOTTOM) {
+        return hostPage.pageHeight - height;
+    }
+    if (positionV.align === AlignTypeV.CENTER) {
+        return hostPage.pageHeight / 2 - height / 2;
+    }
+    if (positionV.posOffset != null) {
+        return positionV.posOffset;
+    }
+
+    return 0;
+}
+
+export function getDocsPageRelativeDrawingAnchorPage(config: {
+    page: Pick<IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter, 'pageWidth' | 'pageHeight'>;
+    clipPage: Pick<IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter, 'pageWidth' | 'pageHeight'>;
+    hostPage?: Pick<IDocumentSkeletonPage, 'pageWidth' | 'pageHeight'>;
+}): Pick<IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter, 'pageWidth' | 'pageHeight'> | undefined {
+    const { page, clipPage, hostPage } = config;
+    if (hostPage != null && hostPage === clipPage) {
+        return hostPage;
+    }
+    if (hostPage == null && page === clipPage) {
+        return page;
+    }
+}
+
+export function getDocsDrawingBehindText(config: {
+    drawingOrigin: {
+        layoutType?: PositionedObjectLayoutType;
+        behindDoc?: BooleanNumber;
+    };
+    hostPage?: Pick<IDocumentSkeletonPage, 'pageWidth' | 'pageHeight'>;
+}): boolean {
+    const { drawingOrigin, hostPage } = config;
+    if (hostPage != null) {
+        return true;
+    }
+
+    return drawingOrigin.layoutType === PositionedObjectLayoutType.WRAP_NONE && drawingOrigin.behindDoc === BooleanNumber.TRUE;
+}
+
+export function getDocsTableCellDrawingOffset(
+    unitId: string,
+    table: IDocumentSkeletonTable,
+    row: IDocumentSkeletonRow,
+    cell: IDocumentSkeletonPage
+) {
+    const sourceTableId = getTableIdAndSliceIndex(table.tableId).tableId;
+    const viewport = getDocsTableRenderViewport(unitId, sourceTableId);
+    const hasHorizontalViewport = hasHorizontalTableViewport(viewport);
+    const scrollLeft = hasHorizontalViewport ? viewport.scrollLeft : 0;
+
+    return {
+        left: table.left + cell.left - scrollLeft + cell.marginLeft,
+        top: table.top + row.top + cell.marginTop,
+    };
+}
+
+function hasHorizontalTableViewport(viewport: IDocsTableRenderViewport | null | undefined): viewport is IDocsTableRenderViewport {
+    return viewport != null &&
+        (viewport.leadingInsetLeft ?? 0) + viewport.contentWidth + (viewport.trailingInsetRight ?? 0) > viewport.viewportWidth;
+}
+
+function hasSkeletonPageDrawings(page: IDocumentDrawingPublicationNestedPage): boolean {
+    if (page.skeDrawings.size > 0 || page.notes?.some((note) => hasSkeletonPageDrawings(note.page))) {
+        return true;
+    }
+
+    let hasDrawings = false;
+    page.skeTables?.forEach((table) => {
+        table.rows.forEach((row) => {
+            row.cells.forEach((cell) => {
+                if (hasSkeletonPageDrawings(cell)) {
+                    hasDrawings = true;
+                }
+            });
+        });
+    });
+    page.skeColumnGroups?.forEach((columnGroup) => {
+        columnGroup.columns.forEach((column) => {
+            if (hasSkeletonPageDrawings(column.page)) {
+                hasDrawings = true;
+            }
+        });
+    });
+
+    return hasDrawings;
+}
+
+function countSkeletonPageDrawings(page: IDocumentDrawingPublicationNestedPage): number {
+    let count = page.skeDrawings.size;
+    page.notes?.forEach((note) => {
+        count += countSkeletonPageDrawings(note.page);
+    });
+    page.skeTables?.forEach((table) => {
+        table.rows.forEach((row) => {
+            row.cells.forEach((cell) => {
+                count += countSkeletonPageDrawings(cell);
+            });
+        });
+    });
+    page.skeColumnGroups?.forEach((columnGroup) => {
+        columnGroup.columns.forEach((column) => {
+            count += countSkeletonPageDrawings(column.page);
+        });
+    });
+    return count;
+}
+
+function countPublishedDrawingOccurrences(
+    skeletonData: DocumentDrawingPublicationSkeletonData,
+    publishedPageCount: number
+): number {
+    let count = 0;
+    for (let index = 0; index < publishedPageCount; index++) {
+        const page = skeletonData.pages[index];
+        count += countSkeletonPageDrawings(page);
+
+        const header = page.headerId == null
+            ? undefined
+            : skeletonData.skeHeaders.get(page.headerId)?.get(page.pageWidth);
+        if (header != null) {
+            count += countSkeletonPageDrawings(header);
+        }
+
+        const footer = page.footerId == null
+            ? undefined
+            : skeletonData.skeFooters.get(page.footerId)?.get(page.pageWidth);
+        if (footer != null) {
+            count += countSkeletonPageDrawings(footer);
+        }
+    }
+    return count;
+}
+
+function hasNewPublishedPageDrawings(
+    skeletonData: DocumentDrawingPublicationSkeletonData,
+    startPageIndex: number,
+    publishedPageCount: number
+): boolean {
+    for (let index = startPageIndex; index < publishedPageCount; index++) {
+        const page = skeletonData.pages[index];
+        if (hasSkeletonPageDrawings(page)) {
+            return true;
+        }
+
+        const header = page.headerId == null
+            ? undefined
+            : skeletonData.skeHeaders.get(page.headerId)?.get(page.pageWidth);
+        if (header != null && hasSkeletonPageDrawings(header)) {
+            return true;
+        }
+
+        const footer = page.footerId == null
+            ? undefined
+            : skeletonData.skeFooters.get(page.footerId)?.get(page.pageWidth);
+        if (footer != null && hasSkeletonPageDrawings(footer)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 export class DocDrawingTransformUpdateController extends Disposable implements IRenderModule {
     private _liquid = new Liquid();
+    private _changesetDrawingRefreshScheduled = false;
+    private readonly _publicationTracker = new DocDrawingPublicationTracker();
 
     constructor(
         private readonly _context: IRenderContext<DocumentDataModel>,
@@ -71,17 +518,50 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
     private _initialize() {
         this._initialRenderRefresh();
         this._drawingInitializeListener();
-        this._initResize();
+        this._initTransformRefresh();
     }
 
     private _initialRenderRefresh() {
         this.disposeWithMe(
-            this._docSkeletonManagerService.currentSkeleton$.subscribe((documentSkeleton) => {
-                if (documentSkeleton == null) {
-                    return;
-                }
+            this._docSkeletonManagerService.currentSkeleton$.pipe(
+                switchMap((documentSkeleton) => {
+                    this._publicationTracker.reset();
 
-                this._refreshDrawing(documentSkeleton);
+                    if (documentSkeleton == null) {
+                        return EMPTY;
+                    }
+
+                    this._refreshDrawing(documentSkeleton);
+                    // The document component is attached offscreen before it is positioned. Bind once
+                    // it becomes renderable so drawings never expose their temporary origin transform.
+                    const positionRefresh$ = animationFrames().pipe(
+                        startWith(null),
+                        map(() => this._context.mainComponent),
+                        filter((documentComponent): documentComponent is Documents => documentComponent instanceof Documents &&
+                            documentComponent.left > -10000 &&
+                            documentComponent.top > -10000),
+                        take(1),
+                        switchMap((documentComponent) => fromEventSubject(documentComponent.onTransformChange$).pipe(
+                            filter((evt) => evt.type === TRANSFORM_CHANGE_OBSERVABLE_TYPE.translate &&
+                                'left' in evt.value &&
+                                'left' in evt.preValue &&
+                                (evt.value.left !== evt.preValue.left || evt.value.top !== evt.preValue.top)),
+                            map(() => ({ documentSkeleton, progress: null })),
+                            startWith({ documentSkeleton, progress: null })
+                        ))
+                    );
+
+                    return merge(
+                        documentSkeleton.layoutProgress$.pipe(
+                            map((progress) => ({ documentSkeleton, progress }))
+                        ),
+                        positionRefresh$
+                    );
+                })
+            ).subscribe(({ documentSkeleton, progress }) => {
+                if (progress == null || this._publicationTracker.shouldRefresh(documentSkeleton, progress)) {
+                    this._refreshDrawing(documentSkeleton);
+                }
             })
         );
 
@@ -100,39 +580,79 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
         const updateCommandList = [RichTextEditingMutation.id, SetDocZoomRatioOperation.id];
 
         this.disposeWithMe(
-            this._commandService.onCommandExecuted((command: ICommandInfo) => {
+            this._commandService.onCommandExecuted((command: ICommandInfo, options?: IExecutionOptions) => {
                 if (updateCommandList.includes(command.id)) {
                     const params = command.params as IRichTextEditingMutationParams;
                     const { unitId: commandUnitId } = params;
 
-                    const { unitId, mainComponent } = this._context;
+                    const { unitId } = this._context;
 
                     if (commandUnitId !== unitId) {
                         return;
                     }
 
-                    const skeleton = this._docSkeletonManagerService.getSkeleton();
-
-                    if (skeleton == null) {
+                    const drawingIds = command.id === RichTextEditingMutation.id
+                        ? getDocMutationAffectedDrawingIds(params.actions)
+                        : null;
+                    if (drawingIds?.size === 0) {
                         return;
                     }
 
-                    // TODO: @JOCS, Do not use unitId to check if it's need to render images or isEditor. maybe need a config?
-                    if (this._editorService.isEditor(unitId) && unitId !== DOCS_ZEN_EDITOR_UNIT_ID_KEY) {
-                        mainComponent?.makeDirty();
+                    if (command.id === RichTextEditingMutation.id && options?.fromChangeset) {
+                        this._scheduleChangesetDrawingRefresh();
                         return;
                     }
 
-                    this._refreshDrawing(skeleton);
+                    this._refreshCurrentDrawing(drawingIds ?? undefined);
                 }
             })
         );
     }
 
-    private _initResize() {
+    private _scheduleChangesetDrawingRefresh(): void {
+        if (this._changesetDrawingRefreshScheduled) {
+            return;
+        }
+
+        this._changesetDrawingRefreshScheduled = true;
+        queueMicrotask(() => {
+            queueMicrotask(() => {
+                this._changesetDrawingRefreshScheduled = false;
+                if (this._disposed) {
+                    return;
+                }
+
+                this._refreshCurrentDrawing();
+            });
+        });
+    }
+
+    private _refreshCurrentDrawing(drawingIds?: ReadonlySet<string>): void {
+        const skeleton = this._docSkeletonManagerService.getSkeleton();
+        if (skeleton == null) {
+            return;
+        }
+
+        const { unitId, mainComponent } = this._context;
+        // TODO: @JOCS, Do not use unitId to check if it's need to render images or isEditor. maybe need a config?
+        if (this._editorService.isEditor(unitId)) {
+            mainComponent?.makeDirty();
+            return;
+        }
+
+        this._refreshDrawing(skeleton, drawingIds);
+    }
+
+    private _initTransformRefresh() {
         this.disposeWithMe(
-            fromEventSubject(this._context.engine.onTransformChange$).pipe(
-                filter((evt) => evt.type === TRANSFORM_CHANGE_OBSERVABLE_TYPE.resize),
+            merge(
+                fromEventSubject(this._context.engine.onTransformChange$).pipe(
+                    filter((evt) => evt.type === TRANSFORM_CHANGE_OBSERVABLE_TYPE.resize)
+                ),
+                fromEventSubject(this._context.scene.onTransformChange$).pipe(
+                    filter((evt) => evt.type === TRANSFORM_CHANGE_OBSERVABLE_TYPE.scale)
+                )
+            ).pipe(
                 debounceTime(16)
             ).subscribe(() => {
                 const skeleton = this._docSkeletonManagerService.getSkeleton();
@@ -144,7 +664,7 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
         );
     }
 
-    private _refreshDrawing(skeleton: DocumentSkeleton) {
+    private _refreshDrawing(skeleton: DocumentSkeleton, drawingIds?: ReadonlySet<string>) {
         const skeletonData = skeleton?.getSkeletonData();
         const { mainComponent, unitId } = this._context;
         const documentComponent = mainComponent as Documents;
@@ -154,6 +674,10 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
         }
 
         const { left: docsLeft, top: docsTop, pageLayoutType, pageMarginLeft, pageMarginTop } = documentComponent;
+        if (docsLeft <= -10000 || docsTop <= -10000) {
+            return;
+        }
+
         const { pages, skeHeaders, skeFooters } = skeletonData;
         const updateDrawingMap: Record<string, IDrawingParamsWithBehindText> = {}; // IFloatingObjectManagerParam
 
@@ -163,54 +687,190 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
          */
         for (let i = 0, len = pages.length; i < len; i++) {
             const page = pages[i];
-            const { headerId, footerId, pageWidth } = page;
-
-            if (headerId) {
-                const headerPage = skeHeaders.get(headerId)?.get(pageWidth);
-
-                if (headerPage) {
-                    this._calculateDrawingPosition(
-                        unitId,
-                        headerPage,
-                        docsLeft,
-                        docsTop,
-                        updateDrawingMap,
-                        headerPage.marginTop,
-                        page.marginLeft
-                    );
-                }
-            }
-
-            if (footerId) {
-                const footerPage = skeFooters.get(footerId)?.get(pageWidth);
-
-                if (footerPage) {
-                    this._calculateDrawingPosition(
-                        unitId,
-                        footerPage,
-                        docsLeft,
-                        docsTop,
-                        updateDrawingMap,
-                        page.pageHeight - page.marginBottom + footerPage.marginTop,
-                        page.marginLeft
-                    );
-                }
-            }
-
-            this._calculateDrawingPosition(unitId, page, docsLeft, docsTop, updateDrawingMap, page.marginTop, page.marginLeft);
+            this._collectPublishedPageDrawingPositions(
+                unitId,
+                page,
+                skeHeaders,
+                skeFooters,
+                docsLeft,
+                docsTop,
+                updateDrawingMap
+            );
             this._liquid.translatePage(page, pageLayoutType, pageMarginLeft, pageMarginTop);
         }
 
-        const updateDrawings = Object.values(updateDrawingMap);
+        const updateDrawings = Object.values(updateDrawingMap)
+            .filter((drawing) => drawingIds == null || drawingIds.has(drawing.drawingId));
 
-        const nonMultiDrawings = updateDrawings.filter((drawing) => !drawing.isMultiTransform);
-        const multiDrawings = updateDrawings.filter((drawing) => drawing.isMultiTransform);
+        for (const drawing of updateDrawings) {
+            drawing.hidden = false;
+        }
+
+        const staleNonMultiDrawings = this._getStaleNonMultiDrawings(unitId, updateDrawingMap, drawingIds);
+        const nonMultiDrawings = updateDrawings
+            .filter((drawing) => !drawing.isMultiTransform)
+            .concat(staleNonMultiDrawings)
+            .filter((drawing) => shouldRefreshDocDrawingTransform(
+                this._drawingManagerService.getDrawingByParam({
+                    unitId,
+                    subUnitId: unitId,
+                    drawingId: drawing.drawingId,
+                }) as DrawingRefreshParam | undefined,
+                drawing as DrawingRefreshParam
+            ));
         if (nonMultiDrawings.length > 0) {
             this._drawingManagerService.refreshTransform(nonMultiDrawings as unknown as IDrawingParam[]);
         }
 
-        // if multiDrawings length is 0, also need to remove current multi drawings.
-        this._handleMultiDrawingsTransform(multiDrawings as unknown as IDrawingParam[]);
+        const targetedMultiDrawing = drawingIds != null && [...drawingIds].some((drawingId) =>
+            updateDrawingMap[drawingId]?.isMultiTransform === BooleanNumber.TRUE ||
+            this._drawingManagerService.getDrawingByParam({ unitId, subUnitId: unitId, drawingId })?.isMultiTransform === BooleanNumber.TRUE);
+        if (drawingIds == null || targetedMultiDrawing) {
+            // Multi-transform drawings are recreated as a group so repeated
+            // header/footer occurrences stay consistent.
+            const allMultiDrawings = Object.values(updateDrawingMap)
+                .filter((drawing) => drawing.isMultiTransform);
+            this._handleMultiDrawingsTransform(allMultiDrawings as unknown as IDrawingParam[]);
+        }
+    }
+
+    private _collectPublishedPageDrawingPositions(
+        unitId: string,
+        page: IDocumentSkeletonPage,
+        skeHeaders: IDocumentSkeletonCached['skeHeaders'],
+        skeFooters: IDocumentSkeletonCached['skeFooters'],
+        docsLeft: number,
+        docsTop: number,
+        updateDrawingMap: Record<string, IDrawingParamsWithBehindText>
+    ): void {
+        const selectable = !page.isLayoutPlaceholder && !page.isMaterializationPlaceholder;
+        const { headerId, footerId, pageWidth } = page;
+        const headerPage = headerId ? skeHeaders.get(headerId)?.get(pageWidth) : undefined;
+        if (headerPage != null) {
+            this._collectSegmentDrawingPositions(
+                unitId,
+                headerPage,
+                docsLeft,
+                docsTop,
+                updateDrawingMap,
+                headerPage.marginTop,
+                page.marginLeft,
+                page,
+                selectable
+            );
+        }
+
+        const footerPage = footerId ? skeFooters.get(footerId)?.get(pageWidth) : undefined;
+        if (footerPage != null) {
+            const footerTop = page.pageHeight - page.marginBottom + footerPage.marginTop;
+            this._collectSegmentDrawingPositions(
+                unitId,
+                footerPage,
+                docsLeft,
+                docsTop,
+                updateDrawingMap,
+                footerTop,
+                page.marginLeft,
+                page,
+                selectable
+            );
+        }
+
+        this._collectSegmentDrawingPositions(
+            unitId,
+            page,
+            docsLeft,
+            docsTop,
+            updateDrawingMap,
+            page.marginTop,
+            page.marginLeft,
+            undefined,
+            selectable
+        );
+        for (const note of page.notes ?? []) {
+            this._collectSegmentDrawingPositions(
+                unitId,
+                note.page,
+                docsLeft,
+                docsTop,
+                updateDrawingMap,
+                note.top,
+                note.left,
+                undefined,
+                selectable,
+                { top: note.top, left: note.left }
+            );
+        }
+    }
+
+    private _collectSegmentDrawingPositions(
+        unitId: string,
+        page: IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter,
+        docsLeft: number,
+        docsTop: number,
+        updateDrawingMap: Record<string, IDrawingParamsWithBehindText>,
+        marginTop: number,
+        marginLeft: number,
+        hostPage: IDocumentSkeletonPage | undefined,
+        selectable: boolean,
+        clipOffset?: { left: number; top: number }
+    ): void {
+        this._calculateDrawingPosition(
+            unitId,
+            page,
+            docsLeft,
+            docsTop,
+            updateDrawingMap,
+            marginTop,
+            marginLeft,
+            hostPage,
+            selectable,
+            clipOffset
+        );
+        this._calculateTableCellDrawingPositions(
+            unitId,
+            page,
+            docsLeft,
+            docsTop,
+            updateDrawingMap,
+            marginTop,
+            marginLeft,
+            selectable
+        );
+        this._calculateColumnGroupDrawingPositions(
+            unitId,
+            page,
+            docsLeft,
+            docsTop,
+            updateDrawingMap,
+            marginTop,
+            marginLeft,
+            selectable
+        );
+    }
+
+    private _getStaleNonMultiDrawings(
+        unitId: string,
+        updateDrawingMap: Record<string, IDrawingParamsWithBehindText>,
+        drawingIds?: ReadonlySet<string>
+    ): IDrawingParamsWithBehindText[] {
+        const drawingData = this._drawingManagerService.getDrawingData(unitId, unitId) ?? {};
+
+        return Object.values(drawingData)
+            .filter((drawing) => drawing.isMultiTransform !== BooleanNumber.TRUE)
+            .filter((drawing) => drawingIds == null || drawingIds.has(drawing.drawingId))
+            .filter((drawing) => updateDrawingMap[drawing.drawingId] == null)
+            .map((drawing) => ({
+                unitId,
+                subUnitId: unitId,
+                drawingId: drawing.drawingId,
+                behindText: false,
+                hidden: true,
+                selectable: true,
+                transform: drawing.transform,
+                transforms: drawing.transforms ?? [],
+                isMultiTransform: drawing.isMultiTransform ?? BooleanNumber.FALSE,
+            } as IDrawingParamsWithBehindText));
     }
 
     private _handleMultiDrawingsTransform(multiDrawings: IDrawingParam[]) {
@@ -258,44 +918,225 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
         docsTop: number,
         updateDrawingMap: Record<string, IDrawingParamsWithBehindText>,
         marginTop: number,
-        marginLeft: number
+        marginLeft: number,
+        hostPage?: IDocumentSkeletonPage,
+        selectable = true,
+        clipOffset?: { left: number; top: number }
     ) {
         const { skeDrawings } = page;
+        const pageOffsetLeft = this._liquid.x;
+        const pageOffsetTop = this._liquid.y;
         this._liquid.translatePagePadding({
             marginTop,
             marginLeft,
         } as IDocumentSkeletonPage);
 
-        skeDrawings.forEach((drawing) => {
-            const { aLeft, aTop, height, width, angle, drawingId, drawingOrigin } = drawing;
-            const behindText = drawingOrigin.layoutType === PositionedObjectLayoutType.WRAP_NONE && drawingOrigin.behindDoc === BooleanNumber.TRUE;
-            const { isMultiTransform = BooleanNumber.FALSE } = drawingOrigin;
-            const transform = {
-                left: aLeft + docsLeft + this._liquid.x,
-                top: aTop + docsTop + this._liquid.y,
-                width,
-                height,
-                angle,
-            };
-            if (updateDrawingMap[drawingId] == null) {
-                updateDrawingMap[drawingId] = {
-                    unitId,
-                    subUnitId: unitId,
-                    drawingId,
-                    behindText,
-                    transform,
-                    transforms: [transform],
-                    isMultiTransform,
-                };
-            } else if (isMultiTransform === BooleanNumber.TRUE) {
-                updateDrawingMap[drawingId].transforms.push(transform);
-            }
-        });
+        const drawingPositionContext: IDrawingPositionContext = {
+            unitId,
+            page,
+            docsLeft,
+            docsTop,
+            pageOffsetLeft,
+            pageOffsetTop,
+            updateDrawingMap,
+            hostPage,
+            selectable,
+            clipOffset,
+        };
+        skeDrawings.forEach((drawing) => this._collectDrawingPosition(drawing, drawingPositionContext));
 
         this._liquid.restorePagePadding({
             marginTop,
             marginLeft,
         } as IDocumentSkeletonPage);
+    }
+
+    private _collectDrawingPosition(
+        drawing: IDocumentSkeletonDrawing,
+        context: IDrawingPositionContext
+    ): void {
+        const { aLeft, aTop, angle: skeletonAngle, drawingId, drawingOrigin, height: skeletonHeight, width: skeletonWidth } = drawing;
+        const currentDrawing = this._context.unit?.getSnapshot?.().drawings?.[drawingId];
+        const runtimeDrawing = getDocsOverlayRuntimeDrawing(drawingOrigin, currentDrawing);
+        const { angle = skeletonAngle, size } = runtimeDrawing.docTransform;
+        const height = size?.height ?? skeletonHeight;
+        const width = size?.width ?? skeletonWidth;
+        const { left: clipOffsetLeft, top: clipOffsetTop } = context.clipOffset ?? {};
+        const behindText = getDocsDrawingBehindText({ drawingOrigin: runtimeDrawing, hostPage: context.hostPage });
+        const { isMultiTransform = BooleanNumber.FALSE } = runtimeDrawing;
+        const clipPage = getDocsDrawingClipPage({
+            drawing: { behindText, transform: { width, height } },
+            hostPage: context.hostPage,
+            page: context.page,
+        });
+        const clipBounds = getDocsDrawingPageClipBounds({
+            docsLeft: context.docsLeft,
+            docsTop: context.docsTop,
+            pageOffsetLeft: context.pageOffsetLeft,
+            pageOffsetTop: context.pageOffsetTop,
+            clipOffsetLeft,
+            clipOffsetTop,
+            page: clipPage,
+        });
+        const anchorPage = runtimeDrawing.layoutType === PositionedObjectLayoutType.WRAP_NONE
+            ? getDocsPageRelativeDrawingAnchorPage({
+                page: context.page,
+                clipPage,
+                hostPage: context.hostPage,
+            })
+            : undefined;
+        const pageRelativeLeft = anchorPage == null
+            ? undefined
+            : getDocsPageRelativeDrawingLeft({
+                hostPage: anchorPage,
+                positionH: runtimeDrawing.docTransform.positionH,
+                width,
+            });
+        const pageRelativeTop = anchorPage == null
+            ? undefined
+            : getDocsPageRelativeDrawingTop({
+                hostPage: anchorPage,
+                positionV: runtimeDrawing.docTransform.positionV,
+                height,
+            });
+        const transform: IDrawingTransformStateWithClipBounds = {
+            left: (pageRelativeLeft ?? aLeft) + context.docsLeft +
+                (pageRelativeLeft == null ? this._liquid.x : context.pageOffsetLeft),
+            top: (pageRelativeTop ?? aTop) + context.docsTop +
+                (pageRelativeTop == null ? this._liquid.y : context.pageOffsetTop),
+            width,
+            height,
+            angle,
+            flipX: runtimeDrawing.docTransform.flipX,
+            flipY: runtimeDrawing.docTransform.flipY,
+            clipBounds,
+        };
+        mergePublishedDrawing(context.updateDrawingMap, {
+            unitId: context.unitId,
+            subUnitId: context.unitId,
+            drawingId,
+            behindText,
+            selectable: context.selectable,
+            transform,
+            transforms: [transform],
+            customBlockRenderViewport: drawing.customBlockRenderViewport,
+            isMultiTransform,
+        });
+    }
+
+    private _calculateTableCellDrawingPositions(
+        unitId: string,
+        page: IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter,
+        docsLeft: number,
+        docsTop: number,
+        updateDrawingMap: Record<string, IDrawingParamsWithBehindText>,
+        baseMarginTop: number,
+        baseMarginLeft: number,
+        selectable: boolean
+    ) {
+        page.skeTables?.forEach((table) => {
+            table.rows.forEach((row) => {
+                row.cells.forEach((cell) => {
+                    if (
+                        (cell.skeDrawings?.size ?? 0) === 0 &&
+                        (cell.skeTables?.size ?? 0) === 0 &&
+                        (cell.skeColumnGroups?.size ?? 0) === 0
+                    ) {
+                        return;
+                    }
+
+                    const cellOffset = getDocsTableCellDrawingOffset(unitId, table, row, cell);
+                    const marginTop = baseMarginTop + cellOffset.top;
+                    const marginLeft = baseMarginLeft + cellOffset.left;
+
+                    this._calculateDrawingPosition(
+                        unitId,
+                        cell,
+                        docsLeft,
+                        docsTop,
+                        updateDrawingMap,
+                        marginTop,
+                        marginLeft,
+                        undefined,
+                        selectable,
+                        { left: marginLeft, top: marginTop }
+                    );
+                    this._calculateTableCellDrawingPositions(
+                        unitId,
+                        cell,
+                        docsLeft,
+                        docsTop,
+                        updateDrawingMap,
+                        marginTop,
+                        marginLeft,
+                        selectable
+                    );
+                    this._calculateColumnGroupDrawingPositions(
+                        unitId,
+                        cell,
+                        docsLeft,
+                        docsTop,
+                        updateDrawingMap,
+                        marginTop,
+                        marginLeft,
+                        selectable
+                    );
+                });
+            });
+        });
+    }
+
+    private _calculateColumnGroupDrawingPositions(
+        unitId: string,
+        page: IDocumentSkeletonPage | IDocumentSkeletonHeaderFooter,
+        docsLeft: number,
+        docsTop: number,
+        updateDrawingMap: Record<string, IDrawingParamsWithBehindText>,
+        baseMarginTop: number,
+        baseMarginLeft: number,
+        selectable: boolean
+    ): void {
+        page.skeColumnGroups?.forEach((columnGroup) => {
+            columnGroup.columns.forEach((column) => {
+                const nestedPage = column.page;
+                const marginTop = baseMarginTop + columnGroup.top + column.top + nestedPage.marginTop;
+                const marginLeft = baseMarginLeft + columnGroup.left + column.left + nestedPage.marginLeft;
+                const clipOffset = { left: marginLeft, top: marginTop };
+
+                this._calculateDrawingPosition(
+                    unitId,
+                    nestedPage,
+                    docsLeft,
+                    docsTop,
+                    updateDrawingMap,
+                    marginTop,
+                    marginLeft,
+                    undefined,
+                    selectable,
+                    clipOffset
+                );
+                this._calculateTableCellDrawingPositions(
+                    unitId,
+                    nestedPage,
+                    docsLeft,
+                    docsTop,
+                    updateDrawingMap,
+                    marginTop,
+                    marginLeft,
+                    selectable
+                );
+                this._calculateColumnGroupDrawingPositions(
+                    unitId,
+                    nestedPage,
+                    docsLeft,
+                    docsTop,
+                    updateDrawingMap,
+                    marginTop,
+                    marginLeft,
+                    selectable
+                );
+            });
+        });
     }
 
     private _drawingInitializeListener() {
@@ -305,9 +1146,8 @@ export class DocDrawingTransformUpdateController extends Disposable implements I
                 return;
             }
 
-            this._refreshDrawing(skeleton);
-
             this._drawingManagerService.initializeNotification(this._context.unitId);
+            this._refreshDrawing(skeleton);
         };
 
         if (this._lifecycleService.stage >= LifecycleStages.Rendered) {

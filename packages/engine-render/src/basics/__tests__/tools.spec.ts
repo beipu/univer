@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { BaselineOffset, BooleanNumber, GridType, NumberUnitType, Rectangle, Tools } from '@univerjs/core';
+import { BaselineOffset, Rectangle, Tools } from '@univerjs/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FontCache } from '../../components/docs/layout/shaping-engine/font-cache';
 import {
@@ -40,15 +40,12 @@ import {
     hasAllLatin,
     hasArabic,
     hasBasicLatin,
-    hasCJK,
-    hasCJKPunctuation,
-    hasCJKText,
     hasLatinExtendedA,
     hasLatinExtendedB,
     hasLatinOneSupplement,
     hasSpace,
+    hasThai,
     hasTibetan,
-    hasUnMergedCellInRow,
     injectStyle,
     inViewRanges,
     isArray,
@@ -81,6 +78,26 @@ import {
 describe('tools extra', () => {
     afterEach(() => {
         vi.restoreAllMocks();
+    });
+
+    it('avoids Unicode segmentation for individual code units while preserving complex graphemes', () => {
+        const segment = vi.spyOn(Intl.Segmenter.prototype, 'segment');
+        for (const text of ['', 'A', '中', ' ', '\r', '\u0301', '\uD83D']) {
+            expect(getFirstGrapheme(text)).toBe(text || null);
+        }
+        expect(segment).not.toHaveBeenCalled();
+        for (const [text, first] of [
+            ['e\u0301x', 'e\u0301'],
+            ['\r\nx', '\r\n'],
+            ['🇨🇳abc', '🇨🇳'],
+            ['👨‍👩‍👧‍👦abc', '👨‍👩‍👧‍👦'],
+            ['👍🏽abc', '👍🏽'],
+            ['1️⃣abc', '1️⃣'],
+            ['中文', '中'],
+        ]) {
+            expect(getFirstGrapheme(text)).toBe(first);
+        }
+        expect(segment).toHaveBeenCalledTimes(7);
     });
 
     it('handles colors, unit conversion and precision helpers', () => {
@@ -117,6 +134,7 @@ describe('tools extra', () => {
         expect(requester2.cancelAnimationFrame).toHaveBeenCalledWith(12);
 
         expect(createCanvasElement().tagName).toBe('CANVAS');
+        expect(createCanvasElement().dir).toBe('ltr');
         expect(createImageElement().tagName).toBe('IMG');
     });
 
@@ -172,6 +190,30 @@ describe('tools extra', () => {
         expect(subscript.fontFamily).toBe('"Open Sans"');
         expect(subscript.fontSize).toBeCloseTo(6);
 
+        const fontStack = getFontStyleString({
+            fs: 12,
+            ff: '"SF Mono", "Cascadia Code", Consolas, monospace',
+        } as any);
+        expect(fontStack.fontFamily).toBe('"SF Mono", "Cascadia Code", Consolas, monospace');
+        expect(fontStack.fontString).toContain('"SF Mono", "Cascadia Code", Consolas, monospace');
+
+        const themeFont = getFontStyleString({
+            bl: 1,
+            fs: 15,
+            ff: '+mj-lt',
+        } as any);
+        expect(themeFont.fontFamily).toBe('"+mj-lt"');
+        expect(themeFont.fontCache).toBe('normal bold 15pt "+mj-lt"');
+
+        const fractionalSize = getFontStyleString({
+            fs: 10.0125,
+            ff: 'Microsoft YaHei',
+        } as any);
+        expect(fractionalSize.originFontSize).toBe(10.0125);
+        expect(fractionalSize.fontSize).toBe(10.0125);
+        expect(fractionalSize.fontString).toContain('10.0125pt');
+        expect(fractionalSize.fontCache).toContain('10.0125pt');
+
         const superscript = getFontStyleString({
             fs: 12,
             ff: 'Arial',
@@ -180,9 +222,6 @@ describe('tools extra', () => {
         expect(superscript.fontSize).toBeCloseTo(7.2);
         expect(baselineSpy).toHaveBeenCalled();
 
-        expect(hasCJKText('中文')).toBe(true);
-        expect(hasCJK('。')).toBe(true);
-        expect(hasCJKPunctuation('，')).toBe(true);
         expect(hasAllLatin('abc')).toBe(true);
         expect(hasBasicLatin('A')).toBe(true);
         expect(hasLatinOneSupplement('é')).toBe(true);
@@ -223,10 +262,6 @@ describe('tools extra', () => {
             endX: 10,
         });
 
-        const mergeData = [{ startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }];
-        expect(hasUnMergedCellInRow(0, 0, 2, mergeData as any)).toBe(true);
-        expect(hasUnMergedCellInRow(0, 0, 1, mergeData as any)).toBe(false);
-
         expect(mergeInfoOffset({
             startY: 1,
             endY: 2,
@@ -264,6 +299,9 @@ describe('tools extra', () => {
             startColumn: 0,
             endColumn: 6,
         });
+
+        expect(hasThai('สร้างงานใหม่')).toBe(true);
+        expect(hasThai('hello')).toBe(false);
     });
 
     it('handles style insertion and DOM size helpers', () => {
@@ -303,17 +341,13 @@ describe('tools extra', () => {
         }));
     });
 
-    it('keeps core enum imports consistent for helpers coverage', () => {
-        expect(GridType.LINES).toBeGreaterThanOrEqual(0);
-        expect(BooleanNumber.TRUE).toBe(1);
-        expect(NumberUnitType.PIXEL).toBeGreaterThanOrEqual(0);
-    });
-
     it('Emoji test', () => {
         expect(startWithEmoji('🐱‍🏍One Team, One Dream!!! 🐱‍🏍')).toBe(true);
+        expect(startWithEmoji('ordinary text')).toBe(false);
         expect(startWithEmoji('1abc')).toBe(false);
         expect(startWithEmoji('#tag')).toBe(false);
         expect(startWithEmoji('1️⃣')).toBe(true);
+        expect(startWithEmoji('*️⃣')).toBe(true);
         expect(startWithEmoji('31️⃣2')).toBe(false);
         expect(startWithEmoji('👨‍👩‍👧‍👦abc')).toBe(true);
         expect(startWithEmoji('1👨‍👩‍👧‍👦abc')).toBe(false);

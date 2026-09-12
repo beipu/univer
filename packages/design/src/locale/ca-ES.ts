@@ -18,15 +18,29 @@ import type enUS from './en-US';
 
 const locale: typeof enUS = {
     design: {
+        Accessibility: {
+            closeBadge: 'Tanca la insígnia',
+            close: 'Tanca',
+            menu: 'Menú',
+            previous: 'Anterior',
+            next: 'Següent',
+            imageGallery: 'Galeria d’imatges',
+            image: 'Imatge {0} de {1}',
+            zoomIn: 'Apropa',
+            zoomOut: 'Allunya',
+            resetZoom: 'Restableix el zoom',
+            increment: 'Incrementa',
+            decrement: 'Disminueix',
+        },
         Confirm: {
             cancel: 'cancel·la',
-            confirm: 'ok',
+            confirm: 'D\'acord',
         },
         CascaderList: {
             empty: 'Cap',
         },
         Calendar: {
-            year: '',
+            year: 'Any',
             weekDays: ['dg', 'dl', 'dt', 'dc', 'dj', 'dv', 'ds'],
             months: [
                 'gener',
@@ -42,14 +56,17 @@ const locale: typeof enUS = {
                 'novembre',
                 'desembre',
             ],
-        },
-        Select: {
-            empty: 'Cap',
+            ariaLabels: {
+                previousMonth: 'Mes anterior',
+                nextMonth: 'Mes següent',
+                selectYear: 'Selecciona l\'any',
+                selectMonth: 'Selecciona el mes',
+            },
         },
         ColorPicker: {
             more: 'Més colors',
             cancel: 'cancel·la',
-            confirm: 'ok',
+            confirm: 'D\'acord',
         },
         GradientColorPicker: {
             linear: 'Lineal',
@@ -58,8 +75,8 @@ const locale: typeof enUS = {
             diamond: 'Diamant',
             offset: 'Desplaçament',
             angle: 'Angle',
-            flip: 'Girar',
             delete: 'Eliminar',
+            transparency: 'Transparència',
         },
     },
 };

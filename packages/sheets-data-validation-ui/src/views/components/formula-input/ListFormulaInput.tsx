@@ -14,20 +14,23 @@
  * limitations under the License.
  */
 
-import type { IFormulaInputProps } from '@univerjs/data-validation';
 import type { ListValidator } from '@univerjs/sheets-data-validation';
 import type { IFormulaEditorRef } from '@univerjs/sheets-formula-ui';
-import { DataValidationType, generateRandomId, isFormulaString, LocaleService } from '@univerjs/core';
+import type { LocaleKey } from '../../../locale/types';
+import type { IFormulaInputProps } from './interface';
+import { DataValidationType, generateRandomId, isFormulaString, LocaleService, ThemeService } from '@univerjs/core';
 import { DataValidationModel, DataValidatorRegistryService } from '@univerjs/data-validation';
 import { borderClassName, clsx, DraggableList, Dropdown, FormLayout, Input, Radio, RadioGroup } from '@univerjs/design';
-import { DeleteIcon, IncreaseIcon, MoreDownIcon, SequenceIcon } from '@univerjs/icons';
-import { DataValidationFormulaController, deserializeListOptions, serializeListOptions } from '@univerjs/sheets-data-validation';
+import { DeleteIcon, GripVerticalIcon, IncreaseIcon, MoreDownIcon } from '@univerjs/icons';
+import { deserializeListOptions } from '@univerjs/sheets';
+import { DataValidationFormulaController } from '@univerjs/sheets-data-validation';
 import { FormulaEditor } from '@univerjs/sheets-formula-ui';
 import { useDependency, useEvent, useObservable, useSidebarClick } from '@univerjs/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { debounceTime } from 'rxjs';
 import { DROP_DOWN_DEFAULT_COLOR } from '../../../const';
 import { DataValidationPanelService } from '../../../services/data-validation-panel.service';
+import { buildCustomListFormulaPayload } from './utils';
 
 const DEFAULT_COLOR_PRESET = [
     '#FFFFFF',
@@ -72,6 +75,11 @@ interface IColorSelectProps {
 const ColorSelect = (props: IColorSelectProps) => {
     const { value, onChange, disabled } = props;
     const [open, setOpen] = useState(false);
+    const themeService = useDependency(ThemeService);
+    useObservable(themeService.currentTheme$);
+    const backgroundColor = value.includes('.') && themeService.isValidThemeColor(value)
+        ? themeService.getColorFromTheme(value)
+        : value;
 
     return (
         <Dropdown
@@ -105,15 +113,15 @@ const ColorSelect = (props: IColorSelectProps) => {
             <div
                 className={clsx(`
                   univer-box-border univer-inline-flex univer-h-8 univer-w-16 univer-cursor-pointer univer-items-center
-                  univer-justify-between univer-gap-2 univer-rounded-lg univer-bg-white univer-px-2.5
+                  univer-justify-between univer-gap-2 univer-rounded-lg univer-bg-gray-0 univer-px-2.5
                   univer-transition-colors univer-duration-200
                   hover:univer-border-primary-600
-                  dark:!univer-bg-gray-700 dark:!univer-text-white
+                  dark:!univer-bg-gray-700 dark:!univer-text-gray-0
                 `, borderClassName)}
             >
                 <div
                     className="univer-box-border univer-size-4 univer-rounded univer-text-base"
-                    style={{ background: value }}
+                    style={{ background: backgroundColor }}
                 />
 
                 <MoreDownIcon />
@@ -130,7 +138,7 @@ const Template = (props: { item: IDropdownItem; commonProps: any; className?: st
         <div className={clsx('univer-flex univer-items-center univer-gap-2', className)}>
             {!item.isRef && (
                 <div className={clsx('univer-cursor-move', 'draggableHandle')}>
-                    <SequenceIcon />
+                    <GripVerticalIcon />
                 </div>
             )}
             <ColorSelect
@@ -162,8 +170,10 @@ const Template = (props: { item: IDropdownItem; commonProps: any; className?: st
     );
 };
 
+const NOOP = () => { /* empty */ };
+
 export function ListFormulaInput(props: IFormulaInputProps) {
-    const { value, onChange: _onChange = () => { /* empty */ }, unitId, subUnitId, validResult, showError, ruleId } = props;
+    const { value, onChange: _onChange = NOOP, unitId, subUnitId, validResult, showError, ruleId } = props;
     const { formula1 = '', formula2 = '' } = value || {};
     const [isFormulaStr, setIsFormulaStr] = useState(() => isFormulaString(formula1) ? '1' : '0');
     const [formulaStr, setFormulaStr] = useState(isFormulaStr === '1' ? formula1 : '=');
@@ -184,24 +194,29 @@ export function ListFormulaInput(props: IFormulaInputProps) {
     const onChange = useEvent(_onChange);
 
     useEffect(() => {
-        (async () => {
-            await new Promise<any>((resolve) => {
-                setTimeout(() => resolve(true), 100);
-            });
-
+        let cancelled = false;
+        const timer = setTimeout(() => {
             const rule = dataValidationModel.getRuleById(unitId, subUnitId, ruleId);
             const formula1 = rule?.formula1;
             if (isFormulaString(formula1) && listValidator && rule) {
-                const res = await listValidator.getListAsync(rule, unitId, subUnitId);
-                setRefOptions(res);
+                listValidator.getListAsync(rule, unitId, subUnitId).then((options) => {
+                    if (!cancelled) {
+                        setRefOptions(options);
+                    }
+                });
             }
-        })();
+        }, 100);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
     }, [dataValidationModel, ruleChange, listValidator, ruleId, subUnitId, unitId]);
 
     useEffect(() => {
         if (isFormulaString(formula1) && formula1 !== formulaStrCopy) {
             setFormulaStr(formula1);
-            setFormulaStrCopy(formulaStrCopy);
+            setFormulaStrCopy(formula1);
         }
     }, [formulaStrCopy, formula1]);
 
@@ -236,14 +251,12 @@ export function ListFormulaInput(props: IFormulaInputProps) {
         }
     };
 
-    const colorList = formula2.split(',');
-
     const refFinalList: IDropdownItem[] = useMemo(() => refOptions.map((label, i) => ({
         label,
-        color: colorList[i] || DROP_DOWN_DEFAULT_COLOR,
+        color: refColors[i] || DROP_DOWN_DEFAULT_COLOR,
         id: `${i}`,
         isRef: true,
-    })), [colorList, refOptions]);
+    })), [refColors, refOptions]);
 
     const handleRefItemChange = (id: string, value: string, color: string) => {
         const newColors = [...refColors];
@@ -272,31 +285,8 @@ export function ListFormulaInput(props: IFormulaInputProps) {
         if (isFormulaStr === '1') {
             return;
         }
-        const labelSet = new Set<string>();
-        const finalList: { color: string; label: string }[] = [];
-        strList.map((item) => {
-            const labelList = item.label.split(',');
-            return {
-                labelList,
-                item,
-            };
-        }).forEach(({ item, labelList }) => {
-            labelList.forEach((labelItem) => {
-                if (!labelSet.has(labelItem)) {
-                    labelSet.add(labelItem);
-                    finalList.push({
-                        label: labelItem,
-                        color: item.color,
-                    });
-                }
-            });
-        });
-
-        onChange({
-            formula1: serializeListOptions(finalList.map((item) => item.label)),
-            formula2: finalList.map((item) => item.color === DROP_DOWN_DEFAULT_COLOR ? '' : item.color).join(','),
-        });
-    }, [strList, onChange, isFormulaStr, formulaStrCopy, refColors]);
+        onChange(buildCustomListFormulaPayload(strList, DROP_DOWN_DEFAULT_COLOR));
+    }, [strList, onChange, isFormulaStr]);
 
     const updateFormula = useEvent(async (str: string) => {
         if (!isFormulaString(str)) {
@@ -318,7 +308,7 @@ export function ListFormulaInput(props: IFormulaInputProps) {
                 formula2,
             });
             setFormulaStr('=');
-            setLocalError(localeService.t('dataValidation.validFail.formulaError'));
+            setLocalError(localeService.t<LocaleKey>('sheets-data-validation-ui.validFail.formulaError'));
         }
     });
 
@@ -340,7 +330,7 @@ export function ListFormulaInput(props: IFormulaInputProps) {
 
     return (
         <>
-            <FormLayout label={localeService.t('dataValidation.list.options')}>
+            <FormLayout label={localeService.t<LocaleKey>('sheets-data-validation-ui.list.options')}>
                 <RadioGroup
                     value={isFormulaStr}
                     onChange={(v) => {
@@ -354,8 +344,8 @@ export function ListFormulaInput(props: IFormulaInputProps) {
                         }
                     }}
                 >
-                    <Radio value="0">{localeService.t('dataValidation.list.customOptions')}</Radio>
-                    <Radio value="1">{localeService.t('dataValidation.list.refOptions')}</Radio>
+                    <Radio value="0">{localeService.t<LocaleKey>('sheets-data-validation-ui.list.customOptions')}</Radio>
+                    <Radio value="1">{localeService.t<LocaleKey>('sheets-data-validation-ui.list.refOptions')}</Radio>
                 </RadioGroup>
             </FormLayout>
             {isFormulaStr === '1'
@@ -365,9 +355,9 @@ export function ListFormulaInput(props: IFormulaInputProps) {
                             ref={formulaEditorRef}
                             className={clsx(`
                               univer-box-border univer-h-8 univer-w-full univer-cursor-pointer univer-items-center
-                              univer-rounded-lg univer-bg-white univer-pt-2 univer-transition-colors
+                              univer-rounded-lg univer-bg-gray-0 univer-pt-2 univer-transition-colors
                               hover:univer-border-primary-600
-                              dark:!univer-bg-gray-700 dark:!univer-text-white
+                              dark:!univer-bg-gray-700 dark:!univer-text-gray-0
                               [&>div:first-child]:univer-px-2.5
                               [&>div]:univer-h-5 [&>div]:univer-ring-transparent
                             `, borderClassName)}
@@ -401,7 +391,7 @@ export function ListFormulaInput(props: IFormulaInputProps) {
                 )
                 : (
                     <FormLayout error={formula1Res}>
-                        <div className="-univer-mt-3">
+                        <div>
                             <DraggableList
                                 list={strList}
                                 onListChange={setStrList}
@@ -430,7 +420,7 @@ export function ListFormulaInput(props: IFormulaInputProps) {
                                 onClick={handleAdd}
                             >
                                 <IncreaseIcon className="univer-mr-1" />
-                                {localeService.t('dataValidation.list.add')}
+                                {localeService.t<LocaleKey>('sheets-data-validation-ui.list.add')}
                             </a>
                         </div>
                     </FormLayout>

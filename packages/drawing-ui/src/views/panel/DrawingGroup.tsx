@@ -15,13 +15,17 @@
  */
 
 import type { IDrawingParam } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import { DrawingTypeEnum, ICommandService, LocaleService } from '@univerjs/core';
 import { Button, clsx } from '@univerjs/design';
 import { IDrawingManagerService } from '@univerjs/drawing';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { ComponentManager, useDependency } from '@univerjs/ui';
-import { useEffect, useState } from 'react';
-import { CancelDrawingGroupOperation, SetDrawingGroupOperation } from '../../commands/operations/drawing-group.operation';
+import { IconManager, useDependency, useObservable } from '@univerjs/ui';
+import { filter, map, merge } from 'rxjs';
+import {
+    CancelDrawingGroupOperation,
+    SetDrawingGroupOperation,
+} from '../../commands/operations/drawing-group.operation';
 import { getUpdateParams } from '../../utils/get-update-params';
 
 export interface IDrawingGroupProps {
@@ -34,15 +38,40 @@ export const DrawingGroup = (props: IDrawingGroupProps) => {
     const renderManagerService = useDependency(IRenderManagerService);
     const drawingManagerService = useDependency(IDrawingManagerService);
     const commandService = useDependency(ICommandService);
-    const componentManager = useDependency(ComponentManager);
+    const iconManager = useDependency(IconManager);
 
     const { hasGroup, drawings } = props;
-    const GroupIcon = componentManager.get('GroupIcon');
-    const UngroupIcon = componentManager.get('UngroupIcon');
+    const GroupIcon = iconManager.get('GroupIcon');
+    const UngroupIcon = iconManager.get('UngroupIcon');
 
-    const [groupShow, setGroupShow] = useState(false);
-    const [groupBtnShow, setGroupBtnShow] = useState(true);
-    const [ungroupBtnShow, setUngroupBtnShow] = useState(true);
+    const drawingParam = drawings[0];
+    const transformer = drawingParam
+        ? renderManagerService.getRenderUnitById(drawingParam.unitId)?.scene?.getTransformerByCreate()
+        : undefined;
+    const groupState = useObservable(
+        transformer
+            ? () => merge(
+                transformer.clearControl$.pipe(
+                    filter((changeSelf) => changeSelf === true),
+                    map(() => ({ groupShow: false, groupBtnShow: false, ungroupBtnShow: false }))
+                ),
+                transformer.changeStart$.pipe(map((state) => {
+                    const params = getUpdateParams(state.objects, drawingManagerService);
+                    const groupBtnShow = params.length > 1;
+                    const ungroupBtnShow = params.some((item) => item?.drawingType === DrawingTypeEnum.DRAWING_GROUP);
+                    return {
+                        groupShow: groupBtnShow || ungroupBtnShow,
+                        groupBtnShow,
+                        ungroupBtnShow,
+                    };
+                }))
+            )
+            : null,
+        { groupShow: false, groupBtnShow: true, ungroupBtnShow: true },
+        false,
+        [drawingManagerService, transformer]
+    );
+    const { groupShow, groupBtnShow, ungroupBtnShow } = groupState;
 
     const onGroupBtnClick = () => {
         commandService.syncExecuteCommand(SetDrawingGroupOperation.id, { drawings });
@@ -51,57 +80,6 @@ export const DrawingGroup = (props: IDrawingGroupProps) => {
     const onUngroupBtnClick = () => {
         commandService.syncExecuteCommand(CancelDrawingGroupOperation.id, { drawings });
     };
-
-    useEffect(() => {
-        const drawingParam = drawings[0];
-
-        if (drawingParam == null) {
-            return;
-        }
-
-        const { unitId } = drawingParam;
-
-        const renderObject = renderManagerService.getRenderById(unitId);
-        const scene = renderObject?.scene;
-        if (scene == null) {
-            return;
-        }
-        const transformer = scene.getTransformerByCreate();
-
-        const onClearControlObserver = transformer.clearControl$.subscribe((changeSelf) => {
-            if (changeSelf === true) {
-                setGroupShow(false);
-            }
-        });
-
-        const onChangeStartObserver = transformer.changeStart$.subscribe((state) => {
-            const { objects } = state;
-            const params = getUpdateParams(objects, drawingManagerService);
-            const groupParams = params.filter((o) => o?.drawingType === DrawingTypeEnum.DRAWING_GROUP) as IDrawingParam[];
-
-            let groupBtnShow = false;
-            let ungroupBtnShow = false;
-
-            if (params.length > 1) {
-                groupBtnShow = true;
-            }
-
-            if (groupParams.length > 0) {
-                ungroupBtnShow = true;
-            }
-
-            const groupShow = groupBtnShow || ungroupBtnShow;
-
-            setGroupShow(groupShow);
-            setGroupBtnShow(groupBtnShow);
-            setUngroupBtnShow(ungroupBtnShow);
-        });
-
-        return () => {
-            onChangeStartObserver.unsubscribe();
-            onClearControlObserver.unsubscribe();
-        };
-    }, []);
 
     return (
         <div
@@ -115,7 +93,7 @@ export const DrawingGroup = (props: IDrawingGroupProps) => {
                   dark:!univer-text-gray-200
                 `}
             >
-                <div>{localeService.t('image-panel.group.title')}</div>
+                <div>{localeService.t<LocaleKey>('drawing-ui.image-panel.group.title')}</div>
             </header>
 
             <div className="univer-flex univer-items-center univer-justify-center univer-gap-2">
@@ -126,7 +104,7 @@ export const DrawingGroup = (props: IDrawingGroupProps) => {
                     onClick={onGroupBtnClick}
                 >
                     <GroupIcon />
-                    {localeService.t('image-panel.group.group')}
+                    {localeService.t<LocaleKey>('drawing-ui.image-panel.group.group')}
                 </Button>
                 <Button
                     className={clsx({
@@ -135,7 +113,7 @@ export const DrawingGroup = (props: IDrawingGroupProps) => {
                     onClick={onUngroupBtnClick}
                 >
                     <UngroupIcon />
-                    {localeService.t('image-panel.group.unGroup')}
+                    {localeService.t<LocaleKey>('drawing-ui.image-panel.group.unGroup')}
                 </Button>
             </div>
         </div>

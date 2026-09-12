@@ -1,28 +1,11 @@
-/**
- * Copyright 2023-present DreamNum Co., Ltd.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 import type { Dependency } from '@univerjs/core';
 import type { IUniverDebuggerConfig } from './config/config';
 import { IConfigService, Inject, Injector, merge, Plugin, registerDependencies, touchDependencies } from '@univerjs/core';
 import pkg from '../package.json';
 import { DEBUGGER_PLUGIN_CONFIG_KEY, defaultPluginConfig } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { DebuggerController } from './controllers/debugger.controller';
-import { E2EController } from './controllers/e2e/e2e.controller';
 import { PerformanceMonitorController } from './controllers/performance-monitor.controller';
-import { UniverWatermarkMenuController } from './menu/watermark.menu.controller';
 
 export class UniverDebuggerPlugin extends Plugin {
     static override pluginName = 'UNIVER_DEBUGGER_PLUGIN';
@@ -32,7 +15,7 @@ export class UniverDebuggerPlugin extends Plugin {
     private _debuggerController!: DebuggerController;
 
     constructor(
-        private readonly _config: Partial<IUniverDebuggerConfig> = defaultPluginConfig,
+        private readonly _config: IUniverDebuggerConfig,
         @Inject(Injector) override readonly _injector: Injector,
         @IConfigService private readonly _configService: IConfigService
     ) {
@@ -53,8 +36,7 @@ export class UniverDebuggerPlugin extends Plugin {
     override onStarting(): void {
         const dependencies: Dependency[] = [
             [DebuggerController],
-            [E2EController],
-            [UniverWatermarkMenuController],
+            [ComponentsController],
         ];
 
         if (this._config.performanceMonitor?.enabled !== false) {
@@ -62,14 +44,11 @@ export class UniverDebuggerPlugin extends Plugin {
         }
 
         registerDependencies(this._injector, dependencies);
-
-        touchDependencies(this._injector, [
-            [E2EController],
-        ]);
     }
 
     override onReady(): void {
         touchDependencies(this._injector, [
+            [ComponentsController],
             [DebuggerController],
         ]);
     }
@@ -77,7 +56,6 @@ export class UniverDebuggerPlugin extends Plugin {
     override onRendered(): void {
         touchDependencies(this._injector, [
             [PerformanceMonitorController],
-            [UniverWatermarkMenuController],
         ]);
     }
 

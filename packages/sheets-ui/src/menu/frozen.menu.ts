@@ -17,12 +17,19 @@
 import type { IAccessor } from '@univerjs/core';
 import type { ISelectionWithStyle } from '@univerjs/sheets';
 import type { IMenuButtonItem, IMenuSelectorItem } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
 import { UniverInstanceType } from '@univerjs/core';
 import { CancelFrozenCommand, SheetsSelectionsService } from '@univerjs/sheets';
 import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { combineLatest, map, Observable } from 'rxjs';
-import { SetColumnFrozenCommand, SetFirstColumnFrozenCommand, SetFirstRowFrozenCommand, SetRowFrozenCommand, SetSelectionFrozenCommand } from '../commands/commands/set-frozen.command';
-import { MENU_ITEM_FROZEN_COMPONENT } from '../components/menu-item-frozen';
+import {
+    SetColumnFrozenCommand,
+    SetFirstColumnFrozenCommand,
+    SetFirstRowFrozenCommand,
+    SetRowFrozenCommand,
+    SetSelectionFrozenCommand,
+} from '../commands/commands/set-frozen.command';
+import { MENU_ITEM_FROZEN_COMPONENT } from '../views/menu-item-frozen/index';
 
 const getMenuHiddenByCurrentSelectionChangedObservable$ = (accessor: IAccessor, type: 'row' | 'col' | 'all'): Observable<boolean> => {
     const selectionManagerService = accessor.get(SheetsSelectionsService);
@@ -64,12 +71,67 @@ const getMenuHiddenByCurrentSelectionChangedObservable$ = (accessor: IAccessor, 
 };
 
 export const SHEET_FROZEN_MENU_ID = 'sheet.menu.sheet-frozen';
+export const SHEET_FROZEN_TOOLBAR_MENU_ID = 'sheet.toolbar.sheet-frozen';
 
-export function SheetFrozenMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function SheetFrozenToolbarMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
+    return {
+        id: SHEET_FROZEN_TOOLBAR_MENU_ID,
+        type: MenuItemType.SUBITEMS,
+        tooltip: 'sheets-ui.rightClick.freeze',
+        icon: 'FreezeToSelectedIcon',
+        selections: [
+            {
+                id: SetSelectionFrozenCommand.id,
+                value: SetSelectionFrozenCommand.id,
+                params: {},
+                icon: 'FreezeToSelectedIcon',
+                label: { name: MENU_ITEM_FROZEN_COMPONENT, selectable: false, props: { type: 'all' } },
+            },
+            {
+                id: SetRowFrozenCommand.id,
+                value: SetRowFrozenCommand.id,
+                params: {},
+                icon: 'FreezeRowIcon',
+                label: { name: MENU_ITEM_FROZEN_COMPONENT, selectable: false, props: { type: 'row' } },
+            },
+            {
+                id: SetColumnFrozenCommand.id,
+                value: SetColumnFrozenCommand.id,
+                params: {},
+                icon: 'FreezeColumnIcon',
+                label: { name: MENU_ITEM_FROZEN_COMPONENT, selectable: false, props: { type: 'col' } },
+            },
+            {
+                id: SetFirstRowFrozenCommand.id,
+                value: SetFirstRowFrozenCommand.id,
+                params: {},
+                icon: 'FreezeRowIcon',
+                label: { name: 'sheets-ui.rightClick.freezeFirstRow', selectable: false },
+            },
+            {
+                id: SetFirstColumnFrozenCommand.id,
+                value: SetFirstColumnFrozenCommand.id,
+                params: {},
+                icon: 'FreezeColumnIcon',
+                label: { name: 'sheets-ui.rightClick.freezeFirstCol', selectable: false },
+            },
+            {
+                id: CancelFrozenCommand.id,
+                value: CancelFrozenCommand.id,
+                params: {},
+                icon: 'CancelFreezeIcon',
+                label: { name: 'sheets-ui.rightClick.cancelFreeze', selectable: false },
+            },
+        ],
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+    };
+}
+
+export function SheetFrozenMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: SHEET_FROZEN_MENU_ID,
         type: MenuItemType.SUBITEMS,
-        title: 'rightClick.freeze',
+        title: 'sheets-ui.rightClick.freeze',
         icon: 'FreezeToSelectedIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
@@ -77,11 +139,11 @@ export function SheetFrozenMenuItemFactory(accessor: IAccessor): IMenuSelectorIt
 
 export const SHEET_FROZEN_COLUMN_HEADER_MENU_ID = 'sheet.column-header-menu.sheet-frozen';
 
-export function SheetFrozenColumnHeaderMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function SheetFrozenColumnHeaderMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: SHEET_FROZEN_COLUMN_HEADER_MENU_ID,
         type: MenuItemType.SUBITEMS,
-        title: 'rightClick.freeze',
+        title: 'sheets-ui.rightClick.freeze',
         icon: 'FreezeToSelectedIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
@@ -89,17 +151,17 @@ export function SheetFrozenColumnHeaderMenuItemFactory(accessor: IAccessor): IMe
 
 export const SHEET_FROZEN_ROW_HEADER_MENU_ID = 'sheet.row-header-menu.sheet-frozen';
 
-export function SheetFrozenRowHeaderMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<string> {
+export function SheetFrozenRowHeaderMenuItemFactory(accessor: IAccessor): IMenuSelectorItem<LocaleKey> {
     return {
         id: SHEET_FROZEN_ROW_HEADER_MENU_ID,
         type: MenuItemType.SUBITEMS,
-        title: 'rightClick.freeze',
+        title: 'sheets-ui.rightClick.freeze',
         icon: 'FreezeToSelectedIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function FrozenMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FrozenMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetSelectionFrozenCommand.id,
         type: MenuItemType.BUTTON,
@@ -110,13 +172,16 @@ export function FrozenMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
                 type: 'all',
             },
         },
-        hidden$: combineLatest([getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET), getMenuHiddenByCurrentSelectionChangedObservable$(accessor, 'all')]).pipe(
+        hidden$: combineLatest([
+            getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+            getMenuHiddenByCurrentSelectionChangedObservable$(accessor, 'all'),
+        ]).pipe(
             map(([menuHidden, selectionHidden]) => menuHidden || selectionHidden)
         ),
     };
 }
 
-export function FrozenRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FrozenRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetRowFrozenCommand.id,
         type: MenuItemType.BUTTON,
@@ -127,13 +192,16 @@ export function FrozenRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
                 type: 'row',
             },
         },
-        hidden$: combineLatest([getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET), getMenuHiddenByCurrentSelectionChangedObservable$(accessor, 'row')]).pipe(
+        hidden$: combineLatest([
+            getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+            getMenuHiddenByCurrentSelectionChangedObservable$(accessor, 'row'),
+        ]).pipe(
             map(([menuHidden, selectionHidden]) => menuHidden || selectionHidden)
         ),
     };
 }
 
-export function FrozenColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FrozenColMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetColumnFrozenCommand.id,
         type: MenuItemType.BUTTON,
@@ -144,37 +212,40 @@ export function FrozenColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
                 type: 'col',
             },
         },
-        hidden$: combineLatest([getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET), getMenuHiddenByCurrentSelectionChangedObservable$(accessor, 'col')]).pipe(
+        hidden$: combineLatest([
+            getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
+            getMenuHiddenByCurrentSelectionChangedObservable$(accessor, 'col'),
+        ]).pipe(
             map(([menuHidden, selectionHidden]) => menuHidden || selectionHidden)
         ),
     };
 }
 
-export function FrozenFirstRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FrozenFirstRowMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetFirstRowFrozenCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.freezeFirstRow',
+        title: 'sheets-ui.rightClick.freezeFirstRow',
         icon: 'FreezeRowIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function FrozenFirstColMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function FrozenFirstColMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: SetFirstColumnFrozenCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.freezeFirstCol',
+        title: 'sheets-ui.rightClick.freezeFirstCol',
         icon: 'FreezeColumnIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };
 }
 
-export function CancelFrozenMenuItemFactory(accessor: IAccessor): IMenuButtonItem {
+export function CancelFrozenMenuItemFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     return {
         id: CancelFrozenCommand.id,
         type: MenuItemType.BUTTON,
-        title: 'rightClick.cancelFreeze',
+        title: 'sheets-ui.rightClick.cancelFreeze',
         icon: 'CancelFreezeIcon',
         hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
     };

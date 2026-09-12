@@ -15,15 +15,26 @@
  */
 
 import type { ComponentType } from 'react';
-import { LocaleService } from '@univerjs/core';
-import { borderBottomClassName, borderClassName, borderRightClassName, clsx } from '@univerjs/design';
-import { MoreIcon, MoreLeftIcon, MoreRightIcon } from '@univerjs/icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { RibbonPosition } from '../../../services/menu/types';
+import type { LocaleKey } from '../../../locale/types';
+import type { IMenuSchema } from '../../../services/menu/menu-manager.service';
+import { LocaleService, UniverInstanceType } from '@univerjs/core';
+import {
+    borderBottomClassName,
+    borderClassName,
+    borderRightClassName,
+    clsx,
+    ConfigContext,
+    resetButtonClassName,
+} from '@univerjs/design';
+import { MoreHorizontalIcon, MoreLeftIcon, MoreRightIcon } from '@univerjs/icons';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { RibbonPosition, RibbonStartGroup } from '../../../services/menu/types';
 import { IRibbonService } from '../../../services/ribbon/ribbon.service';
+import { IWorkbenchService } from '../../../services/workbench/workbench.service';
 import { useDependency, useObservable } from '../../../utils/di';
 import { ComponentContainer } from '../ComponentContainer';
-import { ToolbarItem } from './ToolbarItem';
+import { MobileToolbarItem } from './MobileToolbarItem';
 
 interface IMobileRibbonProps {
     headerMenuComponents?: Set<ComponentType>;
@@ -31,27 +42,44 @@ interface IMobileRibbonProps {
 }
 
 const toolbarScrollOffset = 168;
-const resetButtonClassName = `
-univer-m-0 univer-flex univer-appearance-none univer-items-center univer-justify-center
-univer-border-0 univer-bg-transparent univer-p-0 univer-leading-none univer-outline-none
-`;
-const nestedControlResetClassName = `
-[&_button]:!univer-m-0 [&_button]:!univer-appearance-none [&_button]:!univer-border-0
-[&_button]:!univer-bg-transparent [&_button]:!univer-p-0 [&_button]:!univer-leading-none
-[&_button]:!univer-outline-none
-[&_input]:!univer-m-0 [&_input]:!univer-appearance-none [&_input]:!univer-border-0
-[&_input]:!univer-bg-transparent [&_input]:!univer-p-0 [&_input]:!univer-leading-none
-[&_input]:!univer-outline-none
-`;
 
 export function MobileRibbon(props: IMobileRibbonProps) {
     const { headerMenuComponents, headerMenu = true } = props;
 
-    const localeService = useDependency(LocaleService);
     const ribbonService = useDependency(IRibbonService);
+    const workbenchService = useDependency(IWorkbenchService);
 
     const ribbon = useObservable(ribbonService.ribbon$, []);
     const activatedTab = useObservable(ribbonService.activatedTab$, RibbonPosition.START);
+    const rootUnitType = useObservable(workbenchService.rootUnitType$, null, true);
+
+    if (
+        rootUnitType === UniverInstanceType.UNIVER_SHEET ||
+        rootUnitType === UniverInstanceType.UNIVER_DOC
+    ) {
+        return (
+            <MobileCompactTopBar
+                ribbon={ribbon}
+                headerMenu={headerMenu}
+                headerMenuComponents={headerMenuComponents}
+            />
+        );
+    }
+
+    return (
+        <MobileRibbonToolbar
+            ribbon={ribbon}
+            activatedTab={activatedTab}
+            headerMenu={headerMenu}
+            headerMenuComponents={headerMenuComponents}
+        />
+    );
+}
+
+function MobileRibbonToolbar(props: IMobileRibbonProps & { ribbon: IMenuSchema[]; activatedTab: string }) {
+    const { ribbon, activatedTab, headerMenuComponents, headerMenu = true } = props;
+    const localeService = useDependency(LocaleService);
+    const ribbonService = useDependency(IRibbonService);
 
     const activeIndex = useMemo(() => {
         const index = ribbon.findIndex((group) => group.key === activatedTab);
@@ -85,13 +113,14 @@ export function MobileRibbon(props: IMobileRibbonProps) {
             setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
         };
 
-        updateScrollState();
+        const animationFrame = requestAnimationFrame(updateScrollState);
 
         const resizeObserver = new ResizeObserver(updateScrollState);
         resizeObserver.observe(container);
         container.addEventListener('scroll', updateScrollState, { passive: true });
 
         return () => {
+            cancelAnimationFrame(animationFrame);
             resizeObserver.disconnect();
             container.removeEventListener('scroll', updateScrollState);
         };
@@ -152,10 +181,13 @@ export function MobileRibbon(props: IMobileRibbonProps) {
                             'univer-opacity-40': activeIndex === 0,
                         })}
                         disabled={activeIndex === 0}
-                        aria-label="Previous"
+                        aria-label={localeService.t<LocaleKey>('ui.navigation.previous')}
                         onClick={() => selectTab(activeIndex - 1)}
                     >
-                        <MoreIcon className="univer-rotate-180 univer-text-sm" />
+                        <MoreLeftIcon
+                            className="univer-rotate-180 univer-text-sm"
+                            preserveStrokeWidth
+                        />
                     </button>
                 </div>
 
@@ -184,7 +216,7 @@ export function MobileRibbon(props: IMobileRibbonProps) {
                                     `)}
                                 onClick={() => selectTab(index)}
                             >
-                                {localeService.t(group.key)}
+                                {localeService.t(group.title || group.key)}
                                 {active && (
                                     <span
                                         className="
@@ -214,10 +246,10 @@ export function MobileRibbon(props: IMobileRibbonProps) {
                             'univer-opacity-40': activeIndex >= ribbon.length - 1,
                         })}
                         disabled={activeIndex >= ribbon.length - 1}
-                        aria-label="Next"
+                        aria-label={localeService.t<LocaleKey>('ui.navigation.next')}
                         onClick={() => selectTab(activeIndex + 1)}
                     >
-                        <MoreIcon className="univer-text-sm" />
+                        <MoreRightIcon className="univer-text-sm" preserveStrokeWidth />
                     </button>
 
                     {hasHeaderMenu && (
@@ -239,7 +271,7 @@ export function MobileRibbon(props: IMobileRibbonProps) {
             <div
                 className={clsx(`
                   univer-grid univer-grid-cols-[22px_minmax(0,1fr)_22px] univer-items-center univer-gap-1.5
-                  univer-rounded-xl univer-bg-white univer-px-2 univer-py-1
+                  univer-rounded-xl univer-bg-gray-0 univer-px-2 univer-py-1
                   dark:!univer-bg-gray-800
                 `, borderClassName)}
             >
@@ -253,10 +285,10 @@ export function MobileRibbon(props: IMobileRibbonProps) {
                         'univer-opacity-30': !canScrollLeft,
                     })}
                     disabled={!canScrollLeft}
-                    aria-label="Previous"
+                    aria-label={localeService.t<LocaleKey>('ui.navigation.previous')}
                     onClick={() => scrollToolbar('left')}
                 >
-                    <MoreLeftIcon className="univer-text-sm" />
+                    <MoreLeftIcon className="univer-text-sm" preserveStrokeWidth />
                 </button>
 
                 <div
@@ -319,11 +351,18 @@ export function MobileRibbon(props: IMobileRibbonProps) {
                                               [&_[data-u-command]]:!univer-h-8 [&_[data-u-command]]:!univer-min-h-8
                                               [&_[data-u-command]]:!univer-rounded-md
                                               [&_[data-u-command]]:!univer-px-1.5
-                                              [&_button]:!univer-h-8 [&_button]:!univer-min-w-8
-                                              [&_button]:!univer-rounded-md [&_button]:!univer-px-1.5
-                                            `, nestedControlResetClassName)}
+                                              [&_button]:!univer-m-0 [&_button]:!univer-h-8 [&_button]:!univer-min-w-8
+                                              [&_button]:!univer-appearance-none [&_button]:!univer-rounded-md
+                                              [&_button]:!univer-border-0 [&_button]:!univer-bg-transparent
+                                              [&_button]:!univer-p-0 [&_button]:!univer-px-1.5
+                                              [&_button]:!univer-leading-none [&_button]:!univer-outline-none
+                                              [&_input]:!univer-m-0 [&_input]:!univer-appearance-none
+                                              [&_input]:!univer-border-0 [&_input]:!univer-bg-transparent
+                                              [&_input]:!univer-p-0 [&_input]:!univer-leading-none
+                                              [&_input]:!univer-outline-none
+                                            `)}
                                         >
-                                            <ToolbarItem {...child.item} />
+                                            <MobileToolbarItem {...child.item} preserveStrokeWidth />
                                         </div>
                                     )
                                 ))}
@@ -342,12 +381,135 @@ export function MobileRibbon(props: IMobileRibbonProps) {
                         'univer-opacity-30': !canScrollRight,
                     })}
                     disabled={!canScrollRight}
-                    aria-label="Next"
+                    aria-label={localeService.t<LocaleKey>('ui.navigation.next')}
                     onClick={() => scrollToolbar('right')}
                 >
-                    <MoreRightIcon className="univer-text-sm" />
+                    <MoreRightIcon className="univer-text-sm" preserveStrokeWidth />
                 </button>
             </div>
         </div>
+    );
+}
+
+function MobileCompactTopBar(props: IMobileRibbonProps & { ribbon: IMenuSchema[] }) {
+    const { headerMenuComponents, headerMenu = true, ribbon } = props;
+    const [moreOpen, setMoreOpen] = useState(false);
+    const moreTriggerRef = useRef<HTMLButtonElement>(null);
+    const { mountContainer } = useContext(ConfigContext);
+    const localeService = useDependency(LocaleService);
+    const startGroup = ribbon.find((group) => group.key === RibbonPosition.START);
+    const historyItems = startGroup?.children?.find((group) => group.key === RibbonStartGroup.HISTORY)?.children ?? [];
+    const otherItems = startGroup?.children?.find((group) => group.key === RibbonStartGroup.OTHERS)?.children ?? [];
+    const items = historyItems.filter((schema) => schema.item);
+    const moreItems = otherItems.flatMap((schema) => schema.children?.length ? schema.children : [schema])
+        .filter((schema) => schema.item);
+    const hasHeaderMenu = !!(headerMenu && headerMenuComponents && headerMenuComponents.size > 0);
+
+    if (items.length === 0 && moreItems.length === 0 && !hasHeaderMenu) {
+        return null;
+    }
+
+    const triggerRect = moreOpen ? moreTriggerRef.current?.getBoundingClientRect() : undefined;
+    const viewportWidth = moreTriggerRef.current?.ownerDocument.defaultView?.innerWidth ?? 0;
+    const moreMenu = moreOpen && mountContainer && createPortal(
+        <>
+            <button
+                type="button"
+                aria-label={localeService.t<LocaleKey>('ui.rangeSelector.cancel')}
+                className={clsx(
+                    resetButtonClassName,
+                    'univer-fixed univer-inset-0 univer-z-[1390] !univer-rounded-none !univer-bg-transparent'
+                )}
+                onClick={() => setMoreOpen(false)}
+            />
+            <div
+                data-u-comp="mobile-more-menu"
+                className={clsx(`
+                  univer-fixed univer-z-[1400] univer-flex univer-w-60 univer-max-w-[calc(100vw-24px)] univer-flex-col
+                  univer-gap-1 univer-rounded-2xl univer-bg-gray-0 univer-p-2 univer-shadow-lg
+                  dark:!univer-bg-gray-800
+                `, borderClassName)}
+                style={{
+                    top: (triggerRect?.bottom ?? 48) + 8,
+                    right: Math.max(12, viewportWidth - (triggerRect?.right ?? viewportWidth)),
+                }}
+            >
+                {moreItems.map((schema) => (
+                    <div
+                        key={schema.key}
+                        className="
+                          univer-w-full
+                          [&>span]:univer-block [&>span]:univer-w-full
+                          [&_button]:!univer-h-12 [&_button]:!univer-w-full [&_button]:!univer-justify-start
+                          [&_button]:!univer-gap-3 [&_button]:!univer-rounded-xl [&_button]:!univer-px-4
+                          [&_button]:!univer-text-base
+                        "
+                        onClick={() => setMoreOpen(false)}
+                    >
+                        <MobileToolbarItem {...schema.item!} grid showLabel preserveStrokeWidth />
+                    </div>
+                ))}
+            </div>
+        </>,
+        mountContainer
+    );
+
+    return (
+        <>
+            <div
+                data-u-comp="mobile-compact-top-bar"
+                className={clsx(`
+                  univer-flex univer-h-12 univer-items-center univer-justify-end univer-gap-1 univer-bg-gray-0
+                  univer-px-3
+                  dark:!univer-bg-gray-800
+                `, borderBottomClassName)}
+            >
+                <div
+                    className="
+                      univer-flex univer-items-center univer-gap-1
+                      [&_button]:!univer-min-h-10 [&_button]:!univer-min-w-10 [&_button]:!univer-rounded-lg
+                      [&_button_svg]:!univer-size-5
+                    "
+                >
+                    {items.map((schema) => (
+                        <MobileToolbarItem
+                            key={schema.key}
+                            {...schema.item!}
+                        />
+                    ))}
+                </div>
+                {moreItems.length > 0 && (
+                    <button
+                        ref={moreTriggerRef}
+                        type="button"
+                        data-u-comp="mobile-more-trigger"
+                        aria-label={localeService.t<LocaleKey>('ui.ribbon.more')}
+                        aria-expanded={moreOpen}
+                        className={clsx(resetButtonClassName, `
+                          univer-flex univer-size-10 univer-items-center univer-justify-center univer-rounded-lg
+                          univer-text-gray-700 univer-transition-colors
+                          active:univer-bg-gray-100
+                          dark:!univer-text-gray-200
+                          dark:active:!univer-bg-gray-700
+                        `)}
+                        onClick={() => setMoreOpen((open) => !open)}
+                    >
+                        <MoreHorizontalIcon className="univer-size-5" preserveStrokeWidth />
+                    </button>
+                )}
+                {hasHeaderMenu && (
+                    <div
+                        className="
+                          univer-flex univer-items-center univer-gap-1
+                          [&>*]:univer-m-0 [&>*]:univer-inline-flex [&>*]:univer-min-h-10 [&>*]:univer-min-w-10
+                          [&>*]:univer-items-center [&>*]:univer-justify-center [&>*]:univer-rounded-lg
+                        "
+                    >
+                        <ComponentContainer components={headerMenuComponents!} />
+                    </div>
+                )}
+            </div>
+            {moreMenu}
+        </>
     );
 }

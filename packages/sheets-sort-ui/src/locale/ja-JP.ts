@@ -17,7 +17,7 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-sort': {
+    'sheets-sort-ui': {
         general: {
             sort: '並べ替え',
             'sort-asc': '昇順',
@@ -41,8 +41,12 @@ const locale: typeof enUS = {
             'sort-reminder-no': '範囲を維持して並べ替え',
             'first-row-check': '先頭行を並べ替えの対象に含めない',
             'add-condition': '条件を追加',
+            'delete-condition': '条件を削除',
             cancel: 'キャンセル',
             confirm: '確認',
+        },
+        info: {
+            tooltip: 'ツールチップ',
         },
     },
 };

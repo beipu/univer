@@ -16,6 +16,7 @@
 
 import type { IDrawingParam, Nullable } from '@univerjs/core';
 import type { IChangeObserverConfig, Scene } from '@univerjs/engine-render';
+import type { LocaleKey } from '../../locale/types';
 import { debounce, LocaleService } from '@univerjs/core';
 import { Checkbox, clsx, InputNumber } from '@univerjs/design';
 import { IDrawingManagerService } from '@univerjs/drawing';
@@ -24,6 +25,8 @@ import { useDependency } from '@univerjs/ui';
 import { useEffect, useState } from 'react';
 import { MIN_DRAWING_HEIGHT_LIMIT, MIN_DRAWING_WIDTH_LIMIT, RANGE_DRAWING_ROTATION_LIMIT } from '../../utils/config';
 import { getUpdateParams } from '../../utils/get-update-params';
+import { resolveDrawingUIRotateEnabled } from '../../utils/rotate-enabled';
+import { createDrawingTransformRotationChangeHandler, isDrawingTransformRotationDisabled } from './drawing-transform-rotation';
 
 export interface IDrawingTransformProps {
     transformShow: boolean;
@@ -33,35 +36,33 @@ export interface IDrawingTransformProps {
 const INPUT_DEBOUNCE_TIME = 300;
 
 export const DrawingTransform = (props: IDrawingTransformProps) => {
+    const renderManagerService = useDependency(IRenderManagerService);
+    const drawingParam = props.drawings[0];
+    const scene = drawingParam ? renderManagerService.getRenderUnitById(drawingParam.unitId)?.scene : undefined;
+    const topScene = scene?.getEngine()?.activeScene as Nullable<Scene>;
+
+    if (!drawingParam?.transform || !scene || !topScene) {
+        return null;
+    }
+
+    return <DrawingTransformContent {...props} />;
+};
+
+function DrawingTransformContent(props: IDrawingTransformProps) {
     const localeService = useDependency(LocaleService);
     const drawingManagerService = useDependency(IDrawingManagerService);
     const renderManagerService = useDependency(IRenderManagerService);
 
     const { drawings, transformShow } = props;
 
-    const drawingParam = drawings[0];
-
-    if (drawingParam == null) {
-        return;
-    }
-
-    const transform = drawingParam.transform;
-    if (transform == null) {
-        return;
-    }
+    const drawingParam = drawings[0]!;
+    const transform = drawingParam.transform!;
 
     const { unitId, subUnitId, drawingId, drawingType } = drawingParam;
 
-    const renderObject = renderManagerService.getRenderById(unitId);
-    const scene = renderObject?.scene;
-    if (scene == null) {
-        return;
-    }
-
-    const topScene = scene.getEngine()?.activeScene as Nullable<Scene>;
-    if (topScene == null) {
-        return;
-    }
+    const renderObject = renderManagerService.getRenderUnitById(unitId);
+    const scene = renderObject!.scene!;
+    const topScene = scene.getEngine()!.activeScene as Scene;
 
     const transformer = scene.getTransformerByCreate();
 
@@ -79,6 +80,10 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
     const [yPosition, setYPosition] = useState(originY);
     const [rotation, setRotation] = useState(originRotation);
     const [lockRatio, setLockRatio] = useState(transformer.keepRatio);
+    const rotateEnabled = resolveDrawingUIRotateEnabled(drawingParam, {
+        getChildren: (drawing) => drawingManagerService.getDrawingsByGroup(drawing),
+    });
+    const rotationDisabled = isDrawingTransformRotationDisabled(rotateEnabled);
 
     const checkMoveBoundary = (left: number, top: number, width: number, height: number) => {
         const { width: topSceneWidth, height: topSceneHeight } = topScene;
@@ -329,23 +334,20 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
         transformer.refreshControls().changeNotification();
     }, INPUT_DEBOUNCE_TIME);
 
-    const handleRotationChange = (val: number | null) => {
-        if (val == null) {
-            return;
-        }
-
-        const updateParam: IDrawingParam = { unitId, subUnitId, drawingId, drawingType, transform: { angle: val } };
-
-        setRotation(val);
-
-        drawingManagerService.featurePluginUpdateNotification([updateParam]);
-
-        transformer.refreshControls().changeNotification();
-    };
+    const handleRotationChange = createDrawingTransformRotationChangeHandler({
+        rotateEnabled,
+        drawingParam: { unitId, subUnitId, drawingId, drawingType },
+        setRotation,
+        emitUpdate: (updateParams) => drawingManagerService.featurePluginUpdateNotification(updateParams),
+        notifyChange: () => transformer.refreshControls().changeNotification(),
+    });
 
     const handleLockRatioChange = (val: string | number | boolean) => {
-        setLockRatio(val as boolean);
-        transformer.keepRatio = val as boolean;
+        if (typeof val !== 'boolean') {
+            return;
+        }
+        setLockRatio(val);
+        transformer.keepRatio = val;
     };
 
     return (
@@ -360,7 +362,7 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
                   dark:!univer-text-gray-200
                 `}
             >
-                <div>{localeService.t('image-panel.transform.title')}</div>
+                <div>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.title')}</div>
             </header>
 
             <div
@@ -370,7 +372,7 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
                 `}
             >
                 <div>
-                    <span>{localeService.t('image-panel.transform.width')}</span>
+                    <span>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.width')}</span>
                     <InputNumber
                         precision={1}
                         value={width}
@@ -379,7 +381,7 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
                     />
                 </div>
                 <div>
-                    <span>{localeService.t('image-panel.transform.height')}</span>
+                    <span>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.height')}</span>
                     <InputNumber
                         precision={1}
                         value={height}
@@ -388,7 +390,7 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
                     />
                 </div>
                 <div>
-                    <span>{localeService.t('image-panel.transform.lock')}</span>
+                    <span>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.lock')}</span>
                     <div className="univer-text-center">
                         <Checkbox checked={lockRatio} onChange={handleLockRatioChange} />
                     </div>
@@ -402,24 +404,25 @@ export const DrawingTransform = (props: IDrawingTransformProps) => {
                 `}
             >
                 <div>
-                    <span>{localeService.t('image-panel.transform.x')}</span>
+                    <span>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.x')}</span>
                     <InputNumber precision={1} value={xPosition} onChange={(val) => { handleXChange(val); }} />
                 </div>
                 <div>
-                    <span>{localeService.t('image-panel.transform.y')}</span>
+                    <span>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.y')}</span>
                     <InputNumber precision={1} value={yPosition} onChange={(val) => { handleYChange(val); }} />
                 </div>
                 <div>
-                    <span>{localeService.t('image-panel.transform.rotate')}</span>
+                    <span>{localeService.t<LocaleKey>('drawing-ui.image-panel.transform.rotate')}</span>
                     <InputNumber
                         precision={1}
                         value={rotation}
                         min={RANGE_DRAWING_ROTATION_LIMIT[0]}
                         max={RANGE_DRAWING_ROTATION_LIMIT[1]}
+                        disabled={rotationDisabled}
                         onChange={handleRotationChange}
                     />
                 </div>
             </div>
         </div>
     );
-};
+}

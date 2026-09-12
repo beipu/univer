@@ -14,11 +14,19 @@
  * limitations under the License.
  */
 
-/* eslint-disable no-param-reassign */
-
 import type { Nullable } from '../../../shared';
-import type { ICustomDecoration, ICustomRange, IDocumentBody, IParagraph, IParagraphStyle, ITextRun, ITextStyle } from '../../../types/interfaces';
+import type {
+    ICustomDecoration,
+    ICustomRange,
+    IDocumentBlockRange,
+    IDocumentBody,
+    IParagraph,
+    IParagraphStyle,
+    ITextRun,
+    ITextStyle,
+} from '../../../types/interfaces';
 import type { IRetainAction } from './action-types';
+import { merge } from '../../../common/lodash';
 import { Tools, UpdateDocsAttributeType } from '../../../shared';
 import { CustomDecorationType } from '../../../types/interfaces';
 import { normalizeTextRuns } from './apply-utils/common';
@@ -266,6 +274,7 @@ function transformParagraph(
 ): IParagraph {
     const paragraph: IParagraph = {
         startIndex: targetParagraph.startIndex,
+        paragraphId: targetParagraph.paragraphId,
     };
 
     if (targetParagraph.paragraphStyle) {
@@ -352,6 +361,10 @@ function transformParagraph(
         }
     }
 
+    if (paragraph.bullet === undefined) {
+        delete paragraph.bullet;
+    }
+
     return paragraph;
 }
 
@@ -422,12 +435,14 @@ export function transformBody(
     const {
         textRuns: thisTextRuns,
         paragraphs: thisParagraphs = [],
+        blockRanges: thisBlockRanges = [],
         customRanges: thisCustomRanges,
         customDecorations: thisCustomDecorations,
     } = thisBody;
     const {
         textRuns: otherTextRuns,
         paragraphs: otherParagraphs = [],
+        blockRanges: otherBlockRanges = [],
         customRanges: otherCustomRanges,
         customDecorations: otherCustomDecorations,
     } = otherBody;
@@ -481,6 +496,7 @@ export function transformBody(
         if (thisStart === otherStart) {
             let paragraph: IParagraph = {
                 startIndex: thisStart,
+                paragraphId: otherParagraph.paragraphId,
             };
 
             if (priority) {
@@ -521,8 +537,28 @@ export function transformBody(
         retBody.paragraphs = paragraphs;
     }
 
+    const blockRanges = transformBlockRanges(thisBlockRanges, otherBlockRanges, priority);
+    if (blockRanges.length) {
+        retBody.blockRanges = blockRanges;
+    }
+
     return {
         coverType,
         body: retBody,
     };
+}
+
+function transformBlockRanges(thisBlockRanges: IDocumentBlockRange[], otherBlockRanges: IDocumentBlockRange[], priority: boolean): IDocumentBlockRange[] {
+    if (!thisBlockRanges.length) {
+        return otherBlockRanges;
+    }
+
+    if (!otherBlockRanges.length) {
+        return [];
+    }
+
+    return otherBlockRanges.map((otherBlockRange) => {
+        const thisBlockRange = thisBlockRanges.find((blockRange) => blockRange.blockId === otherBlockRange.blockId);
+        return thisBlockRange && priority ? merge(otherBlockRange, thisBlockRange) : otherBlockRange;
+    });
 }

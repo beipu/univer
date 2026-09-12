@@ -14,138 +14,152 @@
  * limitations under the License.
  */
 
-import type { ICommandInfo, LifecycleService } from '@univerjs/core';
-import type { IActiveDirtyManagerService } from '../active-dirty-manager.service';
+import {
+    CommandService,
+    ConfigService,
+    DesktopLogService,
+    ICommandService,
+    IConfigService,
+    ILogService,
+    Injector,
+    LifecycleService,
+    LifecycleStages,
+} from '@univerjs/core';
 import { describe, expect, it, vi } from 'vitest';
 import { OtherFormulaMarkDirty } from '../../commands/mutations/formula.mutation';
 import { SetFormulaCalculationResultMutation } from '../../commands/mutations/set-formula-calculation.mutation';
 import { RemoveOtherFormulaMutation, SetOtherFormulaMutation } from '../../commands/mutations/set-other-formula.mutation';
+import { ActiveDirtyManagerService, IActiveDirtyManagerService } from '../active-dirty-manager.service';
 import { FormulaResultStatus } from '../formula-common';
 import { OtherFormulaBizType, RegisterOtherFormulaService } from '../register-other-formula.service';
 
-interface ICommandServiceMock {
-    executeCommand: ReturnType<typeof vi.fn>;
-    onCommandExecuted: (callback: (commandInfo: ICommandInfo) => void) => { dispose: () => void };
-    emit: (id: string, params?: unknown) => void;
+type FormulaResultMatrix = Record<number, Record<number, Array<{ v?: unknown }>>>;
+
+function createService(registerCommands = true, remoteSync?: () => Promise<void>): {
+    service: RegisterOtherFormulaService;
+    commandService: ICommandService;
+    activeDirtyManagerService: IActiveDirtyManagerService;
+    lifecycleService: LifecycleService;
+} {
+    const injector = new Injector();
+    injector.add([ILogService, { useClass: DesktopLogService }]);
+    injector.add([IConfigService, { useClass: ConfigService }]);
+    injector.add([ICommandService, { useClass: CommandService }]);
+    injector.add([IActiveDirtyManagerService, { useClass: ActiveDirtyManagerService }]);
+    injector.add([LifecycleService]);
+    injector.add([RegisterOtherFormulaService]);
+    const commandService = injector.get(ICommandService);
+    const service = injector.get(RegisterOtherFormulaService);
+    if (remoteSync) service.setMutationSyncHandler(() => remoteSync);
+    if (registerCommands) {
+        commandService.registerCommand(SetOtherFormulaMutation);
+        commandService.registerCommand(RemoveOtherFormulaMutation);
+        commandService.registerCommand(OtherFormulaMarkDirty);
+        commandService.registerCommand(SetFormulaCalculationResultMutation);
+    }
+
+    return {
+        service,
+        commandService,
+        activeDirtyManagerService: injector.get(IActiveDirtyManagerService),
+        lifecycleService: injector.get(LifecycleService),
+    };
 }
 
-function createCommandServiceMock(): ICommandServiceMock {
-    const callbacks = new Set<(commandInfo: ICommandInfo) => void>();
-    return {
-        executeCommand: vi.fn(async (id: string, params?: unknown) => {
-            callbacks.forEach((callback) => callback({ id, params } as ICommandInfo));
-            return true;
-        }),
-        onCommandExecuted: (callback: (commandInfo: ICommandInfo) => void) => {
-            callbacks.add(callback);
-            return {
-                dispose: () => callbacks.delete(callback),
-            };
-        },
-        emit: (id: string, params?: unknown) => {
-            callbacks.forEach((callback) => callback({ id, params } as ICommandInfo));
-        },
-    };
+async function flushCommandChain() {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('RegisterOtherFormulaService', () => {
     it('should register dirty conversion for other-formula commands', () => {
-        const commandService = createCommandServiceMock();
-        const activeDirtyManagerService: IActiveDirtyManagerService = {
-            dispose: () => {},
-            remove: () => {},
-            get: () => null,
-            has: () => false,
-            register: vi.fn(),
-            getDirtyConversionMap: () => new Map(),
-        };
+        const { activeDirtyManagerService } = createService();
 
-        // eslint-disable-next-line no-new
-        new RegisterOtherFormulaService(
-            commandService as never,
-            activeDirtyManagerService,
-            {} as LifecycleService
-        );
-
-        expect(activeDirtyManagerService.register).toHaveBeenCalledWith(
-            OtherFormulaMarkDirty.id,
-            expect.objectContaining({
-                commandId: OtherFormulaMarkDirty.id,
-            })
-        );
+        expect(activeDirtyManagerService.get(OtherFormulaMarkDirty.id)?.commandId).toBe(OtherFormulaMarkDirty.id);
     });
 
-    it('should buffer register requests until calculation starts', async () => {
-        const commandService = createCommandServiceMock();
-        const activeDirtyManagerService = { register: vi.fn() } as unknown as IActiveDirtyManagerService;
-
-        const service = new RegisterOtherFormulaService(
-            commandService as never,
-            activeDirtyManagerService,
-            {} as LifecycleService
-        );
+    it('should register immediately and leave pre-start scheduling to the calculation trigger', async () => {
+        const { service, commandService } = createService();
+        const executedIds: string[] = [];
+        commandService.onCommandExecuted((command) => executedIds.push(command.id));
 
         const formulaId = service.registerFormulaWithRange('unit-1', 'sheet-1', '=A1');
         expect(formulaId.startsWith('formula.unit-1_sheet-1_default_')).toBe(true);
-        expect(commandService.executeCommand).not.toHaveBeenCalledWith(SetOtherFormulaMutation.id, expect.anything(), expect.anything());
+        await flushCommandChain();
 
-        service.calculateStarted$.next(true);
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(commandService.executeCommand).toHaveBeenCalledWith(
-            SetOtherFormulaMutation.id,
-            expect.objectContaining({
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-            }),
-            { onlyLocal: true }
-        );
-        expect(commandService.executeCommand).toHaveBeenCalledWith(
-            OtherFormulaMarkDirty.id,
-            { 'unit-1': { 'sheet-1': { [formulaId]: true } } },
-            { onlyLocal: true }
-        );
+        expect(executedIds).toEqual([SetOtherFormulaMutation.id, OtherFormulaMarkDirty.id]);
     });
 
-    it('should register immediately after calculation started', async () => {
-        const commandService = createCommandServiceMock();
-        const activeDirtyManagerService = { register: vi.fn() } as unknown as IActiveDirtyManagerService;
-        const service = new RegisterOtherFormulaService(
-            commandService as never,
-            activeDirtyManagerService,
-            {} as LifecycleService
-        );
+    it('marks a formula dirty only after its Worker definition is synchronized', async () => {
+        let releaseSync!: () => void;
+        const remoteSync = vi.fn<() => Promise<void>>(() => new Promise<void>((resolve) => {
+            releaseSync = resolve;
+        }));
+        const { service, commandService } = createService(true, remoteSync);
+        const executedIds: string[] = [];
+        commandService.onCommandExecuted((command) => executedIds.push(command.id));
 
-        service.calculateStarted$.next(true);
+        service.registerFormulaWithRange('doc-1', 'body-1', '=1');
+        await flushCommandChain();
+        expect(executedIds).toEqual([SetOtherFormulaMutation.id]);
+        expect(remoteSync).toHaveBeenCalledOnce();
+
+        releaseSync();
+        await flushCommandChain();
+        expect(executedIds).toEqual([SetOtherFormulaMutation.id, OtherFormulaMarkDirty.id]);
+    });
+
+    it('should register every formula once without a second lifecycle gate', async () => {
+        const { service, commandService } = createService();
+        const executedIds: string[] = [];
+        commandService.onCommandExecuted((command) => executedIds.push(command.id));
+
         service.registerFormulaWithRange('unit-2', 'sheet-2', '=SUM(A1:A5)', [], { source: 'test' }, OtherFormulaBizType.DOC, 'doc-1');
 
-        await Promise.resolve();
-        await Promise.resolve();
+        await flushCommandChain();
 
-        expect(commandService.executeCommand).toHaveBeenCalledWith(
-            SetOtherFormulaMutation.id,
-            expect.objectContaining({
-                unitId: 'unit-2',
-                subUnitId: 'sheet-2',
-            }),
-            { onlyLocal: true }
-        );
+        expect(executedIds).toEqual([SetOtherFormulaMutation.id, OtherFormulaMarkDirty.id]);
+    });
+
+    it('should defer registration until formula commands are available', async () => {
+        const { service, commandService, lifecycleService } = createService(false);
+        const executedIds: string[] = [];
+        commandService.onCommandExecuted((command) => executedIds.push(command.id));
+
+        service.registerFormulaWithRange('unit-3', 'sheet-3', '=A1');
+        await flushCommandChain();
+        expect(executedIds).toEqual([]);
+
+        commandService.registerCommand(SetOtherFormulaMutation);
+        commandService.registerCommand(OtherFormulaMarkDirty);
+        lifecycleService.stage = LifecycleStages.Ready;
+        await flushCommandChain();
+
+        expect(executedIds).toEqual([SetOtherFormulaMutation.id, OtherFormulaMarkDirty.id]);
+    });
+
+    it('should expose all registered formulas for host-level dirty propagation', () => {
+        const { service } = createService();
+
+        const firstFormulaId = service.registerFormulaWithRange('unit-1', 'sheet-1', '=A1');
+        const secondFormulaId = service.registerFormulaWithRange('unit-1', 'sheet-2', '=B2');
+
+        expect(service.getFormulaDirtyMap('unit-1')).toEqual({
+            'sheet-1': { [firstFormulaId]: true },
+            'sheet-2': { [secondFormulaId]: true },
+        });
+        expect(service.getFormulaDirtyMap('missing-unit')).toEqual({});
     });
 
     it('should cache formula results and resolve pending getFormulaValue', async () => {
-        const commandService = createCommandServiceMock();
-        const activeDirtyManagerService = { register: vi.fn() } as unknown as IActiveDirtyManagerService;
-        const service = new RegisterOtherFormulaService(
-            commandService as never,
-            activeDirtyManagerService,
-            {} as LifecycleService
-        );
+        const { service, commandService } = createService();
 
         const formulaId = service.registerFormulaWithRange('unit-1', 'sheet-1', '=A1+1');
         const pending = service.getFormulaValue('unit-1', 'sheet-1', formulaId);
 
-        commandService.emit(SetFormulaCalculationResultMutation.id, {
+        await commandService.executeCommand(SetFormulaCalculationResultMutation.id, {
             unitOtherData: {
                 'unit-1': {
                     'sheet-1': {
@@ -161,20 +175,48 @@ describe('RegisterOtherFormulaService', () => {
 
         const value = await pending;
         expect(value?.status).toBe(FormulaResultStatus.SUCCESS);
-        expect((value?.result as any)?.[0]?.[0]?.[0]?.v).toBe(2);
+        expect((value?.result as FormulaResultMatrix | undefined)?.[0]?.[0]?.[0]?.v).toBe(2);
+    });
+
+    it('should acknowledge other-formula application after cache and result subscribers update', async () => {
+        const { service, commandService } = createService();
+        const formulaId = service.registerFormulaWithRange('unit-1', 'sheet-1', '=A1+1');
+        const resultPayload = {
+            unitData: {},
+            unitOtherData: {
+                'unit-1': {
+                    'sheet-1': {
+                        [formulaId]: { 0: { 0: [{ v: 2 }] } },
+                    },
+                },
+            },
+        };
+        let resultDistributed = false;
+        let acknowledgedPayload: unknown;
+
+        const resultSubscription = service.formulaResult$.subscribe(() => {
+            resultDistributed = true;
+        });
+        const appliedSubscription = service.otherFormulaResultApplied$.subscribe((payload) => {
+            expect(resultDistributed).toBe(true);
+            expect(service.getFormulaValueSync('unit-1', 'sheet-1', formulaId)?.status).toBe(FormulaResultStatus.SUCCESS);
+            acknowledgedPayload = payload;
+        });
+
+        await commandService.executeCommand(SetFormulaCalculationResultMutation.id, resultPayload);
+
+        expect(acknowledgedPayload).toBe(resultPayload);
+        resultSubscription.unsubscribe();
+        appliedSubscription.unsubscribe();
     });
 
     it('should support delete and dirty marking', async () => {
-        const commandService = createCommandServiceMock();
-        const activeDirtyManagerService = { register: vi.fn() } as unknown as IActiveDirtyManagerService;
-        const service = new RegisterOtherFormulaService(
-            commandService as never,
-            activeDirtyManagerService,
-            {} as LifecycleService
-        );
+        const { service, commandService } = createService();
+        const executedIds: string[] = [];
+        commandService.onCommandExecuted((command) => executedIds.push(command.id));
 
         const formulaId = service.registerFormulaWithRange('unit-1', 'sheet-1', '=A1');
-        commandService.emit(SetFormulaCalculationResultMutation.id, {
+        await commandService.executeCommand(SetFormulaCalculationResultMutation.id, {
             unitOtherData: {
                 'unit-1': {
                     'sheet-1': {
@@ -185,37 +227,21 @@ describe('RegisterOtherFormulaService', () => {
         });
 
         service.markFormulaDirty('unit-1', 'sheet-1', formulaId);
-        expect(commandService.executeCommand).toHaveBeenCalledWith(
-            OtherFormulaMarkDirty.id,
-            { 'unit-1': { 'sheet-1': { [formulaId]: true } } },
-            { onlyLocal: true }
-        );
+        await flushCommandChain();
+        expect(executedIds.at(-1)).toBe(OtherFormulaMarkDirty.id);
 
         service.deleteFormula('unit-1', 'sheet-1', [formulaId]);
-        expect(commandService.executeCommand).toHaveBeenCalledWith(
-            RemoveOtherFormulaMutation.id,
-            {
-                unitId: 'unit-1',
-                subUnitId: 'sheet-1',
-                formulaIdList: [formulaId],
-            },
-            { onlyLocal: true }
-        );
+        await flushCommandChain();
+        expect(executedIds.at(-1)).toBe(RemoveOtherFormulaMutation.id);
 
         expect(service.getFormulaValueSync('unit-1', 'sheet-1', formulaId)).toBeUndefined();
     });
 
     it('should return immediate value for succeeded formula', async () => {
-        const commandService = createCommandServiceMock();
-        const activeDirtyManagerService = { register: vi.fn() } as unknown as IActiveDirtyManagerService;
-        const service = new RegisterOtherFormulaService(
-            commandService as never,
-            activeDirtyManagerService,
-            {} as LifecycleService
-        );
+        const { service, commandService } = createService();
 
         const formulaId = service.registerFormulaWithRange('unit-3', 'sheet-3', '=1+1');
-        commandService.emit(SetFormulaCalculationResultMutation.id, {
+        await commandService.executeCommand(SetFormulaCalculationResultMutation.id, {
             unitOtherData: {
                 'unit-3': {
                     'sheet-3': {

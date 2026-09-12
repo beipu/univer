@@ -14,12 +14,24 @@
  * limitations under the License.
  */
 
-import type { DocumentDataModel, ICommand, IMutationInfo, ITextRangeParam } from '@univerjs/core';
+import type { DocumentDataModel, IAccessor, ICommand, IMutationInfo, ITextRangeParam } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { ITextRangeWithStyle } from '@univerjs/engine-render';
-import { BuildTextUtils, CommandType, generateRandomId, ICommandService, IUniverInstanceService, JSONX, NamedStyleType, TextX, TextXActionType, UniverInstanceType } from '@univerjs/core';
-import { DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
-import { getRichTextEditPath } from '../util';
+import {
+    BuildTextUtils,
+    CommandType,
+    createParagraphId,
+    generateRandomId,
+    getRichTextEditPath,
+    ICommandService,
+    IUniverInstanceService,
+    JSONX,
+    NamedStyleType,
+    TextX,
+    TextXActionType,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { consumeContentInsertRange, DocSelectionManagerService, RichTextEditingMutation } from '@univerjs/docs';
 
 export interface ISetParagraphNamedStyleCommandParams {
     value: NamedStyleType;
@@ -41,13 +53,31 @@ export const SetParagraphNamedStyleCommand: ICommand<ISetParagraphNamedStyleComm
         }
         const unitId = doc.getUnitId();
         const selectionService = accessor.get(DocSelectionManagerService);
+        const contentInsertRange = params.textRanges ? null : consumeContentInsertRange(accessor, unitId);
+        if (contentInsertRange) {
+            return insertNamedStyleParagraph(
+                accessor,
+                doc,
+                params.value,
+                contentInsertRange.startOffset,
+                contentInsertRange.endOffset,
+                contentInsertRange.segmentId
+            );
+        }
+
         const selections = params.textRanges ?? selectionService.getTextRanges({ unitId, subUnitId: unitId });
         if (!selections?.length) {
             return false;
         }
+
         const segmentId = selections[0].segmentId;
+        const documentDataModel = doc.getSelfOrHeaderFooterModel(segmentId);
+        if (!documentDataModel) {
+            return false;
+        }
+
         const textX = BuildTextUtils.paragraph.style.set({
-            document: doc.getSelfOrHeaderFooterModel(segmentId),
+            document: documentDataModel,
             textRanges: selections,
             style: {
                 namedStyleType: params.value,
@@ -55,6 +85,7 @@ export const SetParagraphNamedStyleCommand: ICommand<ISetParagraphNamedStyleComm
                 spaceAbove: undefined,
                 spaceBelow: undefined,
                 lineSpacing: undefined,
+                spacingRule: undefined,
             },
             paragraphTextRun: {},
 
@@ -79,6 +110,63 @@ export const SetParagraphNamedStyleCommand: ICommand<ISetParagraphNamedStyleComm
     },
 };
 
+function insertNamedStyleParagraph(
+    accessor: IAccessor,
+    doc: DocumentDataModel,
+    namedStyleType: NamedStyleType,
+    startOffset: number,
+    endOffset: number,
+    segmentId = ''
+): boolean {
+    const textX = BuildTextUtils.selection.replace({
+        doc,
+        selection: {
+            startOffset,
+            endOffset,
+            collapsed: startOffset === endOffset,
+            segmentId,
+        },
+        body: {
+            dataStream: '\r',
+            paragraphs: [{
+                startIndex: 0,
+                paragraphId: createParagraphId(new Set()),
+                paragraphStyle: {
+                    namedStyleType,
+                    headingId: !namedStyleType || namedStyleType === NamedStyleType.NORMAL_TEXT ? undefined : generateRandomId(6),
+                },
+            }],
+        },
+    });
+
+    if (!textX) {
+        return false;
+    }
+
+    const jsonX = JSONX.getInstance();
+    const commandService = accessor.get(ICommandService);
+    const success = Boolean(commandService.syncExecuteCommand<IRichTextEditingMutationParams>(RichTextEditingMutation.id, {
+        actions: jsonX.editOp(textX.serialize(), getRichTextEditPath(doc, segmentId)),
+        isEditing: false,
+        textRanges: [{
+            startOffset,
+            endOffset: startOffset,
+            collapsed: true,
+        }],
+        segmentId,
+        unitId: doc.getUnitId(),
+    }));
+
+    if (success) {
+        accessor.get(DocSelectionManagerService).replaceDocRanges([{
+            startOffset,
+            endOffset: startOffset,
+        }], undefined, false);
+    }
+
+    return success;
+}
+
 export const QuickHeadingCommand: ICommand<ISetParagraphNamedStyleCommandParams> = {
     id: 'doc.command.quick-heading',
     type: CommandType.COMMAND,
@@ -91,7 +179,7 @@ export const QuickHeadingCommand: ICommand<ISetParagraphNamedStyleCommandParams>
         const docSelectionManagerService = accessor.get(DocSelectionManagerService);
         const univerInstanceService = accessor.get(IUniverInstanceService);
         const commandService = accessor.get(ICommandService);
-        const docDataModel = univerInstanceService.getCurrentUnitForType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
+        const docDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC);
         const activeRange = docSelectionManagerService.getActiveTextRange();
         if (docDataModel == null || activeRange == null || !activeRange.collapsed) {
             return false;
@@ -99,8 +187,8 @@ export const QuickHeadingCommand: ICommand<ISetParagraphNamedStyleCommandParams>
 
         const { segmentId, startOffset } = activeRange;
         const segment = docDataModel.getSelfOrHeaderFooterModel(segmentId);
-        const paragraphs = segment.getBody()?.paragraphs ?? [];
-        const dataStream = segment.getBody()?.dataStream ?? '';
+        const paragraphs = segment?.getBody()?.paragraphs ?? [];
+        const dataStream = segment?.getBody()?.dataStream ?? '';
         const paragraph = BuildTextUtils.paragraph.util.getParagraphsInRange(activeRange, paragraphs, dataStream)[0];
         if (!paragraph) {
             return false;
@@ -136,6 +224,8 @@ export const QuickHeadingCommand: ICommand<ISetParagraphNamedStyleCommandParams>
                 ...paragraphStyle,
                 headingId: generateRandomId(6),
                 namedStyleType: value,
+                lineSpacing: undefined,
+                spacingRule: undefined,
             },
             cursor: startOffset,
             deleteLen: startOffset - paragraphStart,

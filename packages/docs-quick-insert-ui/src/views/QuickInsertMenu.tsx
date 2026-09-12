@@ -14,19 +14,16 @@
  * limitations under the License.
  */
 
-import type { ComponentManager } from '@univerjs/ui';
-import type { MutableRefObject } from 'react';
 import type { DocPopupMenu, IDocPopupMenuItem } from '../services/doc-quick-insert-popup.service';
 import { borderBottomClassName, borderClassName, clsx, scrollbarClassName, Tooltip } from '@univerjs/design';
+import { IconManager, useDependency } from '@univerjs/ui';
 import { useEffect, useMemo, useRef } from 'react';
 
 interface IQuickInsertMenuProps {
     menus: DocPopupMenu[];
     focusedMenuIndex: number;
-    focusedMenuRef: MutableRefObject<IDocPopupMenuItem | null>;
-    menuNodeMapRef: MutableRefObject<Map<string, HTMLElement>>;
-    componentManager: ComponentManager;
     onFocusedMenuIndexChange: (index: number) => void;
+    onFocusedMenuChange: (menu: IDocPopupMenuItem | null) => void;
     onSelect: (menu: IDocPopupMenuItem) => void;
 }
 
@@ -52,21 +49,21 @@ export function QuickInsertMenu(props: IQuickInsertMenuProps) {
     const {
         menus,
         focusedMenuIndex,
-        focusedMenuRef,
-        menuNodeMapRef,
-        componentManager,
         onFocusedMenuIndexChange,
+        onFocusedMenuChange,
         onSelect,
     } = props;
 
+    const iconManager = useDependency(IconManager);
     const flatMenus = useMemo(() => flattenMenuItems(menus), [menus]);
+    const menuNodeMapRef = useRef(new Map<string, HTMLElement>());
 
     useEffect(() => {
         const focusedMenu = Number.isNaN(focusedMenuIndex)
             ? null
             : flatMenus[focusedMenuIndex] ?? null;
 
-        focusedMenuRef.current = focusedMenu;
+        onFocusedMenuChange(focusedMenu);
 
         if (!focusedMenu) {
             return;
@@ -75,7 +72,15 @@ export function QuickInsertMenu(props: IQuickInsertMenuProps) {
         menuNodeMapRef.current.get(focusedMenu.id)?.scrollIntoView({
             block: 'nearest',
         });
-    }, [flatMenus, focusedMenuIndex, focusedMenuRef, menuNodeMapRef]);
+    }, [flatMenus, focusedMenuIndex, onFocusedMenuChange]);
+
+    useEffect(() => {
+        const menuNodeMap = menuNodeMapRef.current;
+
+        return () => {
+            menuNodeMap.clear();
+        };
+    }, []);
 
     const itemIndexRef = useRef(0);
     itemIndexRef.current = 0;
@@ -83,7 +88,7 @@ export function QuickInsertMenu(props: IQuickInsertMenuProps) {
     function renderMenus(currentMenus: DocPopupMenu[]) {
         return currentMenus.map((menu, index) => {
             const iconKey = menu.icon;
-            const Icon = iconKey ? componentManager.get(iconKey) : null;
+            const Icon = iconKey ? iconManager.get(iconKey) : null;
 
             if (isMenuGroup(menu)) {
                 return (
@@ -126,14 +131,13 @@ export function QuickInsertMenu(props: IQuickInsertMenuProps) {
                     role="button"
                     tabIndex={-1}
                     className={clsx(`
-                      univer-relative univer-box-border univer-flex univer-min-h-8 univer-w-full univer-cursor-pointer
+                      univer-relative univer-box-border univer-flex univer-w-full univer-cursor-pointer
                       univer-items-center univer-justify-between univer-gap-3 univer-rounded-md univer-border-none
                       univer-bg-transparent univer-px-2 univer-text-left univer-text-sm univer-text-gray-900
                       univer-outline-none
-                      hover:univer-bg-gray-50
-                      dark:!univer-text-white
-                      dark:hover:!univer-bg-gray-600
+                      dark:!univer-text-gray-0
                     `, {
+                        'univer-min-h-8 hover:univer-bg-gray-50 dark:hover:!univer-bg-gray-600': true,
                         'hover:univer-bg-transparent': !isFocused,
                         'univer-bg-gray-50 dark:!univer-bg-gray-600': isFocused,
                     })}
@@ -155,11 +159,12 @@ export function QuickInsertMenu(props: IQuickInsertMenuProps) {
     return (
         <div
             className={clsx(`
-              univer-box-border univer-grid univer-max-h-[360px] univer-gap-1 univer-overflow-y-auto
-              univer-overflow-x-hidden univer-overscroll-contain univer-rounded-md univer-bg-white univer-px-2
-              univer-py-1 univer-text-sm univer-text-gray-900 univer-shadow-md
-              dark:!univer-bg-gray-700 dark:!univer-text-white
-            `, borderClassName, scrollbarClassName)}
+              univer-box-border univer-grid univer-gap-1 univer-overflow-y-auto univer-overflow-x-hidden
+              univer-overscroll-contain univer-bg-gray-0 univer-px-2 univer-text-gray-900 univer-shadow-md
+              dark:!univer-bg-gray-700 dark:!univer-text-gray-0
+            `, borderClassName, scrollbarClassName, {
+                'univer-max-h-[360px] univer-rounded-md univer-py-1 univer-text-sm': true,
+            })}
             onWheel={(event) => event.stopPropagation()}
         >
             {renderMenus(menus)}

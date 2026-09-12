@@ -15,13 +15,12 @@
  */
 
 import type { IDisposable, Nullable } from '@univerjs/core';
-
 import type { CURSOR_TYPE } from './basics/const';
 import type { IEvent, IKeyboardEvent, IPointerEvent } from './basics/i-events';
 import type { ITimeMetric, ITransformChangeState } from './basics/interfaces';
 import type { IBasicFrameInfo } from './basics/performance-monitor';
 import type { Scene } from './scene';
-import { Disposable, EventSubject, toDisposable, Tools } from '@univerjs/core';
+import { Disposable, EventSubject, noop, toDisposable, Tools } from '@univerjs/core';
 import { Observable, shareReplay, Subject } from 'rxjs';
 import { RENDER_CLASS_TYPE } from './basics/const';
 import { DeviceType, PointerInput } from './basics/i-events';
@@ -80,7 +79,7 @@ export class Engine extends Disposable {
                 sub.unsubscribe();
                 this._rect$ = null;
             };
-        })).pipe(shareReplay(1));
+        })).pipe(shareReplay({ bufferSize: 1, refCount: true }));
     }
 
     private _container: Nullable<HTMLElement>;
@@ -277,30 +276,6 @@ export class Engine extends Disposable {
      * @param {true} [resize] If should perform resize when mounted and observe resize event.
      */
     mount(element: HTMLElement, resize = true): void {
-        this.setContainer(element, resize);
-    }
-
-    /**
-     * Unmount the canvas without disposing it so it can be mounted again.
-     */
-    unmount(): void {
-        this._clearResizeListener();
-
-        if (!this._container) {
-            throw new Error('[Engine]: cannot unmount when container is not set!');
-        }
-
-        this._container.removeChild(this.getCanvasElement());
-        this._container = null;
-    }
-
-    /**
-     * Mount the canvas to the element so it would be rendered on UI.
-     * @deprecated Please use `mount` instead.
-     * @param {HTMLElement} element - The element the canvas will mount on.
-     * @param {true} [resize] If should perform resize when mounted and observe resize event.
-     */
-    setContainer(element: HTMLElement, resize = true) {
         if (this._container === element) {
             return;
         }
@@ -329,6 +304,20 @@ export class Engine extends Disposable {
                 if (timer !== undefined) window.cancelIdleCallback(timer);
             });
         }
+    }
+
+    /**
+     * Unmount the canvas without disposing it so it can be mounted again.
+     */
+    unmount(): void {
+        this._clearResizeListener();
+
+        if (!this._container) {
+            throw new Error('[Engine]: cannot unmount when container is not set!');
+        }
+
+        this._container.removeChild(this.getCanvasElement());
+        this._container = null;
     }
 
     private _clearResizeListener(): void {
@@ -529,6 +518,10 @@ export class Engine extends Disposable {
      */
     getDeltaTime(): number {
         return this._deltaTime;
+    }
+
+    getEstimatedFrameInterval(): number {
+        return this._performanceMonitor.estimatedFrameInterval;
     }
 
     /**
@@ -989,7 +982,6 @@ export class Engine extends Disposable {
         // IE11 only supports captureEvent:boolean, not options:object, and it defaults to false.
         // Feature detection technique copied from: https://github.com/github/eventlistener-polyfill (MIT license)
         let passiveSupported = false;
-        const noop = () => { /* empty */ };
 
         try {
             const options: object = {

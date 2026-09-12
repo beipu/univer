@@ -41,7 +41,7 @@ describe('ColorSpectrum extra', () => {
         const onChanged = vi.fn();
         const { container } = render(<ColorSpectrum hsv={[120, 20, 80]} onChange={onChange} onChanged={onChanged} />);
 
-        const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+        const canvas = container.querySelector('[data-u-comp="color-picker-spectrum-canvas"]') as HTMLCanvasElement;
         const wrapper = container.querySelector('[data-u-comp="color-picker-spectrum"]') as HTMLDivElement;
         Object.defineProperty(wrapper, 'clientWidth', { value: 100, configurable: true });
         Object.defineProperty(wrapper, 'clientHeight', { value: 100, configurable: true });
@@ -65,5 +65,15 @@ describe('ColorSpectrum extra', () => {
 
         expect(onChange).toHaveBeenCalled();
         expect(onChanged).toHaveBeenCalledWith(120, 20, 80);
+    });
+
+    it('positions the initial indicator from hsv without waiting for container measurements', () => {
+        const { container } = render(<ColorSpectrum hsv={[120, 20, 80]} onChange={vi.fn()} />);
+
+        const indicator = container.querySelector('[data-u-comp="color-picker-spectrum"] > div') as HTMLDivElement;
+
+        expect(indicator.style.left).toBe('20%');
+        expect(indicator.style.top).toBe('20%');
+        expect(indicator.style.transform).toBe('translate(-50%, -50%)');
     });
 });

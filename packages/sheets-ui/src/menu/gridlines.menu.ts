@@ -16,24 +16,38 @@
 
 import type { IAccessor, Workbook } from '@univerjs/core';
 import type { IMenuButtonItem } from '@univerjs/ui';
-import { BooleanNumber, DisposableCollection, ICommandService, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
-import { SetWorksheetActiveOperation, ToggleGridlinesCommand, ToggleGridlinesMutation, WorkbookEditablePermission, WorksheetEditPermission } from '@univerjs/sheets';
-import { MenuItemType } from '@univerjs/ui';
+import type { LocaleKey } from '../locale/types';
+import {
+    BooleanNumber,
+    DisposableCollection,
+    ICommandService,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
+import {
+    SetWorksheetActiveOperation,
+    ToggleGridlinesCommand,
+    ToggleGridlinesMutation,
+    WorkbookEditablePermission,
+    WorksheetEditPermission,
+} from '@univerjs/sheets';
+import { getMenuHiddenObservable, MenuItemType } from '@univerjs/ui';
 import { Observable } from 'rxjs';
 import { getCurrentRangeDisable$ } from './menu-util';
 
-export function ToggleGridlinesMenuFactory(accessor: IAccessor): IMenuButtonItem {
+export function ToggleGridlinesMenuFactory(accessor: IAccessor): IMenuButtonItem<LocaleKey> {
     const commandService = accessor.get(ICommandService);
     const instanceService = accessor.get(IUniverInstanceService);
 
     return {
         id: ToggleGridlinesCommand.id,
         type: MenuItemType.BUTTON,
-        tooltip: 'toolbar.toggleGridlines',
-        icon: 'HideGridlinesDoubleIcon',
+        tooltip: 'sheets-ui.toolbar.toggleGridlines',
+        icon: 'HideGridlinesIcon',
+        hidden$: getMenuHiddenObservable(accessor, UniverInstanceType.UNIVER_SHEET),
         activated$: new Observable<boolean>((observer) => {
             const getValue = () => {
-                const workbook = instanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+                const workbook = instanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
                 if (workbook) return workbook.getActiveSheet().getConfig().showGridlines === BooleanNumber.TRUE;
                 return false;
             };

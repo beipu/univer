@@ -16,16 +16,20 @@
 
 import type { Dependency } from '@univerjs/core';
 import type { IUniverDrawingUIConfig } from './config/config';
-import { IConfigService, Inject, Injector, merge, Plugin } from '@univerjs/core';
+import { DependentOn, IConfigService, Inject, Injector, merge, Plugin } from '@univerjs/core';
+import { UniverDrawingPlugin } from '@univerjs/drawing';
+import { UniverRenderEnginePlugin } from '@univerjs/engine-render';
 import pkg from '../package.json';
 import { defaultPluginConfig, DRAWING_UI_PLUGIN_CONFIG_KEY } from './config/config';
-import { DrawingUIController } from './controllers/drawing-ui.controller';
+import { ComponentsController } from './controllers/components.controller';
 import { DrawingUpdateController } from './controllers/drawing-update.controller';
 import { ImageCropperController } from './controllers/image-cropper.controller';
 import { ImageUpdateController } from './controllers/image-update.controller';
+import { DrawingUIController } from './controllers/ui.controller';
 import { DrawingImageClipService } from './services/drawing-image-clip.service';
 import { DrawingRenderService } from './services/drawing-render.service';
 
+@DependentOn(UniverDrawingPlugin, UniverRenderEnginePlugin)
 export class UniverDrawingUIPlugin extends Plugin {
     static override pluginName = 'UNIVER_DRAWING_UI_PLUGIN';
     static override packageName = pkg.name;
@@ -51,6 +55,8 @@ export class UniverDrawingUIPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([ComponentsController]);
+        this._injector.get(ComponentsController);
         this._initDependencies();
     }
 

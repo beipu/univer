@@ -15,8 +15,6 @@
  */
 
 import type {
-    ICellInfo,
-    ICellWithCoord,
     IPosition,
     IRange,
     IRangeWithCoord,
@@ -26,9 +24,14 @@ import type {
 } from '@univerjs/core';
 import type { IDocumentSkeletonFontStyle } from './i-document-skeleton-cached';
 import type { IBoundRectNoAngle } from './vector2';
-
-import { BaselineOffset, ColorKit, DEFAULT_STYLES, FontStyleType, getCellInfoInMergeData, Rectangle, Tools } from '@univerjs/core';
-import * as cjk from 'cjk-regex';
+import {
+    BaselineOffset,
+    ColorKit,
+    DEFAULT_STYLES,
+    FontStyleType,
+    Rectangle,
+    Tools,
+} from '@univerjs/core';
 import { FontCache } from '../components/docs/layout/shaping-engine/font-cache';
 import { DEFAULT_FONTFACE_PLANE } from './const';
 
@@ -38,6 +41,11 @@ const PI_OVER_DEG180 = Math.PI / DEG180;
 const DEG180_OVER_PI = DEG180 / Math.PI;
 const RGB_PAREN = 'rgb(';
 const RGBA_PAREN = 'rgba(';
+const SCROLLABLE_OVERFLOW_EPSILON = 0.5;
+
+export function hasScrollableOverflow(contentSize: number, viewportSize: number): boolean {
+    return contentSize - viewportSize > SCROLLABLE_OVERFLOW_EPSILON;
+}
 
 // TODO :move to core @jerry
 export const getColor = (RgbArray: number[], opacity?: number): string => {
@@ -127,6 +135,9 @@ export const cancelRequestFrame = (requestID: number, requester?: any) => {
 
 export const createCanvasElement = (): HTMLCanvasElement => {
     const canvas = document.createElement('canvas');
+    // TODO: Remove this fallback when canvas/docs rendering fully supports RTL.
+    // Keep canvas text rendering isolated from an RTL ancestor's inherited direction.
+    canvas.dir = 'ltr';
     // on some environments canvas.style is readonly
     try {
         (canvas as any).style = canvas.style || {};
@@ -245,7 +256,6 @@ export function fixLineWidthByScale(num: number, scale: number) {
     return Math.round(num * scale) / scale;
 }
 
-// eslint-disable-next-line max-lines-per-function
 export function getFontStyleString(
     textStyle?: Nullable<IStyleBase>
 ): IDocumentSkeletonFontStyle {
@@ -283,30 +293,11 @@ export function getFontStyleString(
     // font-size/line-height
     let originFontSize = defaultFontSize;
     if (textStyle.fs) {
-        originFontSize = Math.ceil(textStyle.fs);
+        originFontSize = textStyle.fs;
     }
     let fontSize = originFontSize;
 
-    let fontFamilyResult = defaultFont;
-    if (textStyle.ff) {
-        let fontFamily = textStyle.ff;
-
-        fontFamily = fontFamily.replace(/"/g, '').replace(/'/g, '');
-
-        if (fontFamily.indexOf(' ') > -1) {
-            fontFamily = `"${fontFamily}"`;
-        }
-
-        // if (fontFamily != null && document.fonts && !document.fonts.check('12px ' + fontFamily)) {
-        //     menuButton.addFontToList(fontFamily);
-        // }
-
-        if (fontFamily == null) {
-            fontFamily = defaultFont;
-        }
-
-        fontFamilyResult = fontFamily;
-    }
+    const fontFamilyResult = normalizeFontFamily(textStyle.ff, defaultFont);
 
     const { va: baselineOffset } = textStyle;
 
@@ -333,21 +324,19 @@ export function getFontStyleString(
     };
 }
 
-// 是否有中文、日文、韩文等，不包括符号
-const CJK_LETTER_REG = cjk.letters().toRegExp();
-export function hasCJKText(text: string) {
-    return CJK_LETTER_REG.test(text);
-}
+function normalizeFontFamily(fontFamily: Nullable<string>, defaultFont: string): string {
+    if (!fontFamily?.trim()) {
+        return defaultFont;
+    }
 
-// 是否有中文、日文、韩文等可以垂直布局的文字，包括标点符号
-const CJK_ALL_REG = cjk.all().toRegExp();
-export function hasCJK(text: string) {
-    return CJK_ALL_REG.test(text);
-}
-
-const CJK_PUNCTUATION_REG = cjk.punctuations().toRegExp();
-export function hasCJKPunctuation(text: string) {
-    return CJK_PUNCTUATION_REG.test(text);
+    return fontFamily
+        .split(',')
+        .map((item) => item.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean)
+        .map((family) => /^[\p{L}_-][\p{L}\p{N}_-]*$/u.test(family)
+            ? family
+            : `"${family.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`)
+        .join(', ');
 }
 
 export function hasAllLatin(text: string) {
@@ -394,6 +383,11 @@ export function hasLatinExtendedB(text: string) {
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
 export function getFirstGrapheme(text: string): string | null {
+    // One UTF-16 code unit cannot span multiple graphemes. CJK letter glyphs
+    // already arrive individually, so avoid allocating a segment iterator.
+    if (text.length <= 1) {
+        return text || null;
+    }
     const it = segmenter.segment(text)[Symbol.iterator]();
     return it.next().value?.segment ?? null;
 }
@@ -418,6 +412,12 @@ export function isEmojiGrapheme(grapheme: string): boolean {
 }
 
 export function startWithEmoji(text: string): boolean {
+    const firstCodeUnit = text.charCodeAt(0);
+    const canStartKeycapEmoji = firstCodeUnit === 0x23 || firstCodeUnit === 0x2A || (firstCodeUnit >= 0x30 && firstCodeUnit <= 0x39);
+    if (firstCodeUnit <= 0x7F && !canStartKeycapEmoji) {
+        return false;
+    }
+
     const first = getFirstGrapheme(text);
     return first ? isEmojiGrapheme(first) : false;
 }
@@ -430,6 +430,12 @@ export function hasArabic(text: string) {
 
 export function hasTibetan(text: string) {
     const pattern = /[\u0180-\u024F]/gi;
+
+    return pattern.test(text);
+}
+
+export function hasThai(text: string) {
+    const pattern = /[\u0E00-\u0E7F]/;
 
     return pattern.test(text);
 }
@@ -465,7 +471,7 @@ export function isCjkCenterAlignedPunctuation(text: string) {
 
 const one_thousand = 1000;
 
-// 返回屏幕 DPI
+// Return screen DPI
 let dpi_cache: Nullable<number>;
 export function getDPI() {
     if (dpi_cache) {
@@ -542,119 +548,6 @@ export function getCellPositionByIndex(
         startX,
         endX,
     };
-}
-
-/**
- * @deprecated use same function in @univerjs/core
- * @description Get the cell position information of the specified row and column, including the position information of the cell and the merge information of the cell
- * @param {number} row The row index of the cell
- * @param {number} column The column index of the cell
- * @param {number[]} rowHeightAccumulation The accumulated height of each row
- * @param {number[]} columnWidthAccumulation The accumulated width of each column
- * @param {ICellInfo} mergeDataInfo The merge information of the cell
- * @returns {ICellWithCoord} The cell position information of the specified row and column, including the position information of the cell and the merge information of the cell
- */
-function getCellWithCoordByIndexCore(
-    row: number,
-    column: number,
-    rowHeightAccumulation: number[],
-    columnWidthAccumulation: number[],
-    mergeDataInfo: ICellInfo
-): ICellWithCoord {
-    row = Tools.clamp(row, 0, rowHeightAccumulation.length - 1);
-    column = Tools.clamp(column, 0, columnWidthAccumulation.length - 1);
-    // eslint-disable-next-line prefer-const
-    let { startY, endY, startX, endX } = getCellPositionByIndex(
-        row,
-        column,
-        rowHeightAccumulation,
-        columnWidthAccumulation
-    );
-
-    const { isMerged, isMergedMainCell, startRow, startColumn, endRow, endColumn } = mergeDataInfo;
-
-    let mergeInfo = {
-        startRow,
-        startColumn,
-        endRow,
-        endColumn,
-
-        startY: 0,
-        endY: 0,
-        startX: 0,
-        endX: 0,
-    };
-
-    const rowAccumulationCount = rowHeightAccumulation.length - 1;
-    const columnAccumulationCount = columnWidthAccumulation.length - 1;
-
-    if (isMerged && startRow !== -1 && startColumn !== -1) {
-        const mergeStartY = rowHeightAccumulation[startRow - 1] || 0;
-        const mergeEndY = rowHeightAccumulation[endRow] || rowHeightAccumulation[rowAccumulationCount];
-
-        const mergeStartX = columnWidthAccumulation[startColumn - 1] || 0;
-        const mergeEndX = columnWidthAccumulation[endColumn] || columnWidthAccumulation[columnAccumulationCount];
-        mergeInfo = {
-            ...mergeInfo,
-            startY: mergeStartY,
-            endY: mergeEndY,
-            startX: mergeStartX,
-            endX: mergeEndX,
-        };
-    } else if (!isMerged && endRow !== -1 && endColumn !== -1) {
-        const mergeEndY = rowHeightAccumulation[endRow] || rowHeightAccumulation[rowAccumulationCount];
-        const mergeEndX = columnWidthAccumulation[endColumn] || columnWidthAccumulation[columnAccumulationCount];
-
-        mergeInfo = {
-            ...mergeInfo,
-            startY,
-            endY: mergeEndY,
-            startX,
-            endX: mergeEndX,
-        };
-    }
-
-    return {
-        isMerged,
-        isMergedMainCell,
-        actualRow: row,
-        actualColumn: column,
-        startY,
-        endY,
-        startX,
-        endX,
-        mergeInfo,
-    };
-}
-
-/**
- * @deprecated please use getCellWithCoordByIndexCore in @univerjs/core instead
- */
-const getCellByIndexWithMergeInfo = getCellWithCoordByIndexCore;
-export { getCellByIndexWithMergeInfo };
-
-/**
- * Determine whether there are any cells in a row that are not in the merged cells, mainly used for the calculation of auto height
- * @deprecated please use SpreadsheetSkeleton@_hasUnMergedCellInRow
- */
-export function hasUnMergedCellInRow(
-    row: number,
-    startColumn: number,
-    endColumn: number,
-    mergeData: IRange[]
-): boolean {
-    // In the selection area, if a cell is not in the merged cell, the automatic height of the row needs to be calculated.
-    let hasUnMergedCell = false;
-    for (let colIndex = startColumn; colIndex <= endColumn; colIndex++) {
-        const { isMerged, isMergedMainCell } = getCellInfoInMergeData(row, colIndex, mergeData);
-
-        if (!isMerged && !isMergedMainCell) {
-            hasUnMergedCell = true;
-            break;
-        }
-    }
-
-    return hasUnMergedCell;
 }
 
 export function mergeInfoOffset(mergeInfo: IRangeWithCoord, offsetX: number, offsetY: number) {

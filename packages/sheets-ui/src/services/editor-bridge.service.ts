@@ -34,16 +34,30 @@ import {
     UniverInstanceType,
 } from '@univerjs/core';
 import { getCanvasOffsetByEngine, IEditorService } from '@univerjs/docs-ui';
-import { convertTextRotation, convertTransformToOffsetX, convertTransformToOffsetY, DeviceInputEventType, IRenderManagerService } from '@univerjs/engine-render';
-import { attachPrimaryWithCoord, BEFORE_CELL_EDIT, SheetInterceptorService, SheetSkeletonService } from '@univerjs/sheets';
+import {
+    convertTextRotation,
+    convertTransformToOffsetX,
+    convertTransformToOffsetY,
+    DeviceInputEventType,
+    IRenderManagerService,
+} from '@univerjs/engine-render';
+import {
+    attachPrimaryWithCoord,
+    BEFORE_CELL_EDIT,
+    SheetInterceptorService,
+    SheetSkeletonService,
+} from '@univerjs/sheets';
+import { DISABLE_AUTO_FOCUS_KEY } from '@univerjs/ui';
 import { BehaviorSubject, map, switchMap } from 'rxjs';
-import { ISheetSelectionRenderService } from './selection/base-selection-render.service';
+import { getViewportByCell } from '../common/utils';
 
 export interface IEditorBridgeServiceVisibleParam {
     visible: boolean;
     eventType: DeviceInputEventType;
     unitId: string;
     keycode?: KeyCode;
+    isShift?: boolean;
+    initialValue?: string;
 }
 
 export interface ICurrentEditCellParam {
@@ -62,6 +76,7 @@ export interface ICellEditorState {
     documentLayoutObject: IDocumentLayoutObject;
     editorUnitId: string;
     isInArrayFormulaRange?: Nullable<boolean>;
+    isPercentFormat?: boolean;
 }
 
 export interface ICellEditorLayout {
@@ -93,7 +108,7 @@ export interface IEditorBridgeService {
     // Gets the DocumentDataModel of the latest table cell based on the latest cell contents
     getLatestEditCellState(): Readonly<Nullable<IEditorBridgeServiceParam>>;
     /**
-     * @deprecated do not use it directly, use command SetCellEditVisibleOperation as instead.
+     * Do not use it directly. Use the `SetCellEditVisibleOperation` command instead.
      */
     changeVisible(param: IEditorBridgeServiceVisibleParam): void;
     changeEditorDirty(dirtyStatus: boolean): void;
@@ -102,7 +117,7 @@ export interface IEditorBridgeService {
     enableForceKeepVisible(): void;
     disableForceKeepVisible(): void;
     isForceKeepVisible(): boolean;
-    getCurrentEditorId(): Nullable<string>;
+    getCurrentEditorId(): string;
     helpFunctionVisible$: BehaviorSubject<boolean>;
 }
 
@@ -185,7 +200,7 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
         if (!this._currentEditCell || !this._currentEditCellState) return;
 
         const { unitId, sheetId, primary, scene, engine } = this._currentEditCell;
-        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._getWorkbookForEditUnit(unitId);
         if (!workbook || workbook.getUnitId() !== unitId) return;
 
         const worksheet = workbook.getActiveSheet();
@@ -204,7 +219,9 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
         let { startX, startY, endX, endY } = actualRangeWithCoord;
 
         const { scaleX, scaleY } = scene.getAncestorScale();
-        const scrollXY = scene.getViewportScrollXY(renderUnit.with(ISheetSelectionRenderService).getViewPort());
+        const viewport = getViewportByCell(primary.startRow, primary.startColumn, scene, worksheet);
+        if (!viewport) return;
+        const scrollXY = scene.getViewportScrollXY(viewport);
 
         startX = convertTransformToOffsetX(startX, scaleX, scrollXY);
         startY = convertTransformToOffsetY(startY, scaleY, scrollXY);
@@ -240,12 +257,22 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
          * todo: wzhudev: In boundless mode, it is necessary to switch to the corresponding editorId based on the host's unitId.
          */
         if (!this._editorService.getFocusEditor()) {
-            this._editorService.focus(DOCS_NORMAL_EDITOR_UNIT_ID_KEY);
-            /**
-             * Fix: When the sheet loads for the first time, copying and pasting triggers the editor, and the edits are ineffective.
-             */
-            this._contextService.setContextValue(EDITOR_ACTIVATED, false);
-            this._contextService.setContextValue(FOCUSING_EDITOR_STANDALONE, false);
+            if (this._contextService.getContextValue(DISABLE_AUTO_FOCUS_KEY)) {
+                const editorDocument = this._univerInstanceService.getUnit(
+                    DOCS_NORMAL_EDITOR_UNIT_ID_KEY,
+                    UniverInstanceType.UNIVER_DOC
+                );
+                if (editorDocument) {
+                    this._univerInstanceService.setCurrentUnitForType(DOCS_NORMAL_EDITOR_UNIT_ID_KEY);
+                }
+            } else {
+                this._editorService.focus(DOCS_NORMAL_EDITOR_UNIT_ID_KEY);
+                /**
+                 * Fix: When the sheet loads for the first time, copying and pasting triggers the editor, and the edits are ineffective.
+                 */
+                this._contextService.setContextValue(EDITOR_ACTIVATED, false);
+                this._contextService.setContextValue(FOCUSING_EDITOR_STANDALONE, false);
+            }
         }
 
         const editCellState = this.getLatestEditCellState();
@@ -302,7 +329,7 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
         if (!this._currentEditCell) return;
 
         const { unitId, sheetId, primary, scene, engine } = this._currentEditCell;
-        const workbook = this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
+        const workbook = this._getWorkbookForEditUnit(unitId);
         if (!workbook || workbook.getUnitId() !== unitId) return;
 
         const worksheet = workbook.getActiveSheet();
@@ -322,7 +349,9 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
         let { startX, startY, endX, endY } = actualRangeWithCoord;
 
         const { scaleX, scaleY } = scene.getAncestorScale();
-        const scrollXY = scene.getViewportScrollXY(renderUnit.with(ISheetSelectionRenderService).getViewPort());
+        const viewport = getViewportByCell(startRow, startColumn, scene, worksheet);
+        if (!viewport) return;
+        const scrollXY = scene.getViewportScrollXY(viewport);
 
         startX = convertTransformToOffsetX(startX, scaleX, scrollXY);
         startY = convertTransformToOffsetY(startY, scaleY, scrollXY);
@@ -371,8 +400,6 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
             }
             documentLayoutObject = blankModel;
         }
-        // background of canvas is set to transparent, so if no bgcolor sepcified in curr cell, set it to white.
-        documentLayoutObject.fill = documentLayoutObject.fill || '#fff';
         documentLayoutObject.documentModel?.setZoomRatio(Math.max(scaleX, scaleY));
 
         if (cell?.isInArrayFormulaRange === true) {
@@ -409,7 +436,13 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
             documentLayoutObject,
             editorUnitId: this._editorUnitId,
             isInArrayFormulaRange: cell?.isInArrayFormulaRange,
+            isPercentFormat: cell?.isPercentFormat,
         };
+    }
+
+    private _getWorkbookForEditUnit(unitId: string): Nullable<Workbook> {
+        return this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET) ??
+            this._univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET);
     }
 
     getCurrentEditorId() {
@@ -453,4 +486,4 @@ export class EditorBridgeService extends Disposable implements IEditorBridgeServ
     }
 }
 
-export const IEditorBridgeService = createIdentifier<EditorBridgeService>('univer.sheet-editor-bridge.service');
+export const IEditorBridgeService = createIdentifier<IEditorBridgeService>('univer.sheet-editor-bridge.service');

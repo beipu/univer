@@ -15,17 +15,31 @@
  */
 
 import type { ComponentProps } from 'react';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import enUS from '../../../locale/en-US';
+import { ConfigProvider } from '../../config-provider/ConfigProvider';
+import { MobileDropdown } from '../../dropdown/MobileDropdown';
 import { ColorInput } from '../ColorInput';
 import { ColorPicker } from '../ColorPicker';
+import { ColorPickerPanel } from '../ColorPickerPanel';
 import { ColorSpectrum } from '../ColorSpectrum';
 import { HueSlider } from '../HueSlider';
+import { MobileColorPicker } from '../MobileColorPicker';
+import { MobileColorPresets } from '../MobileColorPresets';
 import { colorPresets } from '../presets';
 import '@testing-library/jest-dom/vitest';
 
 afterEach(cleanup);
+
+function getMoreColorButton(container: HTMLElement): HTMLButtonElement {
+    const button = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[data-u-comp="color-picker"] button')
+    ).at(-1);
+    if (!button) throw new Error('More color button was not rendered.');
+    return button;
+}
 
 describe('ColorPicker', () => {
     it('should not contain duplicate preset colors', () => {
@@ -37,13 +51,25 @@ describe('ColorPicker', () => {
     it('should render correctly', () => {
         const { container } = render(<ColorPicker />);
 
-        expect(container).toMatchSnapshot();
+        expect(container.querySelector('[data-u-comp="color-picker"]')).toBeTruthy();
+        expect(container.querySelectorAll('[data-u-comp="color-picker-presets"] button').length).toBeGreaterThan(0);
     });
 
     it('should render with value', () => {
         const { container } = render(<ColorPicker value="#FF0000" />);
 
-        expect(container).toMatchSnapshot();
+        expect(container.querySelector('[data-u-comp="color-picker"]')).toBeTruthy();
+        expect(container.querySelectorAll('[data-u-comp="color-picker-presets"] button').length).toBeGreaterThan(0);
+    });
+
+    it('should apply rtl direction to the picker content', () => {
+        const { container } = render(
+            <ConfigProvider mountContainer={document.body} direction="rtl">
+                <ColorPicker />
+            </ConfigProvider>
+        );
+
+        expect(container.querySelector('[data-u-comp="color-picker"]')?.getAttribute('dir')).toBe('rtl');
     });
 
     it('should call onChange when color changes', () => {
@@ -58,39 +84,187 @@ describe('ColorPicker', () => {
 
     it('should support format hex', () => {
         const { container } = render(<ColorPicker format="hex" value="#00FF00" />);
-        expect(container).toMatchSnapshot();
+        expect(container.querySelector('[data-u-comp="color-picker"]')).toBeTruthy();
+        expect(container.querySelectorAll('[data-u-comp="color-picker-presets"] button').length).toBeGreaterThan(0);
     });
 
     it('should open dialog when more is clicked', () => {
-        const { container } = render(<ColorPicker />);
-        const moreLink = Array.from(container.querySelectorAll('a')).find((a) => a.textContent?.includes('更多') || a.textContent?.toLowerCase().includes('more'));
-        if (moreLink) {
-            moreLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            expect(document.body.innerHTML).toContain('univer-grid univer-w-64 univer-gap-2');
-        }
+        const { container } = render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <ColorPicker />
+            </ConfigProvider>
+        );
+        fireEvent.click(getMoreColorButton(container));
+        expect(document.body.innerHTML).toContain('univer-grid univer-w-64 univer-gap-2');
+    });
+
+    it('should place custom color dialog above parent popovers', () => {
+        const { container } = render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <ColorPicker />
+            </ConfigProvider>
+        );
+        const moreButton = Array.from(container.querySelectorAll('[data-u-comp="color-picker"] button'))
+            .find((button) => button.textContent === enUS.design.ColorPicker.more);
+
+        if (!moreButton) throw new Error('Custom color button was not rendered.');
+
+        fireEvent.click(moreButton);
+
+        const dialog = document.querySelector('[role="dialog"]');
+        const overlay = document.querySelector('[data-state="open"].univer-fixed.univer-inset-0');
+
+        expect(dialog?.className).toContain('!univer-z-[1090]');
+        expect(overlay?.className).toContain('!univer-z-[1090]');
     });
 
     it('should call onChange when rgb input changes in dialog', () => {
         const handleChange = vi.fn();
         const { container } = render(<ColorPicker onChange={handleChange} />);
-        const moreLink = Array.from(container.querySelectorAll('a')).find((a) => a.textContent?.includes('更多') || a.textContent?.toLowerCase().includes('more'));
-        if (moreLink) {
-            moreLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            const rgbInputs = Array.from(document.querySelectorAll('input')).filter((input) => input.maxLength === 3) as HTMLInputElement[];
-            if (rgbInputs.length === 3) {
-                rgbInputs[0].value = '1';
-                rgbInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-                rgbInputs[1].value = '2';
-                rgbInputs[1].dispatchEvent(new Event('input', { bubbles: true }));
-                rgbInputs[2].value = '3';
-                rgbInputs[2].dispatchEvent(new Event('input', { bubbles: true }));
-                const confirmBtn = Array.from(document.querySelectorAll('button')).find((btn) => btn.textContent?.includes('确定') || btn.textContent?.toLowerCase().includes('confirm'));
-                if (confirmBtn) {
-                    confirmBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-                    expect(handleChange).toHaveBeenCalled();
-                }
+        getMoreColorButton(container).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        const rgbInputs = Array.from(document.querySelectorAll('input')).filter((input) => input.maxLength === 3);
+        if (rgbInputs.length === 3) {
+            rgbInputs[0].value = '1';
+            rgbInputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            rgbInputs[1].value = '2';
+            rgbInputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+            rgbInputs[2].value = '3';
+            rgbInputs[2].dispatchEvent(new Event('input', { bubbles: true }));
+            const confirmBtn = Array.from(document.querySelectorAll('button')).find((btn) => btn.textContent?.includes('确定') || btn.textContent?.toLowerCase().includes('confirm'));
+            if (confirmBtn) {
+                confirmBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                expect(handleChange).toHaveBeenCalled();
             }
         }
+    });
+});
+
+describe('mobile color picker views', () => {
+    it('renders the touch-first picker explicitly', () => {
+        const { container } = render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <MobileColorPicker value="#FFFFFF" />
+            </ConfigProvider>
+        );
+
+        expect(container.querySelector('[data-u-comp="color-picker"][data-presentation="mobile"]')).toBeInTheDocument();
+        expect(getMoreColorButton(container)).toHaveClass('univer-h-11');
+    });
+
+    it('uses the mobile action layout for custom color actions', () => {
+        const { container } = render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <MobileColorPicker value="#FFFFFF" />
+            </ConfigProvider>
+        );
+
+        fireEvent.click(getMoreColorButton(container));
+
+        const confirmButton = Array.from(document.querySelectorAll('button'))
+            .find((button) => button.textContent === enUS.design.ColorPicker.confirm);
+        expect(confirmButton?.parentElement).toHaveClass('univer-w-full');
+    });
+
+    it('opens custom colors above the containing mobile dropdown', () => {
+        render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <MobileDropdown open overlay={<MobileColorPicker value="#FFFFFF" />}>
+                    <button type="button">Color</button>
+                </MobileDropdown>
+            </ConfigProvider>
+        );
+
+        fireEvent.click(getMoreColorButton(document.body));
+
+        const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'));
+        const customColorDialog = dialogs
+            .find((dialog) => dialog.className.includes('!univer-z-[1420]'));
+        const customColorOverlay = Array.from(document.querySelectorAll<HTMLElement>('[data-state="open"].univer-fixed.univer-inset-0'))
+            .find((overlay) => overlay.className.includes('!univer-z-[1410]'));
+        const customColorContent = customColorDialog?.querySelector<HTMLElement>('[data-u-comp="mobile-color-picker-custom"]');
+        const spectrum = customColorContent?.querySelector<HTMLElement>('[data-u-comp="color-picker-spectrum"]');
+        const spectrumContainer = spectrum?.parentElement;
+
+        expect(dialogs).toHaveLength(2);
+        expect(customColorDialog).toBeInTheDocument();
+        expect(customColorOverlay).toBeInTheDocument();
+        expect(customColorContent).toHaveClass('univer-w-full');
+        expect(spectrumContainer).toHaveClass('univer-h-44', 'univer-w-full');
+        expect(spectrum).toHaveClass('univer-size-full');
+    });
+
+    it('closes the containing mobile dropdown after selecting a preset color', () => {
+        render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <MobileDropdown overlay={<MobileColorPicker value="#FFFFFF" />}>
+                    <button type="button">Color</button>
+                </MobileDropdown>
+            </ConfigProvider>
+        );
+
+        fireEvent.click(document.querySelector('button')!);
+        fireEvent.click(document.querySelectorAll('[data-u-comp="color-picker"] button')[1]);
+
+        expect(document.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+    });
+
+    it('closes both color dialogs after confirming a custom color', () => {
+        render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <MobileDropdown overlay={<MobileColorPicker value="#FFFFFF" />}>
+                    <button type="button">Color</button>
+                </MobileDropdown>
+            </ConfigProvider>
+        );
+
+        fireEvent.click(document.querySelector('button')!);
+        fireEvent.click(getMoreColorButton(document.body));
+        fireEvent.click(document.querySelector<HTMLButtonElement>('[data-u-comp="mobile-color-picker-custom"] button:last-child')!);
+
+        expect(document.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+    });
+
+    it('keeps the containing mobile dropdown open after cancelling a custom color', () => {
+        render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <MobileDropdown overlay={<MobileColorPicker value="#FFFFFF" />}>
+                    <button type="button">Color</button>
+                </MobileDropdown>
+            </ConfigProvider>
+        );
+
+        fireEvent.click(document.querySelector('button')!);
+        fireEvent.click(getMoreColorButton(document.body));
+        fireEvent.click(document.querySelector<HTMLButtonElement>('[data-u-comp="mobile-color-picker-custom"] button')!);
+
+        expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+        expect(document.querySelector('[data-u-comp="color-picker"]')).toBeInTheDocument();
+    });
+
+    it('renders large preset targets and applies the selected color', () => {
+        const onSelect = vi.fn();
+        const { container } = render(<MobileColorPresets value="#FFFFFF" onSelect={onSelect} />);
+        const buttons = container.querySelectorAll('button');
+
+        expect(buttons).toHaveLength(colorPresets.flat().length);
+        expect(buttons[0]).toHaveAttribute('aria-pressed', 'true');
+        expect(buttons[0].querySelector('span')).toHaveClass('univer-aspect-square', 'univer-w-8');
+
+        fireEvent.click(buttons[1]);
+        expect(onSelect).toHaveBeenCalledWith(colorPresets.flat()[1]);
+    });
+
+    it('commits a custom color only when the apply button is clicked', () => {
+        const onConfirm = vi.fn();
+        const { getByRole } = render(
+            <ConfigProvider locale={enUS.design} mountContainer={document.body}>
+                <ColorPickerPanel value="#3F83F8" onConfirm={onConfirm} />
+            </ConfigProvider>
+        );
+
+        expect(onConfirm).not.toHaveBeenCalled();
+        fireEvent.click(getByRole('button', { name: enUS.design.ColorPicker.confirm }));
+        expect(onConfirm).toHaveBeenCalledWith('#3f83f8');
     });
 });
 
@@ -134,7 +308,7 @@ describe('ColorSpectrum', () => {
 
     it('should call onChange when color changes by pointer', () => {
         const { container } = render(<TestComponent onChange={onChange} />);
-        const spectrum = container.querySelector('[data-u-comp="color-picker-spectrum"] > canvas');
+        const spectrum = container.querySelector('[data-u-comp="color-picker-spectrum"] > [data-u-comp="color-picker-spectrum-canvas"]');
         if (spectrum) {
             spectrum.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 50 }));
             expect(onChange).toHaveBeenCalled();

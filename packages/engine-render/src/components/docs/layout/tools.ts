@@ -17,15 +17,18 @@
 import type {
     DocumentDataModel,
     IBullet,
+    ICustomRangeForInterceptor,
     IDocumentStyle,
     INumberUnit,
     IObjectPositionH,
     IObjectPositionV,
     IParagraph,
+    IParagraphBorder,
     IParagraphStyle,
     ISectionBreak,
     ITextStyle,
     Nullable,
+    PositionedObjectLayoutType,
 } from '@univerjs/core';
 import type {
     IDocumentSkeletonCached,
@@ -35,39 +38,57 @@ import type {
     IDocumentSkeletonGlyph,
     IDocumentSkeletonLine,
     IDocumentSkeletonPage,
+    IDocumentSkeletonParagraphBorders,
+    IDocumentSkeletonRow,
     IDocumentSkeletonSection,
+    IDocumentSkeletonTable,
     ISkeletonResourceReference,
 } from '../../../basics/i-document-skeleton-cached';
 import type { IDocsConfig, IParagraphConfig, ISectionBreakConfig } from '../../../basics/interfaces';
-
+import type { IBoundRectNoAngle } from '../../../basics/vector2';
+import type { IDocumentCompatibilityPolicy } from '../document-compatibility';
 import type { DataStreamTreeNode } from '../view-model/data-stream-tree-node';
 import type { DocumentViewModel } from '../view-model/document-view-model';
+import type { DocumentEndnoteLayout } from './endnote-layout';
+import type { DocumentFootnoteLayout } from './footnote-layout';
 import type { Hyphen } from './hyphenation/hyphen';
 import type { LanguageDetector } from './hyphenation/language-detector';
+import type { INoteReferenceLayout } from './note-numbering';
 import {
     AlignTypeH,
     AlignTypeV,
     BooleanNumber,
     ColumnSeparatorType,
     DataStreamTreeTokenType,
+    DEFAULT_STYLES,
     DocumentFlavor,
     GridType,
     HorizontalAlign,
     mergeWith,
+    MODERN_DOCUMENT_DEFAULT_MARGIN,
+    MODERN_DOCUMENT_WIDTH,
+    ModernDocumentWidthMode,
     NAMED_STYLE_MAP,
     NumberUnitType,
     ObjectMatrix,
     ObjectRelativeFromH,
     ObjectRelativeFromV,
     PageOrientType,
+    resolveSectionHeaderFooterReferences,
     SectionType,
     SpacingRule,
     VerticalAlign,
     WrapStrategy,
 } from '@univerjs/core';
 import { DEFAULT_DOCUMENT_FONTSIZE } from '../../../basics/const';
-import { GlyphType } from '../../../basics/i-document-skeleton-cached';
+import { GlyphType, LineType } from '../../../basics/i-document-skeleton-cached';
 import { getFontStyleString, isFunction, ptToPixel } from '../../../basics/tools';
+import { getDocumentCompatibilityPolicy } from '../document-compatibility';
+import {
+    getDocsTableRenderViewport,
+    getDocsTableViewportLeft,
+    hasDocsTableHorizontalViewport,
+} from '../table-render-viewport';
 import { updateInlineDrawingPosition } from './block/paragraph/layout-ruler';
 import { getCustomDecorationStyle } from './style/custom-decoration';
 import { getCustomRangeStyle } from './style/custom-range';
@@ -233,8 +254,12 @@ function isLineBlank(line?: IDocumentSkeletonLine) {
         }
         if (spanCount === 1) {
             const lastSpan = line.divides[i].glyphGroup[0];
-            const { glyphType } = lastSpan;
-            if (glyphType !== GlyphType.TAB && glyphType !== GlyphType.LIST) {
+            const { glyphType, raw, streamType, width } = lastSpan;
+            const isZeroWidthColumnBreak =
+                width === 0 &&
+                (raw === DataStreamTreeTokenType.COLUMN_BREAK ||
+                    streamType === DataStreamTreeTokenType.COLUMN_BREAK);
+            if (glyphType !== GlyphType.TAB && glyphType !== GlyphType.LIST && !isZeroWidthColumnBreak) {
                 return false;
             }
         }
@@ -249,6 +274,10 @@ export function getNumberUnitValue(unitValue: Nullable<INumberUnit>, benchMark: 
     }
 
     const { v: value, u: unit } = unitValue;
+
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return 0;
+    }
 
     if (!unit) {
         return value;
@@ -286,18 +315,46 @@ export function validationGrid(gridType = GridType.LINES, snapToGrid = BooleanNu
     );
 }
 
-export function getLineHeightConfig(sectionBreakConfig: ISectionBreakConfig, paragraphConfig: IParagraphConfig) {
-    const { paragraphStyle = {} } = paragraphConfig;
-    const { linePitch = 15.6, gridType = GridType.LINES, paragraphLineGapDefault = 0 } = sectionBreakConfig;
-    const { lineSpacing = 0, spacingRule = SpacingRule.AUTO, snapToGrid = BooleanNumber.TRUE } = paragraphStyle;
+export function reachesNextDocumentGridLine(lineSpacing: number, spaceBelow: number, linePitch: number) {
+    return linePitch > 0 &&
+        lineSpacing * linePitch + Math.max(0, spaceBelow) >=
+        (Math.floor(lineSpacing + 1e-6) + 1) * linePitch - 1e-6;
+}
 
-    // The default line spacing in Word is 1. Here, if the lines layout is used, the default line spacing is set to 1.
+export function getLineHeightConfig(sectionBreakConfig: ISectionBreakConfig, paragraphConfig: IParagraphConfig) {
+    const { paragraphStyle = {}, useWordStyleLineHeight = false, isInsideTable = false } = paragraphConfig;
+    const {
+        linePitch = 15.6,
+        paragraphLineGapDefault = 0,
+        adjustLineHeightInTable = BooleanNumber.FALSE,
+    } = sectionBreakConfig;
+    const gridType = sectionBreakConfig.gridType ?? (useWordStyleLineHeight ? GridType.DEFAULT : GridType.LINES);
+    const hasLineGrid = gridType === GridType.LINES || gridType === GridType.LINES_AND_CHARS;
+    const defaultSnapToGrid = useWordStyleLineHeight && (
+        !hasLineGrid || (isInsideTable && adjustLineHeightInTable !== BooleanNumber.TRUE)
+    )
+        ? BooleanNumber.FALSE
+        : BooleanNumber.TRUE;
+    const { lineSpacing: requestedLineSpacing = 0, spacingRule: requestedSpacingRule = SpacingRule.AUTO, snapToGrid = defaultSnapToGrid } = paragraphStyle;
+    const hasValidLineSpacing = Number.isFinite(requestedLineSpacing) && requestedLineSpacing > 0;
+    const lineSpacing = hasValidLineSpacing ? requestedLineSpacing : 0;
+    const spacingRule = hasValidLineSpacing ? requestedSpacingRule : SpacingRule.AUTO;
+
+    // Flavored docs use Word-style single spacing by default.
+    // Embedded sheet/slides documents keep the legacy grid-based fallback.
     let lineSpacingApply = lineSpacing;
-    if ((gridType === GridType.LINES || gridType === GridType.LINES_AND_CHARS) && lineSpacing === 0 && spacingRule === SpacingRule.AUTO) {
+    if (useWordStyleLineHeight && lineSpacing === 0 && spacingRule === SpacingRule.AUTO) {
+        lineSpacingApply = 1;
+    } else if (
+        !useWordStyleLineHeight &&
+        (gridType === GridType.LINES || gridType === GridType.LINES_AND_CHARS) &&
+        lineSpacing === 0 &&
+        spacingRule === SpacingRule.AUTO
+    ) {
         lineSpacingApply = 1;
     }
 
-    return { paragraphLineGapDefault, linePitch, gridType, lineSpacing: lineSpacingApply, spacingRule, snapToGrid };
+    return { paragraphLineGapDefault, linePitch, gridType, lineSpacing: lineSpacingApply, spacingRule, snapToGrid, useWordStyleLineHeight };
 }
 
 export function getCharSpaceConfig(sectionBreakConfig: ISectionBreakConfig, paragraphConfig: IParagraphConfig) {
@@ -312,22 +369,90 @@ export function getCharSpaceConfig(sectionBreakConfig: ISectionBreakConfig, para
 
     const { fs: documentFontSize = DEFAULT_DOCUMENT_FONTSIZE } = documentTextStyle;
 
-    const { snapToGrid = BooleanNumber.TRUE } = paragraphStyle;
+    const {
+        snapToGrid = BooleanNumber.TRUE,
+        defaultTabStop: paragraphDefaultTabStop,
+    } = paragraphStyle;
 
     return {
         charSpace,
         documentFontSize,
-        defaultTabStop,
+        defaultTabStop: paragraphDefaultTabStop ?? defaultTabStop,
         gridType,
         snapToGrid,
     };
 }
 
-export function updateBlockIndex(pages: IDocumentSkeletonPage[], start: number = -1) {
-    let prePageStartIndex = start;
+/**
+ * Reconciles visible glyph flow with the model's paragraph endpoint.
+ *
+ * Imported documents can contain non-rendering flow tokens between paragraphs.
+ * Counting only visible glyphs then shifts every following caret and hit-test
+ * offset. A complete paragraph provides a model-owned checkpoint from which its
+ * visible range can be derived without changing the layout algorithm.
+ */
+function getParagraphLogicalStartAnchors(pages: IDocumentSkeletonPage[]): Map<IDocumentSkeletonLine, number> {
+    const paragraphs = new Map<number, {
+        firstLine: IDocumentSkeletonLine;
+        glyphCount: number;
+        terminal?: string;
+    }>();
 
     for (const page of pages) {
-        const { sections, skeTables } = page;
+        for (const section of page.sections) {
+            for (const column of section.columns) {
+                for (const line of column.lines) {
+                    const glyphCount = line.divides.reduce((divideCount, divide) =>
+                        divideCount + divide.glyphGroup.reduce((count, glyph) =>
+                            count + (glyph.glyphType === GlyphType.LIST ? 0 : glyph.count), 0), 0);
+                    const lastDivide = line.divides[line.divides.length - 1];
+                    const lastGlyph = lastDivide?.glyphGroup[lastDivide.glyphGroup.length - 1];
+                    const paragraph = paragraphs.get(line.paragraphIndex);
+                    paragraphs.set(line.paragraphIndex, {
+                        firstLine: paragraph?.firstLine ?? line,
+                        glyphCount: (paragraph?.glyphCount ?? 0) + glyphCount,
+                        terminal: lastGlyph?.raw ?? lastGlyph?.streamType,
+                    });
+                }
+            }
+        }
+    }
+
+    const anchors = new Map<IDocumentSkeletonLine, number>();
+    for (const [paragraphIndex, paragraph] of paragraphs) {
+        const { firstLine, glyphCount, terminal } = paragraph;
+        if (!firstLine.paragraphStart || paragraphIndex < 0) {
+            continue;
+        }
+
+        if (
+            terminal !== DataStreamTreeTokenType.PARAGRAPH &&
+            terminal !== DataStreamTreeTokenType.SECTION_BREAK &&
+            terminal !== DataStreamTreeTokenType.DOCS_END
+        ) {
+            continue;
+        }
+
+        anchors.set(firstLine, paragraphIndex - glyphCount + 1);
+    }
+
+    return anchors;
+}
+
+export function updateBlockIndex(
+    pages: IDocumentSkeletonPage[],
+    start: number = -1,
+    documentCompatibilityPolicy?: IDocumentCompatibilityPolicy
+) {
+    let prePageStartIndex = start;
+    const paragraphLogicalStartAnchors = getParagraphLogicalStartAnchors(pages);
+    // Real docs declare a classic/modern compatibility mode, so their measured layout column
+    // width can be reused. Embedded editors keep the mode unspecified and must fall back to
+    // content width; otherwise a sheet cell editor may stretch to the far edge of the canvas.
+    const shouldUseLayoutColumnWidth = documentCompatibilityPolicy?.mode !== 'unspecified';
+
+    for (const page of pages) {
+        const { sections, skeTables, skeColumnGroups = new Map() } = page;
         const pageStartIndex = prePageStartIndex;
         const pageEndIndex = pageStartIndex;
         let preSectionStartIndex = pageStartIndex;
@@ -335,6 +460,7 @@ export function updateBlockIndex(pages: IDocumentSkeletonPage[], start: number =
         let contentHeight = 0;
 
         for (const section of sections) {
+            collapseRedundantColumnBreakOverflow(section);
             const { columns } = section;
             const sectionStartIndex = preSectionStartIndex;
             const sectionEndIndex = pageStartIndex;
@@ -360,6 +486,22 @@ export function updateBlockIndex(pages: IDocumentSkeletonPage[], start: number =
                             lineStartIndex = table.ed;
                         }
                     }
+                    const paragraphLogicalStart = paragraphLogicalStartAnchors.get(line);
+                    if (paragraphLogicalStart != null) {
+                        lineStartIndex = Math.max(lineStartIndex, paragraphLogicalStart - 1);
+                    }
+
+                    if (line.type === LineType.BLOCK && divides.length === 0) {
+                        line.st = Math.max(line.st, lineStartIndex + 1);
+                        line.ed = Math.max(line.ed, line.st);
+                        line.width = 0;
+                        line.asc = 0;
+                        line.dsc = 0;
+                        columnHeight = top + lineHeight;
+                        preLineStartIndex = Math.max(preLineStartIndex, line.ed);
+                        continue;
+                    }
+
                     const lineEndIndex = lineStartIndex;
                     let preDivideStartIndex = lineStartIndex;
                     let actualWidth = 0;
@@ -435,8 +577,11 @@ export function updateBlockIndex(pages: IDocumentSkeletonPage[], start: number =
                 column.ed = preLineStartIndex >= column.st ? preLineStartIndex : column.st;
                 column.height = columnHeight;
 
-                column.width = maxColumnWidth;
-                sectionWidth += maxColumnWidth;
+                const measuredColumnWidth = shouldUseLayoutColumnWidth && Number.isFinite(column.width) && column.width > 0
+                    ? column.width
+                    : maxColumnWidth;
+                column.width = measuredColumnWidth;
+                sectionWidth += measuredColumnWidth;
 
                 maxSectionHeight = Math.max(maxSectionHeight, column.height);
 
@@ -460,6 +605,12 @@ export function updateBlockIndex(pages: IDocumentSkeletonPage[], start: number =
             preSectionStartIndex = Math.max(preSectionStartIndex, ed);
         }
 
+        for (const columnGroup of skeColumnGroups.values()) {
+            const { ed } = columnGroup;
+
+            preSectionStartIndex = Math.max(preSectionStartIndex, ed);
+        }
+
         page.st = pageStartIndex + 1;
         page.ed = preSectionStartIndex >= page.st ? preSectionStartIndex : page.st;
         page.height = contentHeight;
@@ -469,25 +620,185 @@ export function updateBlockIndex(pages: IDocumentSkeletonPage[], start: number =
     }
 }
 
+function collapseRedundantColumnBreakOverflow(section: IDocumentSkeletonSection) {
+    const expectedColumnCount = section.colCount || section.columns.length;
+    if (expectedColumnCount <= 0 || section.columns.length <= expectedColumnCount) {
+        return;
+    }
+
+    const targetColumn = section.columns[expectedColumnCount - 1];
+    if (!targetColumn) {
+        return;
+    }
+
+    const overflowColumns = section.columns.slice(expectedColumnCount);
+    if (!overflowColumns.some((column) => column.lines.length > 0)) {
+        return;
+    }
+
+    const targetHeight = targetColumn.height ?? 0;
+    const overflowLines = overflowColumns.flatMap((column) => column.lines);
+    overflowLines.forEach((line) => {
+        line.top += targetHeight;
+        line.parent = targetColumn;
+    });
+    targetColumn.lines.push(...overflowLines);
+    targetColumn.height = Math.max(
+        ...overflowColumns.map((column) => targetHeight + (column.height ?? 0)),
+        targetHeight
+    );
+    targetColumn.isFull = overflowColumns.some((column) => column.isFull);
+    section.columns.splice(expectedColumnCount);
+}
+
+function isParagraphEnd(line: IDocumentSkeletonLine) {
+    const lastDivide = line.divides[line.divides.length - 1];
+    const lastGlyph = lastDivide?.glyphGroup[lastDivide.glyphGroup.length - 1];
+
+    return line.ed >= line.paragraphIndex || lastGlyph?.streamType === DataStreamTreeTokenType.PARAGRAPH;
+}
+
+function isSameParagraphBorder(first?: IParagraphBorder, second?: IParagraphBorder) {
+    if (first === second) {
+        return true;
+    }
+    if (!first || !second) {
+        return false;
+    }
+
+    return first.color.rgb === second.color.rgb &&
+        first.color.th === second.color.th &&
+        first.width === second.width &&
+        first.padding === second.padding &&
+        first.dashStyle === second.dashStyle;
+}
+
+export function hasSameParagraphBorderSet(first: IDocumentSkeletonParagraphBorders, second: IDocumentSkeletonParagraphBorders) {
+    return isSameParagraphBorder(first.borderTop, second.borderTop) &&
+        isSameParagraphBorder(first.borderBottom, second.borderBottom) &&
+        isSameParagraphBorder(first.borderLeft, second.borderLeft) &&
+        isSameParagraphBorder(first.borderRight, second.borderRight) &&
+        isSameParagraphBorder(first.borderBetween, second.borderBetween);
+}
+
 export function updateInlineDrawingCoordsAndBorder(ctx: ILayoutContext, pages: IDocumentSkeletonPage[]) {
     lineIterator(pages, (line, _, __, page) => {
         const { segmentId } = page;
         const paragraphConfig = ctx.paragraphConfigCache.get(segmentId)?.get(line.paragraphIndex);
 
         const affectInlineDrawings = paragraphConfig?.paragraphInlineSkeDrawings;
+        const affectNonInlineDrawings = paragraphConfig?.paragraphNonInlineSkeDrawings;
         const drawingAnchor = ctx.skeletonResourceReference?.drawingAnchor?.get(segmentId)?.get(line.paragraphIndex);
         // Update inline drawings after the line is layout.
         if (affectInlineDrawings && affectInlineDrawings.size > 0) {
-            updateInlineDrawingPosition(line, affectInlineDrawings, drawingAnchor?.top);
+            updateInlineDrawingPosition(
+                line,
+                affectInlineDrawings,
+                ctx.dataModel.getUnitId?.() ?? '',
+                drawingAnchor?.top,
+                affectNonInlineDrawings
+            );
         }
 
         const paragraphStyle = paragraphConfig?.paragraphStyle;
-        if (line.divides.length > 0) {
-            const lastDivide = line.divides[line.divides.length - 1];
-            const lastGlyph = lastDivide.glyphGroup[lastDivide.glyphGroup.length - 1];
+        const paragraphBackgroundColor = paragraphStyle?.shading?.backgroundColor;
+        if (paragraphBackgroundColor) {
+            line.backgroundColor = paragraphBackgroundColor;
+        }
+    });
 
-            if (lastGlyph?.streamType === DataStreamTreeTokenType.PARAGRAPH && paragraphStyle?.borderBottom) {
-                line.borderBottom = paragraphStyle.borderBottom;
+    updateParagraphBorders(ctx, pages);
+}
+
+export function updateParagraphBorders(
+    ctx: ILayoutContext,
+    pages: IDocumentSkeletonPage[],
+    targetPages: IDocumentSkeletonPage[] = pages
+) {
+    const targetPageSet = new Set(targetPages);
+    const renderLines: Array<{
+        line: IDocumentSkeletonLine;
+        paragraphBorders?: IDocumentSkeletonParagraphBorders;
+        segmentId?: string;
+        target: boolean;
+    }> = [];
+    const bordersByParagraphStyle = new Map<IParagraphStyle, IDocumentSkeletonParagraphBorders>();
+
+    lineIterator(pages, (line, _, __, page) => {
+        const { segmentId } = page;
+        const paragraphConfig = ctx.paragraphConfigCache.get(segmentId)?.get(line.paragraphIndex);
+        const paragraphStyle = paragraphConfig?.paragraphStyle;
+        let paragraphBorders = paragraphStyle == null ? undefined : bordersByParagraphStyle.get(paragraphStyle);
+        if (paragraphStyle && !paragraphBorders && (paragraphStyle.borderTop ||
+                paragraphStyle.borderBottom ||
+                paragraphStyle.borderLeft ||
+                paragraphStyle.borderRight ||
+                paragraphStyle.borderBetween)) {
+            paragraphBorders = {
+                borderTop: paragraphStyle.borderTop,
+                borderBottom: paragraphStyle.borderBottom,
+                borderLeft: paragraphStyle.borderLeft,
+                borderRight: paragraphStyle.borderRight,
+                borderBetween: paragraphStyle.borderBetween,
+            };
+            bordersByParagraphStyle.set(paragraphStyle, paragraphBorders);
+        }
+        const target = targetPageSet.has(page);
+        if (target && paragraphConfig) {
+            line.paragraphBorders = paragraphBorders;
+        }
+
+        renderLines.push({
+            line,
+            paragraphBorders: paragraphConfig ? paragraphBorders : line.paragraphBorders,
+            segmentId,
+            target,
+        });
+    });
+
+    renderLines.forEach(({ line, paragraphBorders, segmentId, target }, index) => {
+        const previous = renderLines[index - 1];
+        const next = renderLines[index + 1];
+        const updateTop = target || previous?.target === true;
+        const updateBottom = target || next?.target === true;
+        if (!target && !updateTop && !updateBottom) {
+            return;
+        }
+
+        const hasMatchingPrevious = line.paragraphStart &&
+            previous != null &&
+            previous.segmentId === segmentId &&
+            previous.line.paragraphIndex !== line.paragraphIndex &&
+            previous.paragraphBorders != null &&
+            paragraphBorders != null &&
+            isParagraphEnd(previous.line) &&
+            hasSameParagraphBorderSet(previous.paragraphBorders, paragraphBorders);
+        const hasMatchingNext = isParagraphEnd(line) &&
+            next != null &&
+            next.segmentId === segmentId &&
+            next.line.paragraphIndex !== line.paragraphIndex &&
+            next.paragraphBorders != null &&
+            paragraphBorders != null &&
+            hasSameParagraphBorderSet(paragraphBorders, next.paragraphBorders);
+
+        if (updateTop) {
+            line.borderTop = line.paragraphStart && !hasMatchingPrevious
+                ? paragraphBorders?.borderTop
+                : undefined;
+        }
+        if (target) {
+            line.borderLeft = paragraphBorders?.borderLeft;
+            line.borderRight = paragraphBorders?.borderRight;
+        }
+        if (updateBottom) {
+            line.borderBetween = undefined;
+            line.borderBottom = undefined;
+            if (isParagraphEnd(line)) {
+                if (hasMatchingNext && paragraphBorders?.borderBetween) {
+                    line.borderBetween = paragraphBorders.borderBetween;
+                } else if (paragraphBorders?.borderBottom) {
+                    line.borderBottom = paragraphBorders.borderBottom;
+                }
             }
         }
     });
@@ -560,6 +871,521 @@ export function lineIterator(
     }
 }
 
+export type DocumentSkeletonLineSource = 'page' | 'table-cell' | 'column';
+
+export interface IDocumentSkeletonLineIteratorOptions {
+    docsLeft?: number;
+    pageMarginTop?: number;
+    tableCellInsetX?: number;
+    unitId?: string;
+}
+
+export interface IDocumentSkeletonLineContext {
+    clipLeft?: number;
+    clipRight?: number;
+    column: IDocumentSkeletonColumn;
+    line: IDocumentSkeletonLine;
+    lineWidth: number;
+    page: IDocumentSkeletonPage;
+    pageIndex: number;
+    pageLeft: number;
+    section: IDocumentSkeletonSection;
+    sectionTop: number;
+    source: DocumentSkeletonLineSource;
+    visualLeft?: number;
+    visualWidth?: number;
+}
+
+export type DocumentSkeletonTableSource = 'page' | 'column' | 'header' | 'footer';
+type HeaderFooterSkeletonMap = Map<string, Map<number, IDocumentSkeletonPage>>;
+
+export interface IDocumentSkeletonTableCellGeometry {
+    cell: IDocumentSkeletonPage;
+    cellRect: IBoundRectNoAngle;
+    clipLeft: number;
+    clipRight: number;
+    columnIndex: number;
+    pageLeft: number;
+    pageTop: number;
+    row: IDocumentSkeletonRow;
+    rowIndex: number;
+    visualLeft: number;
+    visualWidth: number;
+}
+
+export interface IDocumentSkeletonTableContext {
+    cells: IDocumentSkeletonTableCellGeometry[];
+    page: IDocumentSkeletonPage;
+    pageIndex: number;
+    pageLeft: number;
+    pageTop: number;
+    rootPage: IDocumentSkeletonPage;
+    source: DocumentSkeletonTableSource;
+    table: IDocumentSkeletonTable;
+    tableId: string;
+    tableRect: IBoundRectNoAngle;
+}
+
+export interface IDocumentSkeletonTableIteratorOptions {
+    includeCells?: boolean;
+    docsLeft?: number;
+    docsTop?: number;
+    pageMarginTop?: number;
+    resolveViewport?: boolean;
+    skeFooters?: HeaderFooterSkeletonMap;
+    skeHeaders?: HeaderFooterSkeletonMap;
+    tableCellInsetX?: number;
+    unitId?: string;
+}
+
+export function documentSkeletonTableIterator(
+    pages: IDocumentSkeletonPage[],
+    options: IDocumentSkeletonTableIteratorOptions = {}
+): IDocumentSkeletonTableContext[] {
+    const {
+        docsLeft = 0,
+        docsTop = 0,
+        includeCells = true,
+        pageMarginTop = 0,
+        resolveViewport = true,
+        skeFooters,
+        skeHeaders,
+        tableCellInsetX = 0,
+        unitId = '',
+    } = options;
+    const contexts: IDocumentSkeletonTableContext[] = [];
+    let rootPageDocumentTop = docsTop;
+
+    pages.forEach((rootPage, pageIndex) => {
+        const rootPageHeight = rootPage.pageHeight === Infinity ? 0 : rootPage.pageHeight;
+        const rootPageTop = rootPageDocumentTop + rootPage.marginTop;
+        const rootPageLeft = rootPage.marginLeft + docsLeft;
+
+        collectPageTables({
+            contexts,
+            docsLeft,
+            includeCells,
+            page: rootPage,
+            pageIndex,
+            pageLeft: rootPageLeft,
+            pageTop: rootPageTop,
+            rootPage,
+            source: 'page',
+            resolveViewport,
+            tableCellInsetX,
+            unitId,
+        });
+
+        const rootPageDocumentLeft = docsLeft + rootPage.marginLeft;
+        const headerPage = rootPage.headerId == null ? undefined : skeHeaders?.get(rootPage.headerId)?.get(rootPage.pageWidth);
+        if (headerPage != null) {
+            collectPageTables({
+                contexts,
+                docsLeft,
+                includeCells,
+                page: headerPage,
+                pageIndex,
+                pageLeft: rootPageDocumentLeft,
+                pageTop: rootPageDocumentTop + headerPage.marginTop,
+                rootPage,
+                source: 'header',
+                resolveViewport,
+                tableCellInsetX,
+                unitId,
+            });
+        }
+
+        const footerPage = rootPage.footerId == null ? undefined : skeFooters?.get(rootPage.footerId)?.get(rootPage.pageWidth);
+        if (footerPage != null) {
+            collectPageTables({
+                contexts,
+                docsLeft,
+                includeCells,
+                page: footerPage,
+                pageIndex,
+                pageLeft: rootPageDocumentLeft,
+                pageTop: rootPageDocumentTop + rootPage.pageHeight - footerPage.height - footerPage.marginBottom,
+                rootPage,
+                source: 'footer',
+                resolveViewport,
+                tableCellInsetX,
+                unitId,
+            });
+        }
+
+        rootPage.skeColumnGroups?.forEach((columnGroup) => {
+            columnGroup.columns.forEach((columnGroupColumn) => {
+                const nestedPage = columnGroupColumn.page;
+                const nestedPageLeft = rootPageLeft + columnGroup.left + columnGroupColumn.left + nestedPage.marginLeft;
+                const nestedPageTop = rootPageTop + columnGroup.top + columnGroupColumn.top + nestedPage.marginTop;
+
+                collectPageTables({
+                    contexts,
+                    docsLeft,
+                    includeCells,
+                    page: nestedPage,
+                    pageIndex,
+                    pageLeft: nestedPageLeft,
+                    pageTop: nestedPageTop,
+                    rootPage,
+                    source: 'column',
+                    resolveViewport,
+                    tableCellInsetX,
+                    unitId,
+                });
+            });
+        });
+
+        rootPageDocumentTop += rootPageHeight + pageMarginTop;
+    });
+
+    return contexts;
+}
+
+export function documentSkeletonLineIterator(
+    pages: IDocumentSkeletonPage[],
+    options: IDocumentSkeletonLineIteratorOptions,
+    cb: (context: IDocumentSkeletonLineContext) => void
+) {
+    const {
+        docsLeft = 0,
+        pageMarginTop = 0,
+        tableCellInsetX = 0,
+        unitId = '',
+    } = options;
+
+    pages.forEach((page, pageIndex) => {
+        const pageHeight = page.pageHeight === Infinity ? 0 : page.pageHeight;
+        const pageTop = (pageHeight + pageMarginTop) * pageIndex + page.marginTop;
+        const pageLeft = page.marginLeft;
+
+        visitPageLines(page, {
+            pageIndex,
+            pageLeft,
+            pageTop,
+            source: 'page',
+            getBounds: (linePage, column, section) => getPageLineBounds(linePage, column, section.columns.length, pageLeft),
+        }, cb);
+
+        page.skeTables?.forEach((table) => {
+            const sourceTableId = getSourceTableId(table.tableId);
+            const viewport = getDocsTableRenderViewport(unitId, sourceTableId);
+            const hasHorizontalViewport = hasDocsTableHorizontalViewport(viewport);
+            const tableViewportLeft = getDocsTableViewportLeft(viewport, pageLeft + table.left, docsLeft);
+            const tableViewportRight = tableViewportLeft + (hasHorizontalViewport ? viewport.viewportWidth : table.width);
+            const tableScrollLeft = hasHorizontalViewport ? viewport.scrollLeft : 0;
+
+            table.rows.forEach((row) => {
+                row.cells.forEach((cell) => {
+                    const cellTop = pageTop + table.top + row.top + cell.marginTop;
+                    const cellLeft = pageLeft + table.left + cell.left - tableScrollLeft + cell.marginLeft;
+                    const cellContentRight = cellLeft + cell.pageWidth - cell.marginLeft - cell.marginRight;
+                    const visualLeft = cellLeft + tableCellInsetX;
+                    const visualRight = cellContentRight - tableCellInsetX;
+                    const visualWidth = Math.max(0, visualRight - visualLeft);
+                    const clipLeft = tableViewportLeft;
+                    const clipRight = Math.min(cellContentRight, tableViewportRight);
+
+                    if (visualWidth <= 0 || Math.min(visualRight, clipRight) <= Math.max(visualLeft, clipLeft)) {
+                        return;
+                    }
+
+                    visitPageLines(cell, {
+                        clipLeft,
+                        clipRight,
+                        pageIndex,
+                        pageLeft: cellLeft,
+                        pageTop: cellTop,
+                        source: 'table-cell',
+                        visualLeft,
+                        visualWidth,
+                    }, cb);
+                });
+            });
+        });
+
+        page.skeColumnGroups?.forEach((columnGroup) => {
+            columnGroup.columns.forEach((columnGroupColumn) => {
+                const nestedPage = columnGroupColumn.page;
+                const nestedPageLeft = pageLeft + columnGroup.left + columnGroupColumn.left + nestedPage.marginLeft;
+                const nestedPageTop = pageTop + columnGroup.top + columnGroupColumn.top + nestedPage.marginTop;
+                const visualWidth = Math.max(0, columnGroupColumn.width - nestedPage.marginLeft - nestedPage.marginRight);
+
+                visitPageLines(nestedPage, {
+                    pageIndex,
+                    pageLeft: nestedPageLeft,
+                    pageTop: nestedPageTop,
+                    source: 'column',
+                    getBounds: (_linePage, column) => ({
+                        lineWidth: Math.max(getFiniteWidth(column.width), visualWidth - column.left),
+                        visualLeft: nestedPageLeft + column.left,
+                        visualWidth: Math.max(getFiniteWidth(column.width), visualWidth - column.left),
+                    }),
+                }, cb);
+            });
+        });
+    });
+}
+
+export function getDocumentSkeletonNestedPageOffset(page: IDocumentSkeletonPage): { left: number; top: number } | undefined {
+    const parent = page.parent as {
+        left?: number;
+        page?: IDocumentSkeletonPage;
+        parent?: {
+            columnGroupId?: string;
+            columns?: unknown[];
+            left?: number;
+            top?: number;
+        };
+        top?: number;
+    } | undefined;
+
+    if (parent?.page === page && parent.parent?.columnGroupId && parent.parent.columns?.includes(parent)) {
+        return {
+            left: (parent.parent.left ?? 0) + (parent.left ?? 0),
+            top: (parent.parent.top ?? 0) + (parent.top ?? 0),
+        };
+    }
+}
+
+export interface IDocumentSkeletonColumnPagePathInfo {
+    columnGroupId: string;
+    columnIndex: number;
+    pageIndex: number;
+}
+
+export function getDocumentSkeletonColumnPagePathInfo(
+    position: { path?: (string | number)[] }
+): IDocumentSkeletonColumnPagePathInfo | undefined {
+    const { path } = position;
+    const pagesIndex = path?.indexOf('pages') ?? -1;
+    const columnGroupIndex = path?.indexOf('skeColumnGroups') ?? -1;
+    const columnsIndex = path?.indexOf('columns') ?? -1;
+
+    if (
+        pagesIndex === -1 ||
+        columnGroupIndex === -1 ||
+        columnsIndex === -1 ||
+        path?.[columnsIndex + 2] !== 'page'
+    ) {
+        return;
+    }
+
+    const pageIndex = path?.[pagesIndex + 1];
+    const columnGroupId = path?.[columnGroupIndex + 1];
+    const columnIndex = path?.[columnsIndex + 1];
+
+    if (typeof pageIndex !== 'number' || typeof columnGroupId !== 'string' || typeof columnIndex !== 'number') {
+        return;
+    }
+
+    return {
+        columnGroupId,
+        columnIndex,
+        pageIndex,
+    };
+}
+
+export function compareDocumentSkeletonNestedPagePathOrder(
+    pos1: { path?: (string | number)[] },
+    pos2: { path?: (string | number)[] }
+): boolean | undefined {
+    const columnGroupOrder1 = getDocumentSkeletonColumnPagePathInfo(pos1);
+    const columnGroupOrder2 = getDocumentSkeletonColumnPagePathInfo(pos2);
+
+    if (
+        columnGroupOrder1 &&
+        columnGroupOrder2 &&
+        columnGroupOrder1.pageIndex === columnGroupOrder2.pageIndex &&
+        columnGroupOrder1.columnGroupId === columnGroupOrder2.columnGroupId &&
+        columnGroupOrder1.columnIndex !== columnGroupOrder2.columnIndex
+    ) {
+        return columnGroupOrder1.columnIndex < columnGroupOrder2.columnIndex;
+    }
+}
+
+interface IVisitPageLineOptions {
+    clipLeft?: number;
+    clipRight?: number;
+    getBounds?: (
+        page: IDocumentSkeletonPage,
+        column: IDocumentSkeletonColumn,
+        section: IDocumentSkeletonSection
+    ) => Partial<Pick<IDocumentSkeletonLineContext, 'lineWidth' | 'visualLeft' | 'visualWidth'>> | undefined;
+    pageIndex: number;
+    pageLeft: number;
+    pageTop: number;
+    source: DocumentSkeletonLineSource;
+    visualLeft?: number;
+    visualWidth?: number;
+}
+
+function visitPageLines(
+    page: IDocumentSkeletonPage,
+    options: IVisitPageLineOptions,
+    cb: (context: IDocumentSkeletonLineContext) => void
+) {
+    page.sections.forEach((section) => {
+        section.columns.forEach((column) => {
+            column.lines.forEach((line) => {
+                const bounds = options.getBounds?.(page, column, section);
+
+                cb({
+                    clipLeft: options.clipLeft,
+                    clipRight: options.clipRight,
+                    column,
+                    line,
+                    lineWidth: bounds?.lineWidth ?? bounds?.visualWidth ?? getFiniteWidth(column.width),
+                    page,
+                    pageIndex: options.pageIndex,
+                    pageLeft: options.pageLeft,
+                    section,
+                    sectionTop: options.pageTop + section.top,
+                    source: options.source,
+                    visualLeft: bounds?.visualLeft ?? options.visualLeft,
+                    visualWidth: bounds?.visualWidth ?? options.visualWidth,
+                });
+            });
+        });
+    });
+}
+
+function getPageLineBounds(
+    page: IDocumentSkeletonPage,
+    column: IDocumentSkeletonColumn,
+    columnCount: number,
+    pageLeft: number
+): Pick<IDocumentSkeletonLineContext, 'lineWidth' | 'visualLeft' | 'visualWidth'> | undefined {
+    if (columnCount !== 1 || !Number.isFinite(page.pageWidth)) {
+        return;
+    }
+
+    const visualLeft = pageLeft + column.left;
+    const visualRight = page.pageWidth - page.marginRight;
+    const visualWidth = Math.max(0, visualRight - visualLeft);
+    const lineWidth = Math.max(0, page.pageWidth - page.marginLeft - page.marginRight);
+    return visualWidth > 0 ? { lineWidth, visualLeft, visualWidth } : undefined;
+}
+
+interface ICollectPageTablesOptions {
+    contexts: IDocumentSkeletonTableContext[];
+    docsLeft: number;
+    includeCells: boolean;
+    page: IDocumentSkeletonPage;
+    pageIndex: number;
+    pageLeft: number;
+    pageTop: number;
+    rootPage: IDocumentSkeletonPage;
+    resolveViewport: boolean;
+    source: DocumentSkeletonTableSource;
+    tableCellInsetX: number;
+    unitId: string;
+}
+
+function collectPageTables(options: ICollectPageTablesOptions): void {
+    const {
+        contexts,
+        docsLeft,
+        includeCells,
+        page,
+        pageIndex,
+        pageLeft,
+        pageTop,
+        resolveViewport,
+        rootPage,
+        source,
+        tableCellInsetX,
+        unitId,
+    } = options;
+
+    page.skeTables?.forEach((table, tableId) => {
+        const effectiveTableId = table.tableId ?? tableId;
+        const tableLeft = pageLeft + table.left;
+        const tableTop = pageTop + table.top;
+        const sourceTableId = getSourceTableId(effectiveTableId);
+        const viewport = resolveViewport ? getDocsTableRenderViewport(unitId, sourceTableId) : null;
+        const hasHorizontalViewport = hasDocsTableHorizontalViewport(viewport);
+        const tableViewportLeft = getDocsTableViewportLeft(viewport, pageLeft + table.left, docsLeft);
+        const tableViewportRight = tableViewportLeft + (hasHorizontalViewport ? viewport.viewportWidth : table.width);
+        const tableScrollLeft = hasHorizontalViewport ? viewport.scrollLeft : 0;
+        const cells: IDocumentSkeletonTableCellGeometry[] = [];
+
+        if (includeCells) {
+            table.rows.forEach((row, rowIndex) => {
+                row.cells.forEach((cell, columnIndex) => {
+                    if ((cell as IDocumentSkeletonPage & { isMergedCellCovered?: boolean }).isMergedCellCovered) {
+                        return;
+                    }
+
+                    const cellMarginLeft = cell.marginLeft ?? 0;
+                    const cellMarginRight = cell.marginRight ?? 0;
+                    const cellMarginTop = cell.marginTop ?? 0;
+                    const cellMarginBottom = cell.marginBottom ?? 0;
+                    const cellPageWidth = cell.pageWidth ?? 0;
+                    const cellPageHeight = cell.pageHeight ?? 0;
+                    const cellTop = tableTop + (row.top ?? 0) + cellMarginTop;
+                    const cellLeft = tableLeft + (cell.left ?? 0) - tableScrollLeft + cellMarginLeft;
+                    const cellContentRight = cellLeft + cellPageWidth - cellMarginLeft - cellMarginRight;
+                    const visualLeft = cellLeft + tableCellInsetX;
+                    const visualRight = cellContentRight - tableCellInsetX;
+                    const visualWidth = Math.max(0, visualRight - visualLeft);
+                    const clipLeft = tableViewportLeft;
+                    const clipRight = Math.min(cellContentRight, tableViewportRight);
+
+                    if (visualWidth <= 0 || Math.min(visualRight, clipRight) <= Math.max(visualLeft, clipLeft)) {
+                        return;
+                    }
+
+                    cells.push({
+                        cell,
+                        cellRect: {
+                            bottom: cellTop + cellPageHeight - cellMarginBottom - cellMarginTop,
+                            left: Math.max(cellLeft, tableViewportLeft),
+                            right: Math.min(cellContentRight, tableViewportRight),
+                            top: cellTop,
+                        },
+                        clipLeft,
+                        clipRight,
+                        columnIndex,
+                        pageLeft: cellLeft,
+                        pageTop: cellTop,
+                        row,
+                        rowIndex,
+                        visualLeft,
+                        visualWidth,
+                    });
+                });
+            });
+        }
+
+        contexts.push({
+            cells,
+            page,
+            pageIndex,
+            pageLeft,
+            pageTop,
+            rootPage,
+            source,
+            table,
+            tableId: effectiveTableId,
+            tableRect: {
+                bottom: tableTop + table.height,
+                left: tableLeft,
+                right: tableLeft + table.width,
+                top: tableTop,
+            },
+        });
+    });
+}
+
+function getSourceTableId(tableId: string): string {
+    return tableId.includes('#-#') ? tableId.split('#-#')[0] : tableId;
+}
+
+function getFiniteWidth(width: number | undefined): number {
+    return Number.isFinite(width) ? width! : 0;
+}
+
 export function columnIterator(
     pages: IDocumentSkeletonPage[],
     iteratorFunction: (column: IDocumentSkeletonColumn) => void
@@ -611,7 +1437,15 @@ export function getPositionHorizon(
             if (relativeFrom === ObjectRelativeFromH.LEFT_MARGIN) {
                 // TODO
             } else if (relativeFrom === ObjectRelativeFromH.MARGIN) {
-                // TODO
+                const { pageWidth, marginLeft, marginRight } = page;
+                const marginWidth = pageWidth - marginLeft - marginRight;
+                let absoluteLeft = marginLeft;
+                if (align === AlignTypeH.RIGHT) {
+                    absoluteLeft = marginLeft + marginWidth - objectWidth;
+                } else if (align === AlignTypeH.CENTER) {
+                    absoluteLeft = marginLeft + marginWidth / 2 - objectWidth / 2;
+                }
+                return absoluteLeft;
             } else if (relativeFrom === ObjectRelativeFromH.RIGHT_MARGIN) {
                 // TODO
             } else if (relativeFrom === ObjectRelativeFromH.INSIDE_MARGIN) {
@@ -629,12 +1463,9 @@ export function getPositionHorizon(
                 return absoluteLeft;
             }
         }
-    } else if (posOffset) {
-        const { pageWidth, marginLeft, marginRight } = page;
-        const boundaryLeft = marginLeft;
-        const boundaryRight = pageWidth - marginRight;
-
+    } else if (posOffset != null) {
         let absoluteLeft = 0;
+        const { marginLeft } = page;
         if (relativeFrom === ObjectRelativeFromH.COLUMN) {
             absoluteLeft = (isPageBreak ? 0 : column?.left || 0) + posOffset;
         } else if (relativeFrom === ObjectRelativeFromH.LEFT_MARGIN) {
@@ -651,9 +1482,6 @@ export function getPositionHorizon(
             absoluteLeft = posOffset;
         }
 
-        if (absoluteLeft + objectWidth > boundaryRight) {
-            absoluteLeft = boundaryRight - objectWidth;
-        }
         return absoluteLeft;
     } else if (percent) {
         const { pageWidth, marginLeft, marginRight } = page;
@@ -766,6 +1594,7 @@ export function getGlyphGroupWidth(divide: IDocumentSkeletonDivide) {
 }
 
 interface IFontCreateConfig {
+    documentCompatibilityPolicy?: IDocumentCompatibilityPolicy;
     fontStyle: IDocumentSkeletonFontStyle;
     textStyle: ITextStyle;
     charSpace: number;
@@ -800,6 +1629,7 @@ export function getFontConfigFromLastGlyph(
     const pageWidth = pageSize.width || Number.POSITIVE_INFINITY - marginLeft - marginRight;
 
     const result = {
+        documentCompatibilityPolicy: sectionBreakConfig.documentCompatibilityPolicy ?? getDocumentCompatibilityPolicy(),
         fontStyle: fontStyle!,
         textStyle: ts!,
         charSpace,
@@ -815,7 +1645,7 @@ function getBulletParagraphTextStyle(bullet: IBullet, viewModel: DocumentViewMod
     const { listType } = bullet;
     const lists = viewModel.getDataModel().getBulletPresetList();
 
-    return lists[listType].nestingLevel[0].paragraphProperties?.textStyle;
+    return lists[listType]?.nestingLevel?.[0]?.paragraphProperties?.textStyle;
 }
 
 const DEFAULT_TEXT_RUN = { ts: {}, st: 0, ed: 0 };
@@ -854,15 +1684,15 @@ export function getFontCreateConfig(
     const customRange = viewModel.getCustomRange(index + startIndex);
     const showCustomRange = customRange && (customRange.show !== false);
     const customRangeStyle = showCustomRange ? getCustomRangeStyle(customRange) : null;
-    const hasAddonStyle = showCustomRange || showCustomDecoration || !!bullet || paragraphStyle?.namedStyleType;
+    const hasAddonStyle = showCustomRange || showCustomDecoration || !!bullet || paragraphStyle?.namedStyleType || paragraphStyle?.textStyle != null;
     const { st, ed } = textRun;
-    let { ts: textStyle = {} } = textRun;
+    let textStyle: ITextStyle = textRun.ts ?? {};
     const cache = fontCreateConfigCache.getValue(st, ed);
     if (cache && !hasAddonStyle && originTextRun) {
         return cache;
     }
 
-    const { snapToGrid = BooleanNumber.TRUE, namedStyleType } = paragraphStyle;
+    const { snapToGrid = BooleanNumber.TRUE, namedStyleType, textStyle: paragraphTextStyle } = paragraphStyle;
     const bulletTextStyle = bullet ? getBulletParagraphTextStyle(bullet, viewModel) : null;
     // Apply named style if it exists
     const namedStyle = namedStyleType ? NAMED_STYLE_MAP[namedStyleType] : null;
@@ -870,13 +1700,20 @@ export function getFontCreateConfig(
     textStyle = {
         ...documentTextStyle,
         ...namedStyle,
+        ...paragraphTextStyle,
         ...textStyle,
         ...customDecorationStyle,
         ...customRangeStyle,
         ...bulletTextStyle,
     };
 
-    const fontStyle = getFontStyleString(textStyle);
+    const eastAsiaFontFamily = textStyle.eastAsiaFontFamily?.trim();
+    const fontStyle = getFontStyleString(eastAsiaFontFamily
+        ? {
+            ...textStyle,
+            ff: `${textStyle.ff || DEFAULT_STYLES.ff}, ${eastAsiaFontFamily}`,
+        }
+        : textStyle);
 
     const mixTextStyle: ITextStyle = {
         ...documentTextStyle,
@@ -891,6 +1728,7 @@ export function getFontCreateConfig(
         charSpace,
         gridType,
         snapToGrid,
+        documentCompatibilityPolicy: sectionBreakConfig.documentCompatibilityPolicy ?? getDocumentCompatibilityPolicy(),
         pageWidth,
     };
 
@@ -902,6 +1740,67 @@ export function getFontCreateConfig(
     return result;
 }
 
+export function getCustomRangeGlyphWidth(
+    index: number,
+    viewModel: DocumentViewModel,
+    paragraphNode: DataStreamTreeNode,
+    config: IFontCreateConfig
+): number | undefined {
+    return getCustomRangeGlyphMetrics(index, viewModel, paragraphNode, config)?.width;
+}
+
+/**
+ * Returns whether a custom range should occupy one measured glyph in the
+ * document skeleton while preserving its complete source text in the model.
+ *
+ * Visible whole-entity ranges such as mentions keep their existing shaping.
+ * The atomic behavior is reserved for hidden ranges whose renderer provides
+ * explicit glyph metrics, such as an inline formula.
+ */
+export function isMeasuredWholeEntityRange(
+    customRange: Nullable<ICustomRangeForInterceptor>
+): customRange is ICustomRangeForInterceptor {
+    if (!customRange?.wholeEntity || customRange.show !== false) {
+        return false;
+    }
+
+    return [
+        customRange.glyphAscentEm,
+        customRange.glyphDescentEm,
+        customRange.glyphWidthEm,
+    ].every((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0);
+}
+
+export function getCustomRangeGlyphMetrics(
+    index: number,
+    viewModel: DocumentViewModel,
+    paragraphNode: DataStreamTreeNode,
+    config: IFontCreateConfig
+): { ascent?: number; descent?: number; width?: number } | undefined {
+    const customRange = viewModel.getCustomRange(index + paragraphNode.startIndex);
+    if (!customRange) {
+        return undefined;
+    }
+
+    return getCustomRangeGlyphMetricsFromRange(customRange, config);
+}
+
+export function getCustomRangeGlyphMetricsFromRange(
+    customRange: ICustomRangeForInterceptor,
+    config: IFontCreateConfig
+): { ascent?: number; descent?: number; width?: number } | undefined {
+    const fontSize = ptToPixel(config.fontStyle.originFontSize);
+    const toPixels = (value: unknown) =>
+        typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value * fontSize : undefined;
+    const metrics = {
+        ascent: toPixels(customRange.glyphAscentEm),
+        descent: toPixels(customRange.glyphDescentEm),
+        width: toPixels(customRange.glyphWidthEm),
+    };
+
+    return metrics.ascent == null && metrics.descent == null && metrics.width == null ? undefined : metrics;
+}
+
 // Generate an empty doc skeleton with the initial states.
 export function getNullSkeleton(): IDocumentSkeletonCached {
     return {
@@ -911,14 +1810,18 @@ export function getNullSkeleton(): IDocumentSkeletonCached {
         st: 0,
         skeHeaders: new Map(),
         skeFooters: new Map(),
-        skeListLevel: new Map(), // TODO: 移到 context 中管理？
-        drawingAnchor: new Map(), // TODO: 移到 context 中管理
+        skeListLevel: new Map(), // TODO: Move to context management?
+        drawingAnchor: new Map(), // TODO: Move to context management
     };
 }
 
 export function setPageParent(pages: IDocumentSkeletonPage[], parent: IDocumentSkeletonCached) {
     for (const page of pages) {
         page.parent = parent;
+        for (const note of page.notes ?? []) {
+            note.parent = page;
+            note.page.parent = note;
+        }
     }
 }
 
@@ -934,13 +1837,41 @@ export interface IFloatObject {
     width: number;
     height: number;
     angle: number;
+    behindDoc?: BooleanNumber;
+    layoutType?: PositionedObjectLayoutType;
     type: FloatObjectType;
     positionV: IObjectPositionV;
 }
 
 // The context state of the layout process, which is used to store some cache and intermediate states in the typesetting process,
 // as well as identifying information such as the pointer of the layout.
+export interface IDocumentPaginationMetrics {
+    /** Paragraphs that entered the Word-compatible pagination decision path. */
+    constrainedParagraphs: number;
+    /** Paragraphs that stayed on the no-constraint fast path. */
+    noConstraintParagraphs: number;
+    /** Already-shaped lines inspected by pagination checkpoints. */
+    measuredLineCount: number;
+    /** Bounded local pagination adjustments; at most one per paragraph or keep chain. */
+    retryCount: number;
+    /** Already-shaped lines moved by a pagination adjustment. */
+    movedLineCount: number;
+    /** Paragraphs inspected while walking backward through keep-next chains. */
+    keepNextScanCount: number;
+    /** Largest number of line references retained by one local checkpoint. */
+    peakCheckpointLineCount: number;
+}
+
 export interface ILayoutContext {
+    noteReferences?: ReadonlyMap<number, INoteReferenceLayout>;
+    footnoteLayout?: DocumentFootnoteLayout;
+    endnoteLayout?: DocumentEndnoteLayout;
+    /** Virtual marker in a note body; it never consumes a persisted character. */
+    noteLabel?: string;
+    noteReferenceTextStyle?: ITextStyle;
+    /** Preserve the local note segment when the paragraph/table pipeline opens a continuation page. */
+    noteSegmentId?: string;
+    footnoteFirstColumn?: { index: number; top: number };
     // The view model of current layout document.
     viewModel: DocumentViewModel;
     // The data model of current layout document.
@@ -949,6 +1880,8 @@ export interface ILayoutContext {
     // documentStyle: IDocumentStyle;
     // Configuration for document layout.
     docsConfig: IDocsConfig;
+    modernPageWidth?: number;
+    modernHorizontalMargin?: number;
     // The initial layout skeleton, it will be the empty skeleton if it's the first layout.
     skeleton: IDocumentSkeletonCached;
     // The position coordinates of the layout,
@@ -970,6 +1903,19 @@ export interface ILayoutContext {
     paragraphConfigCache: Map<string, Map<number, IParagraphConfig>>;
     sectionBreakConfigCache: Map<number, ISectionBreakConfig>;
     paragraphsOpenNewPage: Set<number>;
+    paginationMetrics?: IDocumentPaginationMetrics;
+    /**
+     * Incremental layout may defer an expensive split-table calculation after
+     * the normal line-layout path has resolved its exact pagination context.
+     * Synchronous callers leave this unset.
+     */
+    deferSlicedTableLayout?: (request: {
+        curPage: IDocumentSkeletonPage;
+        viewModel: DocumentViewModel;
+        tableNode: DataStreamTreeNode;
+        sectionBreakConfig: ISectionBreakConfig;
+        availableHeight: number;
+    }) => boolean;
     // Use for hyphenation.
     hyphen: Hyphen;
     // Use for detect language for paragraph content.
@@ -977,6 +1923,7 @@ export interface ILayoutContext {
 }
 
 const DEFAULT_SECTION_BREAK: ISectionBreak = {
+    sectionId: 'section_render_default',
     columnProperties: [],
     columnSeparatorType: ColumnSeparatorType.NONE,
     sectionType: SectionType.SECTION_TYPE_UNSPECIFIED,
@@ -988,13 +1935,13 @@ export const DEFAULT_PAGE_SIZE = { width: Number.POSITIVE_INFINITY, height: Numb
 const DEFAULT_MODERN_DOCUMENT_STYLE: IDocumentStyle = {
     pageNumberStart: 1,
     pageSize: {
-        width: ptToPixel(595),
+        width: MODERN_DOCUMENT_WIDTH[ModernDocumentWidthMode.MEDIUM],
         height: Number.POSITIVE_INFINITY,
     },
-    marginTop: ptToPixel(50),
-    marginBottom: ptToPixel(50),
-    marginRight: ptToPixel(50),
-    marginLeft: ptToPixel(50),
+    marginTop: MODERN_DOCUMENT_DEFAULT_MARGIN,
+    marginBottom: MODERN_DOCUMENT_DEFAULT_MARGIN,
+    marginRight: MODERN_DOCUMENT_DEFAULT_MARGIN,
+    marginLeft: MODERN_DOCUMENT_DEFAULT_MARGIN,
     renderConfig: {
         vertexAngle: 0,
         centerAngle: 0,
@@ -1018,6 +1965,14 @@ const DEFAULT_MODERN_SECTION_BREAK: Partial<ISectionBreak> = {
     columnProperties: [],
     columnSeparatorType: ColumnSeparatorType.NONE,
     sectionType: SectionType.SECTION_TYPE_UNSPECIFIED,
+    defaultHeaderId: '',
+    defaultFooterId: '',
+    evenPageHeaderId: '',
+    evenPageFooterId: '',
+    firstPageHeaderId: '',
+    firstPageFooterId: '',
+    evenAndOddHeaders: BooleanNumber.FALSE,
+    useFirstPageHeaderFooter: BooleanNumber.FALSE,
 };
 
 export function prepareSectionBreakConfig(ctx: ILayoutContext, nodeIndex: number) {
@@ -1025,13 +1980,37 @@ export function prepareSectionBreakConfig(ctx: ILayoutContext, nodeIndex: number
     const sectionNode = viewModel.getChildren()[nodeIndex];
     let { documentStyle } = dataModel;
     const { documentFlavor } = documentStyle;
-    let sectionBreak = viewModel.getSectionBreak(sectionNode.endIndex) || DEFAULT_SECTION_BREAK;
+    const explicitSectionBreak = viewModel.getSectionBreak(sectionNode.endIndex);
+    let sectionBreak = explicitSectionBreak || DEFAULT_SECTION_BREAK;
+    const sectionBreaks = viewModel.getChildren().map((node) => viewModel.getSectionBreak(node.endIndex) || DEFAULT_SECTION_BREAK);
+    sectionBreak = {
+        ...sectionBreak,
+        ...resolveSectionHeaderFooterReferences(documentStyle, sectionBreaks, nodeIndex),
+    };
 
     // If the configuration is in modern mode, use the style configuration of modern mode to overwrite the original configuration.
     // In modern mode, there are no pages, no sections, no columns. There are no headers and footers, and margins are all defaults.
     if (documentFlavor === DocumentFlavor.MODERN) {
-        sectionBreak = Object.assign({}, sectionBreak, DEFAULT_MODERN_SECTION_BREAK);
-        documentStyle = Object.assign({}, documentStyle, DEFAULT_MODERN_DOCUMENT_STYLE);
+        const modernPageWidth = ctx.modernPageWidth ?? documentStyle.pageSize?.width ?? DEFAULT_MODERN_DOCUMENT_STYLE.pageSize!.width;
+        const modernPageSize = {
+            ...DEFAULT_MODERN_DOCUMENT_STYLE.pageSize!,
+            width: modernPageWidth,
+        };
+        // Imported sections can retain their own paper size. It must not
+        // override the continuous page when the document switches to modern
+        // mode, otherwise layout still paginates and pointer bounds stop at
+        // the first sheet of paper while rendering merges the entire document.
+        const modernLayout = {
+            pageSize: modernPageSize,
+            ...(ctx.modernHorizontalMargin == null
+                ? {}
+                : {
+                    marginLeft: ctx.modernHorizontalMargin,
+                    marginRight: ctx.modernHorizontalMargin,
+                }),
+        };
+        sectionBreak = Object.assign({}, sectionBreak, DEFAULT_MODERN_SECTION_BREAK, modernLayout);
+        documentStyle = Object.assign({}, documentStyle, DEFAULT_MODERN_DOCUMENT_STYLE, modernLayout);
     }
 
     const {
@@ -1067,10 +2046,14 @@ export function prepareSectionBreakConfig(ctx: ILayoutContext, nodeIndex: number
             wrapStrategy: WrapStrategy.UNSPECIFIED,
         },
     } = documentStyle;
+    const globalCharSpace = 0;
+    const globalLinePitch = 15.6;
+    const globalGridType = documentFlavor === DocumentFlavor.TRADITIONAL ? GridType.DEFAULT : GridType.LINES;
     const {
-        charSpace = 0, // charSpace
-        linePitch = 15.6, // linePitch pt
-        gridType = GridType.LINES, // gridType
+        sectionId,
+        charSpace = globalCharSpace, // charSpace
+        linePitch = globalLinePitch, // linePitch pt
+        gridType = globalGridType, // gridType
 
         pageNumberStart = global_pageNumberStart,
         pageSize = global_pageSize,
@@ -1088,7 +2071,9 @@ export function prepareSectionBreakConfig(ctx: ILayoutContext, nodeIndex: number
         evenPageFooterId = global_evenPageFooterId,
         firstPageHeaderId = global_firstPageHeaderId,
         firstPageFooterId = global_firstPageFooterId,
-        useFirstPageHeaderFooter = global_useFirstPageHeaderFooter,
+        useFirstPageHeaderFooter = documentFlavor === DocumentFlavor.TRADITIONAL && explicitSectionBreak
+            ? BooleanNumber.FALSE
+            : global_useFirstPageHeaderFooter,
         evenAndOddHeaders = global_evenAndOddHeaders,
 
         columnProperties = [],
@@ -1114,6 +2099,7 @@ export function prepareSectionBreakConfig(ctx: ILayoutContext, nodeIndex: number
     }
 
     const sectionBreakConfig: ISectionBreakConfig = {
+        sectionId,
         charSpace,
         linePitch,
         gridType,
@@ -1188,13 +2174,35 @@ export function getPageFromPath(skeletonData: IDocumentSkeletonCached, path: (st
             const pageIndex = pathCopy.shift() as number;
             page = skeletonData.pages[pageIndex];
         } else if (field === 'skeTables') {
+            if (page == null) {
+                return null;
+            }
+
             const tableId = pathCopy.shift() as string;
             pathCopy.shift(); // rows
             const rowIndex = pathCopy.shift() as number;
             pathCopy.shift(); // cells
             const cellIndex = pathCopy.shift() as number;
 
-            page = page!.skeTables?.get(tableId)?.rows[rowIndex]?.cells[cellIndex];
+            page = page.skeTables?.get(tableId)?.rows[rowIndex]?.cells[cellIndex];
+        } else if (field === 'notes') {
+            if (page == null) {
+                return null;
+            }
+            const footnoteIndex = pathCopy.shift() as number;
+            pathCopy.shift(); // page
+            page = page.notes?.[footnoteIndex]?.page;
+        } else if (field === 'skeColumnGroups') {
+            if (page == null) {
+                return null;
+            }
+
+            const columnGroupId = pathCopy.shift() as string;
+            pathCopy.shift(); // columns
+            const columnIndex = pathCopy.shift() as number;
+            pathCopy.shift(); // page
+
+            page = page.skeColumnGroups?.get(columnGroupId)?.columns[columnIndex]?.page;
         }
     }
 

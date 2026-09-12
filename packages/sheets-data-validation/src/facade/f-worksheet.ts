@@ -29,9 +29,11 @@ export interface IFWorksheetDataValidationMixin {
     /**
      * Get all data validation rules in current sheet.
      * @returns {FDataValidation[]} All data validation rules
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = fWorksheet.getDataValidations();
      * console.log(rules);
      * ```
@@ -39,16 +41,13 @@ export interface IFWorksheetDataValidationMixin {
     getDataValidations(): FDataValidation[];
 
     /**
-     * @deprecated use `getValidatorStatusAsync` instead
-     */
-    getValidatorStatus(): Promise<ObjectMatrix<Nullable<DataValidationStatus>>>;
-
-    /**
      * Get data validation validator status for current sheet.
      * @returns {Promise<ObjectMatrix<Nullable<DataValidationStatus>>>} matrix of validator status
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const status = await fWorksheet.getValidatorStatusAsync();
      * console.log(status);
      * ```
@@ -59,9 +58,11 @@ export interface IFWorksheetDataValidationMixin {
      * get data validation rule by rule id
      * @param ruleId - the rule id
      * @returns {Nullable<FDataValidation>} data validation rule
+     * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const rules = fWorksheet.getDataValidations();
      * console.log(fWorksheet.getDataValidation(rules[0]?.rule.uid));
      * ```
@@ -70,12 +71,13 @@ export interface IFWorksheetDataValidationMixin {
 
     /**
      * Get all data validation errors for current worksheet.
-     * @returns A promise that resolves to an array of validation errors.
+     * @returns {Promise<IDataValidationError[]>} A promise that resolves to an array of validation errors.
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
-     * const errors = await fWorksheet.getAllDataValidationError();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
+     * const errors = await fWorksheet.getAllDataValidationErrorAsync();
      * console.log(errors);
      * ```
      */
@@ -91,16 +93,12 @@ export class FWorksheetDataValidationMixin extends FWorksheet implements IFWorks
         return dataValidationModel.getRules(this._workbook.getUnitId(), this._worksheet.getSheetId()).map((rule) => new FDataValidation(rule, this._worksheet, this._injector));
     }
 
-    override getValidatorStatus(): Promise<ObjectMatrix<Nullable<DataValidationStatus>>> {
+    override getValidatorStatusAsync(): Promise<ObjectMatrix<Nullable<DataValidationStatus>>> {
         const validatorService = this._injector.get(SheetsDataValidationValidatorService);
         return validatorService.validatorWorksheet(
             this._workbook.getUnitId(),
             this._worksheet.getSheetId()
         );
-    }
-
-    override getValidatorStatusAsync(): Promise<ObjectMatrix<Nullable<DataValidationStatus>>> {
-        return this.getValidatorStatus();
     }
 
     override getDataValidation(ruleId: string): Nullable<FDataValidation> {
@@ -199,6 +197,5 @@ export class FWorksheetDataValidationMixin extends FWorksheet implements IFWorks
 
 FWorksheet.extend(FWorksheetDataValidationMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FWorksheet extends IFWorksheetDataValidationMixin {}
 }

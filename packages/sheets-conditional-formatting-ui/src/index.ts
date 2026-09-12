@@ -20,6 +20,7 @@ export { AddAverageCfCommand } from './commands/commands/add-average-cf.command'
 export { AddColorScaleConditionalRuleCommand } from './commands/commands/add-color-scale-cf.command';
 export { AddDataBarConditionalRuleCommand } from './commands/commands/add-data-bar-cf.command';
 export { AddDuplicateValuesCfCommand } from './commands/commands/add-duplicate-values-cf.command';
+export { AddIconSetConditionalRuleCommand } from './commands/commands/add-icon-set-cf.command';
 export { AddNumberCfCommand } from './commands/commands/add-number-cf.command';
 export { AddRankCfCommand } from './commands/commands/add-rank-cf.command';
 export { AddTextCfCommand } from './commands/commands/add-text-cf.command';
@@ -28,5 +29,6 @@ export { AddUniqueValuesCfCommand } from './commands/commands/add-unique-values-
 export { OpenConditionalFormattingOperator } from './commands/operations/open-conditional-formatting-panel';
 export type { IUniverSheetsConditionalFormattingUIConfig } from './config/config';
 export { ConditionalFormattingClearController } from './controllers/cf.clear.controller';
+export { menuSchema as SheetsConditionalFormattingUIMenuSchema } from './menu/schema';
 export { UniverSheetsConditionalFormattingMobileUIPlugin } from './mobile-plugin';
 export { UniverSheetsConditionalFormattingUIPlugin } from './plugin';

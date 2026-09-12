@@ -21,7 +21,7 @@ import type { IFComponentKey } from '@univerjs/sheets-ui/facade';
 import type { FRange } from '@univerjs/sheets/facade';
 import type { ISaveCellImagesOptions } from './f-range';
 import { SheetSkeletonService } from '@univerjs/sheets';
-import { ISheetDrawingService, RemoveSheetDrawingCommand, SetSheetDrawingCommand, transformToAxisAlignPosition, transformToDrawingPosition } from '@univerjs/sheets-drawing';
+import { ISheetDrawingService, SetSheetDrawingCommand, transformToAxisAlignPosition, transformToDrawingPosition } from '@univerjs/sheets-drawing';
 import { FileNamePart, IBatchSaveImagesService, SheetCanvasFloatDomManagerService } from '@univerjs/sheets-drawing-ui';
 import { transformComponentKey } from '@univerjs/sheets-ui/facade';
 import { FWorksheet } from '@univerjs/sheets/facade';
@@ -47,7 +47,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns {IFCanvasFloatDomResult | null} float dom info or null if not found
      * @example
      * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const floatDom = fWorksheet.getFloatDomById('myFloatDomId');
      * if (floatDom) {
      *   console.log('Float dom position:', floatDom.position);
@@ -63,7 +64,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns {IFCanvasFloatDomResult[]} array of float dom info
      * @example
      * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const allFloatDoms = fWorksheet.getAllFloatDoms();
      * allFloatDoms.forEach(floatDom => {
      *   console.log('Float dom ID:', floatDom.id);
@@ -80,7 +82,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns {FWorksheet} The worksheet instance for chaining
      * @example
      * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const firstFloatDom = fWorksheet.getAllFloatDoms()[0];
      *
      * if (!firstFloatDom) return;
@@ -118,7 +121,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns {FWorksheet} The worksheet instance for chaining
      * @example
      * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Update multiple float doms at once
      * const allFloatDoms = fWorksheet.getAllFloatDoms();
@@ -158,7 +162,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns {FWorksheet} The worksheet instance for chaining
      * @example
      * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const firstFloatDom = fWorksheet.getAllFloatDoms()[0];
      *
      * if (!firstFloatDom) return;
@@ -176,10 +181,11 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns float dom id and dispose function
      * @example
      * ```tsx
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
-     * // You should register components at an appropriate time (e.g., when Univer is loaded)
-     * // This is a React component. For Vue3 components, the third parameter should be `{ framework: 'vue3' }`
+     * // You should register components at an appropriate time (e.g., when Univer is loaded).
+     * // This is a React component. For other frameworks, pass a matching adapter option, such as `{ framework: 'vue3' }`.
      * univerAPI.registerComponent(
      *   'myFloatDom',
      *   ({ data }) => (
@@ -229,7 +235,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @returns float dom id and dispose function
      * @example
      * ```tsx
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Register a range loading component
      * const RangeLoading = () => {
@@ -323,8 +330,9 @@ export interface IFWorksheetDrawingUIMixin {
      * @param {string} [id] - The float dom id, if not given will be auto generated
      * @returns float dom id and dispose function
      * @example
-     * ```ts
-     * const fWorksheet = univerAPI.getActiveWorkbook().getActiveSheet();
+     * ```tsx
+     * const fWorksheet = univerAPI.getActiveWorkbook().getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Register a float button component
      * const FloatButton = () => {
@@ -392,7 +400,8 @@ export interface IFWorksheetDrawingUIMixin {
      * @example
      * ```ts
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Save cell images from multiple ranges
      * const range1 = fWorksheet.getRange('A1:B10');
@@ -454,13 +463,15 @@ export class FWorksheetDrawingUIMixin extends FWorksheet implements IFWorksheetD
         const subUnitId = this._worksheet.getSheetId();
 
         return Array.from(floatDomService.getFloatDomsBySubUnitId(unitId, subUnitId).values())
-            .map((info) => {
+            .map((info): IFCanvasFloatDomResult | null => {
                 const { rect } = info;
                 const drawingParm = this._injector.get(ISheetDrawingService).getDrawingByParam({
                     drawingId: info.id,
                     unitId,
                     subUnitId,
                 })! as ISheetFloatDom;
+
+                if (!drawingParm) return null;
 
                 const { left, top, width, height, flipX, flipY, angle, skewX, skewY } = rect.getState();
 
@@ -481,7 +492,8 @@ export class FWorksheetDrawingUIMixin extends FWorksheet implements IFWorksheetD
                     data: drawingParm.data,
                     id: info.id,
                 };
-            });
+            })
+            .filter((dom): dom is IFCanvasFloatDomResult => dom != null);
     }
 
     override updateFloatDom(id: string, config: Partial<Omit<IFCanvasFloatDomResult, 'id'>>): this {
@@ -580,28 +592,7 @@ export class FWorksheetDrawingUIMixin extends FWorksheet implements IFWorksheetD
 
     override removeFloatDom(id: string): this {
         const floatDomService = this._injector.get(SheetCanvasFloatDomManagerService);
-        const info = floatDomService.getFloatDomInfo(id);
-        if (!info) return this;
-
-        const { unitId, subUnitId } = info;
-        const drawingService = this._injector.get(ISheetDrawingService);
-        const drawing = drawingService.getDrawingByParam({
-            unitId,
-            subUnitId,
-            drawingId: id,
-        });
-
-        if (!drawing) return this;
-
-        // Then delete it
-        const res = this._commandService.syncExecuteCommand(RemoveSheetDrawingCommand.id, {
-            unitId,
-            drawings: [drawing],
-        });
-
-        if (!res) {
-            throw new Error('removeFloatDom failed');
-        }
+        floatDomService.removeFloatDom(id);
         return this;
     }
 
@@ -738,6 +729,5 @@ export class FWorksheetDrawingUIMixin extends FWorksheet implements IFWorksheetD
 
 FWorksheet.extend(FWorksheetDrawingUIMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FWorksheet extends IFWorksheetDrawingUIMixin { }
 }

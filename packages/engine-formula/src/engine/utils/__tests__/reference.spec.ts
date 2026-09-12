@@ -26,9 +26,53 @@ import {
     needsQuoting,
     serializeRange,
     serializeRangeToRefString,
+    splitTableStructuredRef,
 } from '../reference';
 
 describe('Test Reference', () => {
+    it('splits local, display, OOXML and legacy Table qualifiers', () => {
+        expect(splitTableStructuredRef('SalesTable[Amount]')).toEqual({
+            unitQualifier: '',
+            tableName: 'SalesTable',
+            columnStruct: '[Amount]',
+        });
+        expect(splitTableStructuredRef('Sales.xlsx!SalesTable[Amount]')).toEqual({
+            unitQualifier: 'Sales.xlsx',
+            tableName: 'SalesTable',
+            columnStruct: '[Amount]',
+        });
+        expect(splitTableStructuredRef("'Customer Base'!Orders[[#Data],[Total]]")).toEqual({
+            unitQualifier: 'Customer Base',
+            tableName: 'Orders',
+            columnStruct: '[[#Data],[Total]]',
+        });
+        expect(splitTableStructuredRef('[1]!SalesTable[Amount]')).toEqual({
+            unitQualifier: '1',
+            tableName: 'SalesTable',
+            columnStruct: '[Amount]',
+        });
+        expect(splitTableStructuredRef('[runtime-id]SalesTable[Amount]')).toEqual({
+            unitQualifier: 'runtime-id',
+            tableName: 'SalesTable',
+            columnStruct: '[Amount]',
+        });
+        expect(splitTableStructuredRef('[Urban Nomad | Official showcase]!Inventory[Safety stock]')).toEqual({
+            unitQualifier: 'Urban Nomad | Official showcase',
+            tableName: 'Inventory',
+            columnStruct: '[Safety stock]',
+        });
+        expect(splitTableStructuredRef('[Base name with ]] bracket]!Inventory[Safety stock]')).toEqual({
+            unitQualifier: 'Base name with ] bracket',
+            tableName: 'Inventory',
+            columnStruct: '[Safety stock]',
+        });
+        expect(splitTableStructuredRef("'Base name with ]] bracket'!Inventory[Safety stock]")).toEqual({
+            unitQualifier: 'Base name with ]] bracket',
+            tableName: 'Inventory',
+            columnStruct: '[Safety stock]',
+        });
+    });
+
     it('getAbsoluteRefTypeWithSingleString', () => {
         expect(getAbsoluteRefTypeWithSingleString('A4')).toEqual(AbsoluteRefType.NONE);
 
@@ -330,70 +374,70 @@ describe('Test Reference', () => {
         expect(handleRefStringInfo('A1:A2')).toStrictEqual({
             refBody: 'A1:A2',
             sheetName: '',
-            unitId: '',
+            unitQualifier: '',
         });
 
         expect(handleRefStringInfo('sheet1!A1')).toStrictEqual({
             refBody: 'A1',
             sheetName: 'sheet1',
-            unitId: '',
+            unitQualifier: '',
         });
 
         expect(handleRefStringInfo('[Book1]Sheet1!A1')).toStrictEqual({
             refBody: 'A1',
             sheetName: 'Sheet1',
-            unitId: 'Book1',
+            unitQualifier: 'Book1',
         });
         expect(handleRefStringInfo("'[Book1]Sheet1'!R2C3")).toStrictEqual({
             refBody: 'R2C3',
             sheetName: 'Sheet1',
-            unitId: 'Book1',
+            unitQualifier: 'Book1',
         });
 
         expect(handleRefStringInfo("'sheet-1'!A1")).toStrictEqual({
             refBody: 'A1',
             sheetName: 'sheet-1',
-            unitId: '',
+            unitQualifier: '',
         });
 
         // with single quote
         expect(handleRefStringInfo("'sheet''1'!A1")).toStrictEqual({
             refBody: 'A1',
             sheetName: "sheet'1",
-            unitId: '',
+            unitQualifier: '',
         });
 
         // with double quote
         expect(handleRefStringInfo("'sheet''''1'!A1")).toStrictEqual({
             refBody: 'A1',
             sheetName: "sheet''1",
-            unitId: '',
+            unitQualifier: '',
         });
 
         expect(handleRefStringInfo("'[Book-1.xlsx]Sheet1'!$A$4")).toStrictEqual({
             refBody: '$A$4',
             sheetName: 'Sheet1',
-            unitId: 'Book-1.xlsx',
+            unitQualifier: 'Book-1.xlsx',
         });
 
         // with single quote
         expect(handleRefStringInfo("'[Book''1.xlsx]Sheet1'!$A$4")).toStrictEqual({
             refBody: '$A$4',
             sheetName: 'Sheet1',
-            unitId: "Book'1.xlsx",
+            unitQualifier: "Book'1.xlsx",
         });
 
         // with double quote
         expect(handleRefStringInfo("'[Book''''1.xlsx]Sheet1'!$A$4")).toStrictEqual({
             refBody: '$A$4',
             sheetName: 'Sheet1',
-            unitId: "Book''1.xlsx",
+            unitQualifier: "Book''1.xlsx",
         });
 
         expect(handleRefStringInfo("'[Book-1.xlsx]sheet-1'!$A$4")).toStrictEqual({
             refBody: '$A$4',
             sheetName: 'sheet-1',
-            unitId: 'Book-1.xlsx',
+            unitQualifier: 'Book-1.xlsx',
         });
     });
 

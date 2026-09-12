@@ -17,9 +17,8 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    hyperLink: {
+    'sheets-hyper-link-ui': {
         form: {
-            editTitle: '编辑链接',
             addTitle: '插入链接',
             label: '文本',
             labelPlaceholder: '输入文本',
@@ -38,6 +37,9 @@ const locale: typeof enUS = {
         menu: {
             add: '添加链接',
         },
+        permission: {
+            hyperLinkErr: '你没有权限插入链接。',
+        },
         message: {
             noSheet: '该子表已被删除',
             refError: '错误的引用',
@@ -45,6 +47,8 @@ const locale: typeof enUS = {
             coped: '链接已被复制到剪贴板',
         },
         popup: {
+            title: '超链接',
+            open: '打开链接',
             copy: '复制',
             edit: '编辑',
             cancel: '取消链接',

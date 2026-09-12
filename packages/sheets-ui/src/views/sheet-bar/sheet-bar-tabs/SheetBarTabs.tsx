@@ -17,17 +17,28 @@
 import type { ICommandInfo } from '@univerjs/core';
 import type { IUniverUIConfig } from '@univerjs/ui';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
+import type { LocaleKey } from '../../../locale/types';
+import type { IScrollState } from '../../../services/sheet-bar/type';
 import type { IBaseSheetBarProps } from './SheetBarItem';
-import type { IScrollState } from './utils/slide-tab-bar';
 import {
     ICommandService,
     IConfirmService,
+    Injector,
     IPermissionService,
     LocaleService,
     nameCharacterCheck,
     Quantity,
+    UniverInstanceType,
 } from '@univerjs/core';
-import { LockIcon } from '@univerjs/icons';
+import { IRenderManagerService } from '@univerjs/engine-render';
+import {
+    BasesMultiIcon,
+    BoardsMultiIcon,
+    DocsMultiIcon,
+    LockIcon,
+    SheetsMultiIcon,
+    SlidesMultiIcon,
+} from '@univerjs/icons';
 import {
     InsertSheetMutation,
     RangeProtectionRuleModel,
@@ -46,11 +57,15 @@ import {
 import { UI_PLUGIN_CONFIG_KEY, useConfigValue, useDependency, useObservable } from '@univerjs/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { merge } from 'rxjs';
-import { useActiveWorkbook } from '../../../components/hook';
+import { getEmbedSheetsTabCustomData } from '../../../embed-tab-anchor';
 import { IEditorBridgeService } from '../../../services/editor-bridge.service';
 import { ISheetBarService } from '../../../services/sheet-bar/sheet-bar.service';
+import { ISheetEmbedRuntimeService } from '../../../services/sheet-embed-runtime.service';
+import { SheetSkeletonManagerService } from '../../../services/sheet-skeleton-manager.service';
+import { useActiveWorkbook } from '../../hook';
 import { SheetBarItem } from './SheetBarItem';
 import { SheetBarTabsContextMenu } from './SheetBarTabsContextMenu';
+import { getSheetTabTargetOrder } from './utils/sheet-tab-drag-sort';
 import { SlideTabBar } from './utils/slide-tab-bar';
 
 const SCROLL_SHADOW_NONE = '';
@@ -62,6 +77,29 @@ interface IContextMenuAnchorRect {
     left: number;
     top: number;
     bottom: number;
+}
+
+interface IEmbedSheetTabProductIconProps {
+    childType: UniverInstanceType;
+}
+
+function EmbedSheetTabProductIcon({ childType }: IEmbedSheetTabProductIconProps) {
+    const className = 'univer-size-4 univer-shrink-0';
+
+    switch (childType) {
+        case UniverInstanceType.UNIVER_SHEET:
+            return <SheetsMultiIcon aria-hidden className={className} />;
+        case UniverInstanceType.UNIVER_DOC:
+            return <DocsMultiIcon aria-hidden className={className} />;
+        case UniverInstanceType.UNIVER_SLIDE:
+            return <SlidesMultiIcon aria-hidden className={className} />;
+        case UniverInstanceType.UNIVER_BASE:
+            return <BasesMultiIcon aria-hidden className={className} />;
+        case UniverInstanceType.UNIVER_BOARD:
+            return <BoardsMultiIcon aria-hidden className={className} />;
+        default:
+            return null;
+    }
 }
 
 function getScrollShadow(state: IScrollState) {
@@ -98,6 +136,7 @@ function shouldRefreshSheetTabs(commandInfo: ICommandInfo) {
 }
 
 export function SheetBarTabs() {
+    const injector = useDependency(Injector);
     const [sheetList, setSheetList] = useState<IBaseSheetBarProps[]>([]);
     const [activeSheetId, setActiveSheetId] = useState('');
     const [scrollShadow, setScrollShadow] = useState('');
@@ -106,8 +145,10 @@ export function SheetBarTabs() {
 
     const slideTabBarRef = useRef<SlideTabBar | null>(null);
     const slideTabBarContainerRef = useRef<HTMLDivElement>(null);
+    const activeSheetIdRef = useRef(activeSheetId);
 
     const commandService = useDependency(ICommandService);
+    const renderManagerService = useDependency(IRenderManagerService);
     const sheetBarService = useDependency(ISheetBarService);
     const localeService = useDependency(LocaleService);
     const confirmService = useDependency(IConfirmService);
@@ -117,6 +158,7 @@ export function SheetBarTabs() {
     const permissionService = useDependency(IPermissionService);
 
     const workbook = useActiveWorkbook()!;
+    const workbookRef = useRef(workbook);
     const resetOrder = useObservable(worksheetProtectionRuleModel.resetOrder$);
     const config = useConfigValue<IUniverUIConfig>(UI_PLUGIN_CONFIG_KEY);
     const showContextMenu = config?.contextMenu ?? true;
@@ -151,10 +193,10 @@ export function SheetBarTabs() {
     const openSheetNameErrorDialog = useCallback((id: string, description: string) => {
         confirmService.open({
             id,
-            title: { title: localeService.t('sheetConfig.sheetNameErrorTitle') },
+            title: { title: localeService.t<LocaleKey>('sheets-ui.sheetConfig.sheetNameErrorTitle') },
             children: { title: description },
-            cancelText: localeService.t('button.cancel'),
-            confirmText: localeService.t('button.confirm'),
+            cancelText: localeService.t<LocaleKey>('sheets-ui.button.cancel'),
+            confirmText: localeService.t<LocaleKey>('sheets-ui.button.confirm'),
             onClose() {
                 focusTabEditor();
                 confirmService.close(id);
@@ -171,7 +213,7 @@ export function SheetBarTabs() {
             return false;
         }
 
-        openSheetNameErrorDialog('sheetNameEmptyAlert', localeService.t('sheetConfig.sheetNameCannotIsEmptyError'));
+        openSheetNameErrorDialog('sheetNameEmptyAlert', localeService.t<LocaleKey>('sheets-ui.sheetConfig.sheetNameCannotIsEmptyError'));
         return true;
     }, [localeService, openSheetNameErrorDialog]);
 
@@ -180,12 +222,14 @@ export function SheetBarTabs() {
             return false;
         }
 
-        openSheetNameErrorDialog('sheetNameSpecCharAlert', localeService.t('sheetConfig.sheetNameSpecCharError'));
+        openSheetNameErrorDialog('sheetNameSpecCharAlert', localeService.t<LocaleKey>('sheets-ui.sheetConfig.sheetNameSpecCharError'));
         return true;
     }, [localeService, openSheetNameErrorDialog]);
 
-    const nameRepeatCheck = useCallback((name: string) => {
-        const currentSheetName = workbook.getActiveSheet()?.getName();
+    const nameRepeatCheck = useCallback((name: string, subUnitId?: string) => {
+        const currentSheetName = subUnitId
+            ? workbook.getSheetBySheetId(subUnitId)?.getName()
+            : workbook.getActiveSheet()?.getName();
         if (currentSheetName === name) {
             return false;
         }
@@ -198,10 +242,10 @@ export function SheetBarTabs() {
         const id = 'sheetNameRepeatAlert';
         confirmService.open({
             id,
-            title: { title: localeService.t('sheetConfig.sheetNameErrorTitle') },
-            children: { title: localeService.t('sheetConfig.sheetNameAlreadyExistsError') },
-            cancelText: localeService.t('button.cancel'),
-            confirmText: localeService.t('button.confirm'),
+            title: { title: localeService.t<LocaleKey>('sheets-ui.sheetConfig.sheetNameErrorTitle') },
+            children: { title: localeService.t<LocaleKey>('sheets-ui.sheetConfig.sheetNameAlreadyExistsError') },
+            cancelText: localeService.t<LocaleKey>('sheets-ui.button.cancel'),
+            confirmText: localeService.t<LocaleKey>('sheets-ui.button.confirm'),
             onClose() {
                 confirmService.close(id);
                 focusTabEditor();
@@ -236,6 +280,9 @@ export function SheetBarTabs() {
     const updateSheetItems = useCallback(() => {
         const activeSheet = workbook.getActiveSheet();
         const currentSubUnitId = activeSheet?.getSheetId() ?? '';
+        const embedRuntimeService = injector.has(ISheetEmbedRuntimeService)
+            ? injector.get(ISheetEmbedRuntimeService)
+            : undefined;
 
         const sheetListItems = workbook
             .getSheets()
@@ -244,26 +291,35 @@ export function SheetBarTabs() {
                 const worksheetRule = worksheetProtectionRuleModel.getRule(workbook.getUnitId(), sheet.getSheetId());
                 const hasSelectionRule = rangeProtectionRuleModel.getSubunitRuleList(workbook.getUnitId(), sheet.getSheetId()).length > 0;
                 const hasProtection = Boolean(worksheetRule?.permissionId || hasSelectionRule);
+                const embedData = getEmbedSheetsTabCustomData(sheet.getConfig());
+                const embedChildType = embedData?.childType ?? (embedData
+                    ? embedRuntimeService?.getSheetTabChildType?.({
+                        hostUnitId: workbook.getUnitId(),
+                        hostAnchorId: embedData.hostAnchorId,
+                        embedId: embedData.embedId,
+                    })
+                    : undefined);
 
                 return {
                     sheetId: sheet.getSheetId(),
-                    label: hasProtection
-                        ? (
-                            <>
-                                <LockIcon className="univer-shrink-0" />
-                                <span className="univer-truncate univer-outline-none">{sheet.getName()}</span>
-                            </>
-                        )
-                        : <span className="univer-truncate univer-outline-none">{sheet.getName()}</span>,
+                    label: (
+                        <>
+                            {embedChildType != null && <EmbedSheetTabProductIcon childType={embedChildType} />}
+                            {hasProtection && <LockIcon className="univer-shrink-0" />}
+                            <span className="univer-truncate univer-outline-none">{sheet.getName()}</span>
+                        </>
+                    ),
                     index,
                     selected: activeSheet === sheet,
                     color: sheet.getTabColor() ?? undefined,
                 } satisfies IBaseSheetBarProps;
             });
 
+        // eslint-disable-next-line react/set-state-in-effect
         setSheetList(sheetListItems);
+        // eslint-disable-next-line react/set-state-in-effect
         setActiveSheetId(currentSubUnitId);
-    }, [rangeProtectionRuleModel, workbook, worksheetProtectionRuleModel]);
+    }, [injector, rangeProtectionRuleModel, workbook, worksheetProtectionRuleModel]);
 
     const setTabEditor = useCallback(() => {
         slideTabBarRef.current?.getActiveItem()?.setEditor();
@@ -285,6 +341,46 @@ export function SheetBarTabs() {
             rightEnd: slideTabBar.isRightEnd(),
         });
     }, [sheetBarService]);
+
+    useEffect(() => {
+        activeSheetIdRef.current = activeSheetId;
+    }, [activeSheetId]);
+
+    useEffect(() => {
+        workbookRef.current = workbook;
+    }, [workbook]);
+
+    const syncActiveSheetRender = useCallback((subUnitId: string) => {
+        const render = renderManagerService.getRenderUnitById(workbookRef.current.getUnitId());
+        try {
+            render?.with(SheetSkeletonManagerService).setCurrent({ sheetId: subUnitId });
+            render?.scene.makeDirty(true);
+            render?.scene.render();
+        } catch {
+            // The normal command path owns render updates. This fallback only runs when that path was skipped.
+        }
+    }, [renderManagerService]);
+
+    const activateSheetTab = useCallback((subUnitId?: string) => {
+        if (!subUnitId || subUnitId === activeSheetIdRef.current) {
+            return;
+        }
+
+        commandService.executeCommand(SetWorksheetActiveOperation.id, {
+            subUnitId,
+            unitId: workbookRef.current.getUnitId(),
+        }).then((result) => {
+            if (result !== false) {
+                return;
+            }
+
+            const worksheet = workbookRef.current.getSheetBySheetId(subUnitId);
+            if (worksheet) {
+                workbookRef.current.setActiveSheet(worksheet);
+                syncActiveSheetRender(subUnitId);
+            }
+        });
+    }, [commandService, syncActiveSheetRender]);
 
     const observeResize = useCallback((slideTabBar: SlideTabBar) => {
         const slideTabBarContainer = slideTabBarContainerRef.current?.querySelector('[data-u-comp=slide-tab-bar]');
@@ -457,11 +553,16 @@ export function SheetBarTabs() {
                 });
             },
             onSlideEnd: async (event: Event, order: number) => {
-                await commandService.executeCommand(SetWorksheetOrderCommand.id, { order });
+                const targetOrder = getSheetTabTargetOrder(
+                    workbook.getSheetOrders(),
+                    workbook.getUnhiddenWorksheets(),
+                    order
+                );
+                await commandService.executeCommand(SetWorksheetOrderCommand.id, { order: targetOrder });
             },
             onChangeTab: (_event: MouseEvent, subUnitId: string) => {
                 // Do not use SetWorksheetActivateCommand, otherwise activation timing may be incorrect.
-                void commandService
+                commandService
                     .executeCommand(SetWorksheetActiveOperation.id, {
                         subUnitId,
                         unitId: workbook.getUnitId(),
@@ -470,8 +571,8 @@ export function SheetBarTabs() {
             onScroll: (state: IScrollState) => {
                 sheetBarService.setScroll(state);
             },
-            onNameCheckAlert: (name: string) => {
-                return nameEmptyCheck(name) || sheetNameSpecCharCheck(name) || nameRepeatCheck(name);
+            onNameCheckAlert: (name: string, subUnitId?: string) => {
+                return nameEmptyCheck(name) || sheetNameSpecCharCheck(name) || nameRepeatCheck(name, subUnitId);
             },
             onNameChangeCheck: canRenameActiveSheet,
         });
@@ -485,11 +586,9 @@ export function SheetBarTabs() {
     }, [
         canRenameActiveSheet,
         commandService,
-        getActiveTabRect,
         nameEmptyCheck,
         nameRepeatCheck,
         observeResize,
-        openContextMenu,
         sheetBarService,
         sheetNameSpecCharCheck,
         updateSheetItems,
@@ -513,6 +612,9 @@ export function SheetBarTabs() {
         const renameSubscription = sheetBarService.renameId$.subscribe(() => {
             setTabEditor();
         });
+        const activeSheetSubscription = workbook.activeSheet$.subscribe(() => {
+            updateSheetItems();
+        });
 
         return () => {
             commandDisposable.dispose();
@@ -521,6 +623,7 @@ export function SheetBarTabs() {
             scrollSubscription.unsubscribe();
             scrollXSubscription.unsubscribe();
             renameSubscription.unsubscribe();
+            activeSheetSubscription.unsubscribe();
             disconnectResizeObserver?.();
         };
     }, [commandService, initializeSlideTabBar, resetOrder, setTabEditor, sheetBarService, syncScrollState, updateSheetItems, workbook]);
@@ -533,6 +636,26 @@ export function SheetBarTabs() {
         const currentIndex = sheetList.findIndex((item) => item.sheetId === activeSheetId);
         slideTabBarRef.current?.update(currentIndex >= 0 ? currentIndex : 0);
     }, [activeSheetId, sheetList]);
+
+    useEffect(() => {
+        const handlePointerDownCapture = (event: PointerEvent) => {
+            const container = slideTabBarContainerRef.current;
+            const target = event.target;
+            if (!container || !(target instanceof Element)) {
+                return;
+            }
+
+            const tabElement = target.closest<HTMLElement>('[data-u-comp=slide-tab-item]');
+            if (!tabElement || !container.contains(tabElement)) {
+                return;
+            }
+
+            activateSheetTab(tabElement.getAttribute('data-id') ?? undefined);
+        };
+
+        document.addEventListener('pointerdown', handlePointerDownCapture, true);
+        return () => document.removeEventListener('pointerdown', handlePointerDownCapture, true);
+    }, [activateSheetTab]);
 
     useEffect(() => {
         const subscription = merge(
@@ -549,6 +672,7 @@ export function SheetBarTabs() {
 
     useEffect(() => {
         if (!showContextMenu && contextMenuVisible) {
+            // eslint-disable-next-line react/set-state-in-effect
             setContextMenuVisible(false);
         }
     }, [contextMenuVisible, showContextMenu]);
@@ -570,7 +694,7 @@ export function SheetBarTabs() {
                 <div
                     data-u-comp="slide-tab-bar"
                     role="tablist"
-                    aria-label="Sheet tabs"
+                    aria-label={localeService.t<LocaleKey>('sheets-ui.sheetConfig.sheetTabs')}
                     onKeyDown={onTabListKeyDown}
                     className={`
                       univer-flex univer-select-none univer-flex-row univer-items-center univer-overflow-hidden

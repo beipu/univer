@@ -14,21 +14,24 @@
  * limitations under the License.
  */
 
-import type { CSSProperties, ReactNode } from 'react';
-import type { ICustomLabelProps } from '../../../components/custom-label/CustomLabel';
+import type { Attributes, ReactNode } from 'react';
+import type { LocaleKey } from '../../../locale/types';
+import type { ICustomLabelProps } from '../../custom-label/CustomLabel';
+import { LocaleService } from '@univerjs/core';
 import { borderLeftBottomClassName, clsx, scrollbarClassName } from '@univerjs/design';
 import { CloseIcon } from '@univerjs/icons';
-import { useEffect, useMemo, useRef } from 'react';
-import { CustomLabel } from '../../../components/custom-label/CustomLabel';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ISidebarService } from '../../../services/sidebar/sidebar.service';
 import { useDependency, useObservable } from '../../../utils/di';
+import { CustomLabel } from '../../custom-label/CustomLabel';
+
+type SidebarCustomLabelProps = ICustomLabelProps & Attributes;
 
 export interface ISidebarMethodOptions {
     id?: string;
-    header?: ICustomLabelProps;
-    children?: ICustomLabelProps;
-    bodyStyle?: CSSProperties;
-    footer?: ICustomLabelProps;
+    header?: SidebarCustomLabelProps;
+    children?: SidebarCustomLabelProps;
+    footer?: SidebarCustomLabelProps;
 
     visible?: boolean;
 
@@ -38,36 +41,129 @@ export interface ISidebarMethodOptions {
     onOpen?: () => void;
 }
 
+export interface IRenderedSidebarOptions extends Omit<ISidebarMethodOptions, 'children' | 'footer' | 'header'> {
+    children?: ReactNode;
+    footer?: ReactNode;
+    header?: ReactNode;
+}
+
+export function renderSidebarOptions(options?: ISidebarMethodOptions): IRenderedSidebarOptions | null {
+    if (!options) return null;
+
+    const { children, footer, header, ...rest } = options;
+    const renderLabel = (label?: SidebarCustomLabelProps) => {
+        if (!label) return undefined;
+
+        const { key, ...props } = label;
+        return <CustomLabel key={key} {...props} />;
+    };
+
+    return {
+        ...rest,
+        children: renderLabel(children),
+        footer: renderLabel(footer),
+        header: renderLabel(header),
+    };
+}
+
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 800;
+
 export function Sidebar() {
+    const localeService = useDependency(LocaleService);
     const sidebarService = useDependency(ISidebarService);
     const sidebarOptions = useObservable<ISidebarMethodOptions>(sidebarService.sidebarOptions$);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const sidebarRef = useRef<HTMLElement>(null);
+    const closeButtonRef = useRef<HTMLButtonElement>(null);
+    const returnFocusElementRef = useRef<HTMLElement | null>(null);
+    const previousSidebarIdRef = useRef<string | undefined>(undefined);
+    const wasVisibleRef = useRef(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const dragWidthRef = useRef<number | null>(null);
 
-    const options = useMemo(() => {
-        if (!sidebarOptions) {
-            return null;
+    const options = useMemo(() => renderSidebarOptions(sidebarOptions), [sidebarOptions]);
+
+    useEffect(() => {
+        const isVisible = !!options?.visible;
+        const isNewPanel = isVisible && (!wasVisibleRef.current || previousSidebarIdRef.current !== options?.id);
+
+        if (isNewPanel) {
+            const activeElement = document.activeElement;
+            if (
+                activeElement instanceof HTMLElement &&
+                activeElement !== document.body &&
+                !sidebarRef.current?.contains(activeElement)
+            ) {
+                returnFocusElementRef.current = activeElement;
+            }
+            closeButtonRef.current?.focus();
+        } else if (!isVisible && wasVisibleRef.current) {
+            const activeElement = document.activeElement;
+            const shouldRestoreFocus = activeElement === document.body || !!sidebarRef.current?.contains(activeElement);
+            const returnFocusElement = returnFocusElementRef.current;
+            if (shouldRestoreFocus && returnFocusElement?.isConnected) {
+                returnFocusElement.focus({ preventScroll: true });
+            }
+            returnFocusElementRef.current = null;
         }
 
-        const copy = { ...sidebarOptions } as Omit<ISidebarMethodOptions, 'children'> & {
-            children?: ReactNode;
-            header?: ReactNode;
-            footer?: ReactNode;
+        wasVisibleRef.current = isVisible;
+        previousSidebarIdRef.current = options?.id;
+    }, [options?.id, options?.visible]);
+
+    // ESC key to close sidebar
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && sidebarService.visible) {
+                e.stopPropagation();
+                sidebarService.close();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [sidebarService]);
+
+    // Drag resize handlers
+    const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(true);
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    }, []);
+
+    useEffect(() => {
+        if (!isDragging) {
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            return;
+        }
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!sidebarRef.current) return;
+            const rect = sidebarRef.current.getBoundingClientRect();
+            const newWidth = rect.right - e.clientX;
+            const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(newWidth, MAX_SIDEBAR_WIDTH));
+            dragWidthRef.current = clampedWidth;
+            sidebarRef.current.style.width = `${clampedWidth}px`;
         };
 
-        for (const key of ['children', 'header', 'footer']) {
-            const k = key as keyof ISidebarMethodOptions;
-
-            if (sidebarOptions[k]) {
-                const { key, ...props } = sidebarOptions[k] as any;
-
-                if (props) {
-                    (copy as any)[k] = <CustomLabel key={key} {...props} />;
-                }
+        const handleMouseUp = () => {
+            setIsDragging(false);
+            if (dragWidthRef.current != null) {
+                sidebarService.setWidth(dragWidthRef.current);
+                dragWidthRef.current = null;
             }
-        }
+        };
 
-        return copy;
-    }, [sidebarOptions]);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging, sidebarService]);
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -93,14 +189,22 @@ export function Sidebar() {
     }, [sidebarService]);
 
     const width = useMemo(() => {
+        if (isDragging && dragWidthRef.current != null) {
+            return `${dragWidthRef.current}px`;
+        }
         if (!options?.visible) return 0;
+
+        const savedWidth = sidebarService.width;
+        if (savedWidth) {
+            return `${savedWidth}px`;
+        }
 
         if (typeof options.width === 'number') {
             return `${options.width}px`;
         }
 
         return options.width;
-    }, [options]);
+    }, [isDragging, options, sidebarService]);
 
     function handleClose() {
         sidebarService.close(sidebarOptions?.id);
@@ -108,16 +212,54 @@ export function Sidebar() {
 
     return (
         <section
+            ref={sidebarRef}
             data-u-comp="sidebar"
+            role="complementary"
+            aria-expanded={!!options?.visible}
+            aria-hidden={!options?.visible}
+            aria-label={localeService.t<LocaleKey>('ui.sidebar.panel')}
             className={clsx(`
-              univer-relative univer-h-full univer-bg-white univer-text-gray-900
-              dark:!univer-bg-gray-900 dark:!univer-text-white
+              univer-relative univer-h-full univer-flex-shrink-0 univer-bg-gray-0 univer-text-gray-900
+              dark:!univer-bg-gray-900 dark:!univer-text-gray-0
             `, {
                 'univer-w-96 univer-translate-x-0': options?.visible,
-                'univer-w-0 univer-translate-x-full': !options?.visible,
+                'univer-pointer-events-none univer-invisible univer-w-0 univer-translate-x-full': !options?.visible,
             })}
-            style={{ width }}
+            style={{ width: isDragging ? undefined : width }}
         >
+            {/* Resize handle */}
+            {options?.visible && (
+                <div
+                    className={`
+                      hover:univer-bg-primary-500/30
+                      active:univer-bg-primary-500/50
+                      univer-absolute univer-left-0 univer-top-0 univer-z-20 univer-h-full univer-w-1
+                      univer-cursor-col-resize univer-transition-colors
+                    `}
+                    onMouseDown={handleResizeMouseDown}
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={localeService.t<LocaleKey>('ui.sidebar.resize')}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                        if (!sidebarRef.current) return;
+                        const currentWidth = sidebarRef.current.getBoundingClientRect().width;
+                        let newWidth = currentWidth;
+                        if (e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            newWidth = Math.max(MIN_SIDEBAR_WIDTH, currentWidth - 20);
+                        } else if (e.key === 'ArrowRight') {
+                            e.preventDefault();
+                            newWidth = Math.min(MAX_SIDEBAR_WIDTH, currentWidth + 20);
+                        }
+                        if (newWidth !== currentWidth) {
+                            sidebarRef.current.style.width = `${newWidth}px`;
+                            sidebarService.setWidth(newWidth);
+                        }
+                    }}
+                />
+            )}
+
             <section
                 ref={scrollRef}
                 className={clsx(`
@@ -128,32 +270,39 @@ export function Sidebar() {
                 <header
                     className={`
                       univer-sticky univer-top-0 univer-z-10 univer-box-border univer-flex univer-cursor-default
-                      univer-items-center univer-justify-between univer-bg-white univer-p-4 univer-pb-2 univer-text-base
-                      univer-font-medium univer-text-gray-800
-                      dark:!univer-bg-gray-900 dark:!univer-text-white
+                      univer-items-center univer-justify-between univer-bg-gray-0 univer-p-4 univer-pb-2
+                      univer-text-base univer-font-medium univer-text-gray-800
+                      dark:!univer-bg-gray-900 dark:!univer-text-gray-0
                     `}
                 >
                     {options?.header}
 
-                    <a
+                    <button
+                        ref={closeButtonRef}
+                        type="button"
                         className={`
-                          univer-cursor-pointer univer-text-gray-500
+                          focus:univer-ring-primary-500/50
+                          univer-flex univer-size-6 univer-cursor-pointer univer-appearance-none univer-items-center
+                          univer-justify-center univer-rounded-sm univer-border-none univer-bg-transparent univer-p-0
+                          univer-text-gray-500
+                          focus:univer-outline-none focus:univer-ring-2
                           dark:!univer-text-gray-300
                         `}
                         onClick={handleClose}
+                        aria-label={localeService.t<LocaleKey>('ui.sidebar.close')}
                     >
                         <CloseIcon />
-                    </a>
+                    </button>
                 </header>
 
-                <section className="univer-box-border univer-cursor-default univer-px-4" style={options?.bodyStyle}>
+                <section className="univer-box-border univer-min-w-0 univer-cursor-default univer-px-4">
                     {options?.children}
                 </section>
 
                 {options?.footer && (
                     <footer
                         className={`
-                          univer-sticky univer-bottom-0 univer-box-border univer-bg-white univer-p-4
+                          univer-sticky univer-bottom-0 univer-box-border univer-bg-gray-0 univer-p-4
                           dark:!univer-bg-gray-900
                         `}
                     >

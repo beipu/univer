@@ -136,9 +136,9 @@ function DropdownMenuSubContent({
                   data-[side=right]:univer-slide-in-from-left-2
                   data-[side=top]:univer-slide-in-from-bottom-2
                   univer-z-[1080] univer-box-border univer-max-h-[--radix-popper-available-height]
-                  univer-overflow-y-auto univer-rounded-md univer-bg-white univer-p-1.5 univer-text-gray-900
+                  univer-overflow-y-auto univer-rounded-md univer-bg-gray-0 univer-p-1.5 univer-text-gray-900
                   univer-shadow-md
-                  dark:!univer-bg-gray-700 dark:!univer-text-white
+                  dark:!univer-bg-gray-700 dark:!univer-text-gray-0
                 `,
                 borderClassName,
                 scrollbarClassName,
@@ -170,9 +170,9 @@ function DropdownMenuContent({
                       data-[side=right]:univer-slide-in-from-left-2
                       data-[side=top]:univer-slide-in-from-bottom-2
                       univer-z-[1080] univer-box-border univer-max-h-[--radix-popper-available-height]
-                      univer-overflow-y-auto univer-rounded-md univer-bg-white univer-p-1.5 univer-text-gray-900
+                      univer-overflow-y-auto univer-rounded-md univer-bg-gray-0 univer-p-1.5 univer-text-gray-900
                       univer-shadow-md
-                      dark:!univer-bg-gray-700 dark:!univer-text-white
+                      dark:!univer-bg-gray-700 dark:!univer-text-gray-0
                     `,
                     borderClassName,
                     scrollbarClassName,
@@ -202,9 +202,14 @@ function DropdownMenuItem({
                 `
                   univer-relative univer-flex univer-cursor-default univer-select-none univer-items-center univer-gap-2
                   univer-rounded univer-px-2 univer-py-1.5 univer-text-sm univer-outline-none univer-transition-colors
-                  data-[disabled]:univer-pointer-events-none data-[disabled]:univer-opacity-50
+                  data-[disabled]:univer-pointer-events-none
+                  data-[variant=destructive]:univer-text-red-600
+                  data-[disabled]:univer-opacity-50
                   focus:univer-bg-gray-100
+                  data-[variant=destructive]:focus:univer-bg-red-50
+                  dark:data-[variant=destructive]:!univer-text-red-400
                   dark:focus:!univer-bg-gray-600
+                  dark:data-[variant=destructive]:focus:!univer-bg-red-900
                   [&>svg]:univer-size-4 [&>svg]:univer-shrink-0
                 `,
                 className

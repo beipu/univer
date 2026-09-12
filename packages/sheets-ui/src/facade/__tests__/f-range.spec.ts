@@ -68,17 +68,30 @@ describe('FRange UI mixin', () => {
         stringResult.disposableCollection.dispose();
         expect(componentManager.register).not.toHaveBeenCalled();
 
-        const componentResult = transformComponentKey(
-            { componentKey: () => null, isVue3: true },
+        const vueComponentResult = transformComponentKey(
+            { componentKey: () => null, framework: 'vue3' },
             componentManager as any
         );
-        expect(componentResult.key.startsWith('External_')).toBe(true);
+        expect(vueComponentResult.key.startsWith('External_')).toBe(true);
         expect(componentManager.register).toHaveBeenCalledWith(
-            componentResult.key,
+            vueComponentResult.key,
             expect.any(Function),
             { framework: 'vue3' }
         );
-        componentResult.disposableCollection.dispose();
+        vueComponentResult.disposableCollection.dispose();
+        expect(registerDisposable.dispose).toHaveBeenCalled();
+
+        const frameworkComponentResult = transformComponentKey(
+            { componentKey: () => null, framework: 'web-component' },
+            componentManager as any
+        );
+        expect(frameworkComponentResult.key.startsWith('external-')).toBe(true);
+        expect(componentManager.register).toHaveBeenCalledWith(
+            frameworkComponentResult.key,
+            expect.any(Function),
+            { framework: 'web-component' }
+        );
+        frameworkComponentResult.disposableCollection.dispose();
         expect(registerDisposable.dispose).toHaveBeenCalled();
     });
 
@@ -107,7 +120,7 @@ describe('FRange UI mixin', () => {
             })),
         };
         const renderManager: any = {
-            getRenderById: vi.fn(() => render),
+            getRenderUnitById: vi.fn(() => render),
         };
 
         tokens.set(IRenderManagerService, renderManager);
@@ -130,7 +143,7 @@ describe('FRange UI mixin', () => {
         });
         expect(typeof rect.toJSON).toBe('function');
 
-        renderManager.getRenderById = vi.fn(() => ({
+        renderManager.getRenderUnitById = vi.fn(() => ({
             with: vi.fn(() => ({
                 getSkeletonParam: vi.fn(() => null),
             })),

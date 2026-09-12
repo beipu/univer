@@ -15,9 +15,10 @@
  */
 
 import type { FocusEvent, InputHTMLAttributes, KeyboardEvent } from 'react';
-import { forwardRef, useEffect, useRef, useState } from 'react';
+import { forwardRef, useContext, useEffect, useRef, useState } from 'react';
 import { borderLeftClassName, borderLeftRTLClassName } from '../../helper/class-utilities';
 import { clsx } from '../../helper/clsx';
+import { ConfigContext } from '../config-provider/ConfigProvider';
 import { Input } from '../input/Input';
 
 export interface IInputNumberProps
@@ -39,6 +40,7 @@ export interface IInputNumberProps
     onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
     onPressEnter?: (e: KeyboardEvent<HTMLInputElement>) => void;
     allowEmpty?: boolean;
+    allowClear?: boolean;
 }
 
 export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
@@ -64,14 +66,16 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
             onFocus,
             onBlur,
             allowEmpty = false,
+            allowClear = false,
         },
         ref
     ) => {
+        const { locale } = useContext(ConfigContext);
         const [internalValue, setInternalValue] = useState<number | null>(
             value !== undefined ? value : defaultValue !== undefined ? defaultValue : null
         );
         const lastValidValueRef = useRef<number | null>(internalValue);
-        const [inputValue, setInputValue] = useState<string>(formatValue(internalValue));
+        const [inputValue, setInputValue] = useState<string>(() => formatValue(internalValue));
         const inputRef = useRef<HTMLInputElement>(null);
         const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
         const longPressIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -133,7 +137,7 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
             return String(formattedValue);
         }
 
-        function parseValue(val: string): number | null {
+        function parseNumberValue(val: string): number | null {
             if (!val) return null;
 
             let parsedValue = val;
@@ -178,37 +182,52 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
                     }
                 }
 
-                if (max !== undefined && result > max) {
-                    result = max;
-                }
-                if (min !== undefined && result < min) {
-                    result = min;
-                }
-
                 return result;
             } catch (e) {
                 return null;
             }
         }
 
-        function handleInputChange(value: string) {
-            setInputValue(value);
+        function clampValue(val: number | null): number | null {
+            if (val === null) return null;
 
+            if (max !== undefined && val > max) {
+                return max;
+            }
+            if (min !== undefined && val < min) {
+                return min;
+            }
+
+            return val;
+        }
+
+        function parseValue(val: string): number | null {
+            return clampValue(parseNumberValue(val));
+        }
+
+        function handleInputChange(value: string) {
             if (allowEmpty && value === '') {
+                setInputValue(value);
                 setInternalValue(null);
                 onChange?.(null);
                 return;
             }
 
-            const parsedValue = parseValue(value);
+            const parsedNumber = parseNumberValue(value);
+            const parsedValue = clampValue(parsedNumber);
+            const isOutOfRange = parsedNumber !== null && parsedValue !== parsedNumber;
+
+            setInputValue(isOutOfRange ? formatValue(parsedValue) : value);
             setInternalValue(parsedValue);
 
             onChange?.(parsedValue);
         }
 
         function handleBlur(e: FocusEvent<HTMLInputElement>) {
+            // Focus can move before the controlled-value effect has rendered its state updates.
+            const currentValue = value !== undefined ? value : internalValue;
             // If allowEmpty is true and input is empty, do not restore the last valid value
-            if (internalValue === null) {
+            if (currentValue === null) {
                 if (inputValue === '' && allowEmpty) {
                     // Keep the input empty
                     if (onChange) {
@@ -229,7 +248,7 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
             }
 
             // When blurring, format the value properly
-            let valueInRange = internalValue;
+            let valueInRange = currentValue;
 
             // Apply min/max constraints
             if (max !== undefined && valueInRange > max) {
@@ -239,14 +258,15 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
                 valueInRange = min;
             }
 
-            if (valueInRange !== internalValue) {
+            if (valueInRange !== currentValue) {
                 setInternalValue(valueInRange);
                 setInputValue(formatValue(valueInRange));
 
                 onChange?.(valueInRange);
             } else {
                 // Just ensure the display is formatted correctly
-                setInputValue(formatValue(internalValue));
+                setInternalValue(currentValue);
+                setInputValue(formatValue(currentValue));
             }
 
             onBlur?.(e);
@@ -323,6 +343,7 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
                         className={clsx('univer-box-border', inputClassName)}
                         size={size}
                         value={inputValue}
+                        allowClear={allowClear}
                         disabled={disabled}
                         onChange={handleInputChange}
                         onFocus={onFocus}
@@ -355,13 +376,13 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
                                       univer-items-center univer-justify-center univer-border-none univer-bg-transparent
                                       univer-p-0 univer-transition-colors
                                       hover:univer-bg-gray-100
-                                      dark:!univer-text-white
+                                      dark:!univer-text-gray-0
                                       dark:hover:!univer-bg-gray-600
                                     `,
                                     incrementDisabled && 'univer-cursor-not-allowed univer-opacity-60'
                                 )}
                                 role="button"
-                                aria-label="increment"
+                                aria-label={locale?.Accessibility.increment}
                                 aria-disabled={incrementDisabled}
                                 tabIndex={-1}
                                 onMouseDown={(e) => e.preventDefault()}
@@ -382,13 +403,13 @@ export const InputNumber = forwardRef<HTMLInputElement, IInputNumberProps>(
                                       univer-items-center univer-justify-center univer-border-none univer-bg-transparent
                                       univer-p-0 univer-transition-colors
                                       hover:univer-bg-gray-100
-                                      dark:!univer-text-white
+                                      dark:!univer-text-gray-0
                                       dark:hover:!univer-bg-gray-600
                                     `,
                                     decrementDisabled && 'univer-cursor-not-allowed univer-opacity-60'
                                 )}
                                 role="button"
-                                aria-label="decrement"
+                                aria-label={locale?.Accessibility.decrement}
                                 aria-disabled={decrementDisabled}
                                 tabIndex={-1}
                                 onMouseDown={(e) => e.preventDefault()}

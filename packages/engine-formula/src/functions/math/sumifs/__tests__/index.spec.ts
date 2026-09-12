@@ -28,6 +28,8 @@ import { IFormulaCurrentConfigService } from '../../../../services/current-data.
 import { IFunctionService } from '../../../../services/function.service';
 import { IFormulaRuntimeService } from '../../../../services/runtime.service';
 import { createFunctionTestBed } from '../../../__tests__/create-function-test-bed';
+import { Concatenate } from '../../../text/concatenate';
+import { FUNCTION_NAMES_TEXT } from '../../../text/function-names';
 import { getObjectValue } from '../../../util';
 import { FUNCTION_NAMES_MATH } from '../../function-names';
 import { Sumifs } from '../index';
@@ -57,6 +59,34 @@ const getTestWorkbookData = (): IWorkbookData => {
                             v: 4,
                             t: CellValueType.NUMBER,
                         },
+                        4: {
+                            v: 3,
+                            t: CellValueType.NUMBER,
+                        },
+                        5: {
+                            v: 4,
+                            t: CellValueType.NUMBER,
+                        },
+                        6: {
+                            v: '2025-01',
+                            t: CellValueType.STRING,
+                        },
+                        7: {
+                            v: '2025-03',
+                            t: CellValueType.STRING,
+                        },
+                        8: {
+                            v: '2025-01',
+                            t: CellValueType.STRING,
+                        },
+                        9: {
+                            v: 30,
+                            t: CellValueType.NUMBER,
+                        },
+                        10: {
+                            v: 0,
+                            t: CellValueType.NUMBER,
+                        },
                     },
                     1: {
                         0: {
@@ -74,6 +104,26 @@ const getTestWorkbookData = (): IWorkbookData => {
                         3: {
                             v: 5,
                             t: CellValueType.NUMBER,
+                        },
+                        4: {
+                            v: 4,
+                            t: CellValueType.NUMBER,
+                        },
+                        5: {
+                            v: 5,
+                            t: CellValueType.NUMBER,
+                        },
+                        8: {
+                            v: '2025-02',
+                            t: CellValueType.STRING,
+                        },
+                        9: {
+                            v: 40,
+                            t: CellValueType.NUMBER,
+                        },
+                        10: {
+                            v: '0',
+                            t: CellValueType.STRING,
                         },
                     },
                     2: {
@@ -93,6 +143,18 @@ const getTestWorkbookData = (): IWorkbookData => {
                             v: 6,
                             t: CellValueType.NUMBER,
                         },
+                        8: {
+                            v: '2025-03',
+                            t: CellValueType.STRING,
+                        },
+                        9: {
+                            v: 50,
+                            t: CellValueType.NUMBER,
+                        },
+                        10: {
+                            v: true,
+                            t: CellValueType.BOOLEAN,
+                        },
                     },
                     3: {
                         0: {
@@ -110,6 +172,28 @@ const getTestWorkbookData = (): IWorkbookData => {
                         3: {
                             v: 7,
                             t: CellValueType.NUMBER,
+                        },
+                        8: {
+                            v: '2025-04',
+                            t: CellValueType.STRING,
+                        },
+                        9: {
+                            v: 60,
+                            t: CellValueType.NUMBER,
+                        },
+                        10: {
+                            v: 5,
+                            t: CellValueType.NUMBER,
+                        },
+                    },
+                    4: {
+                        9: {
+                            v: 70,
+                            t: CellValueType.NUMBER,
+                        },
+                        10: {
+                            v: '5',
+                            t: CellValueType.STRING,
                         },
                     },
                 },
@@ -172,7 +256,8 @@ describe('Test sumifs function', () => {
         );
 
         functionService.registerExecutors(
-            new Sumifs(FUNCTION_NAMES_MATH.SUMIFS)
+            new Sumifs(FUNCTION_NAMES_MATH.SUMIFS),
+            new Concatenate(FUNCTION_NAMES_TEXT.CONCATENATE)
         );
 
         calculate = (formula: string) => {
@@ -228,6 +313,21 @@ describe('Test sumifs function', () => {
                 [7],
                 [4],
             ]);
+        });
+
+        it('Supports numeric criteria concatenated from cells', async () => {
+            const result = await calculate('=SUMIFS(A1:A4,B1:B4,">="&E1,B1:B4,"<="&F1)');
+            expect(result).toBe(5);
+        });
+
+        it('Supports text dates with criteria concatenated from cells', async () => {
+            const result = await calculate('=SUMIFS(A1:A4,I1:I4,">="&G1,I1:I4,"<="&H1)');
+            expect(result).toBe(6);
+        });
+
+        it('does not coerce numeric text when matching a wildcard criterion', async () => {
+            const result = await calculate('=SUMIFS(J1:J5,K1:K5,"<>",K1:K5,"<>*")');
+            expect(result).toBe(140);
         });
     });
 });

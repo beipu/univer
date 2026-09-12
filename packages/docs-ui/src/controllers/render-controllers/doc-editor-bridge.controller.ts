@@ -17,7 +17,15 @@
 import type { DocumentDataModel, ICommandInfo, Nullable } from '@univerjs/core';
 import type { IRichTextEditingMutationParams } from '@univerjs/docs';
 import type { IRenderContext, IRenderModule } from '@univerjs/engine-render';
-import { checkForSubstrings, Disposable, DisposableCollection, ICommandService, Inject, IUniverInstanceService, UniverInstanceType } from '@univerjs/core';
+import {
+    checkForSubstrings,
+    Disposable,
+    DisposableCollection,
+    ICommandService,
+    Inject,
+    IUniverInstanceService,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DocSkeletonManagerService, RichTextEditingMutation } from '@univerjs/docs';
 import { IRenderManagerService } from '@univerjs/engine-render';
 import { fromEvent } from 'rxjs';
@@ -73,7 +81,7 @@ export class DocEditorBridgeController extends Disposable implements IRenderModu
             return;
         }
 
-        const editorDataModel = this._univerInstanceService.getUniverDocInstance(unitId);
+        const editorDataModel = this._univerInstanceService.getUnit<DocumentDataModel>(unitId, UniverInstanceType.UNIVER_DOC);
         if (!editorDataModel) {
             return;
         }
@@ -166,7 +174,7 @@ export class DocEditorBridgeController extends Disposable implements IRenderModu
                     return;
                 }
                 const unitId = unit.getUnitId();
-                const render = this._renderManagerService.getRenderById(unitId);
+                const render = this._renderManagerService.getRenderUnitById(unitId);
                 const canvasEle = render?.engine.getCanvas().getCanvasEle();
                 if (canvasEle == null) {
                     return;
@@ -199,10 +207,9 @@ export class DocEditorBridgeController extends Disposable implements IRenderModu
                         return;
                     }
 
-                    const editor = this._editorService.getEditor(unitId);
-
                     // Only for Text editor?
-                    if (editor && !editor.params.scrollBar) {
+                    const editorRenderConfig = this._editorService.getEditorRenderConfig(unitId);
+                    if (editorRenderConfig && !editorRenderConfig.scrollBar) {
                         this._resize(unitId);
                     }
                 }

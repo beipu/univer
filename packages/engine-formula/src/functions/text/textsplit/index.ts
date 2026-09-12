@@ -15,6 +15,7 @@
  */
 
 import type { BaseValueObject } from '../../../engine/value-object/base-value-object';
+import { regexp } from '@univerjs/core';
 import { ErrorType } from '../../../basics/error-type';
 import { expandArrayValueObject } from '../../../engine/utils/array-object';
 import { ArrayValueObject } from '../../../engine/value-object/array-value-object';
@@ -33,10 +34,22 @@ export class Textsplit extends BaseFunction {
         const _matchMode = matchMode ?? NumberValueObject.create(0);
         const _padWith = padWith ?? StringValueObject.create(ErrorType.NA);
 
-        const { _variant: _colDelimiter, values: colDelimiterValue } = this._getStringValues(colDelimiter);
-
         const { _variant, values: rowDelimiterValue } = this._getStringValues(_rowDelimiter, false);
         _rowDelimiter = _variant;
+
+        const allowBlankColDelimiter =
+            rowDelimiter != null && !rowDelimiter.isNull() && !_rowDelimiter.isError() && rowDelimiterValue.length > 0;
+        let _colDelimiter: BaseValueObject;
+        let colDelimiterValue: string[];
+
+        if (allowBlankColDelimiter && this._isBlankScalarDelimiter(colDelimiter)) {
+            _colDelimiter = colDelimiter;
+            colDelimiterValue = [];
+        } else {
+            const { _variant: colDelimiterVariant, values } = this._getStringValues(colDelimiter);
+            _colDelimiter = colDelimiterVariant;
+            colDelimiterValue = values;
+        }
 
         const maxRowLength = Math.max(
             text.isArray() ? (text as ArrayValueObject).getRowCount() : 1,
@@ -212,7 +225,7 @@ export class Textsplit extends BaseFunction {
         let resultColsMaxCount = 1;
 
         let result = resultRows.map((row) => {
-            let cols = row.split(colDelimiterRegExp);
+            let cols = colDelimiterValue.length > 0 ? row.split(colDelimiterRegExp) : [row];
 
             if (ignoreEmptyValue) {
                 cols = cols.filter((col) => col !== '');
@@ -261,10 +274,10 @@ export class Textsplit extends BaseFunction {
 
         value += '';
 
-        return this._escapeRegExp(value);
+        return regexp.escapeRegExp(value);
     }
 
-    private _escapeRegExp(string: string): string {
-        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    private _isBlankScalarDelimiter(valueObject: BaseValueObject): boolean {
+        return !valueObject.isArray() && (valueObject.isNull() || `${valueObject.getValue()}` === '');
     }
 }

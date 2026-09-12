@@ -15,20 +15,21 @@
  */
 
 import type { ICellData, IDocDrawingBase, Nullable } from '@univerjs/core';
-import type { IReplaceSnapshotCommandParams } from '@univerjs/docs-ui';
 import type { IImageData } from '@univerjs/drawing';
 import type { ISheetLocationBase } from '@univerjs/sheets';
-import { Disposable, DOCS_NORMAL_EDITOR_UNIT_ID_KEY, DOCS_ZEN_EDITOR_UNIT_ID_KEY, ICommandService, Inject, Injector, InterceptorEffectEnum } from '@univerjs/core';
+import { Disposable, DOCS_NORMAL_EDITOR_UNIT_ID_KEY, Inject, Injector, InterceptorEffectEnum } from '@univerjs/core';
 import { DocDrawingController } from '@univerjs/docs-drawing';
-import { ReplaceSnapshotCommand } from '@univerjs/docs-ui';
 import { IDrawingManagerService } from '@univerjs/drawing';
-import { InterceptCellContentPriority, INTERCEPTOR_POINT, SheetInterceptorService } from '@univerjs/sheets';
+import { InterceptCellContentPriority, INTERCEPTOR_POINT, isCellImage, SheetInterceptorService } from '@univerjs/sheets';
 import { IEditorBridgeService } from '@univerjs/sheets-ui';
 import { getDrawingSizeByCell } from './sheet-drawing-update.controller';
 
 export function resizeImageByCell(injector: Injector, location: ISheetLocationBase, cell: Nullable<ICellData>) {
-    if (cell?.p?.body?.dataStream.length === 3 && cell.p?.drawingsOrder?.length === 1) {
-        const image = cell.p.drawings![cell.p.drawingsOrder[0]]! as IImageData & IDocDrawingBase;
+    const documentData = cell?.p;
+    const drawingId = isCellImage(documentData) && documentData?.drawingsOrder?.length === 1 ? documentData.drawingsOrder[0] : undefined;
+    const image = drawingId ? documentData?.drawings?.[drawingId] as IImageData & IDocDrawingBase : undefined;
+
+    if (image && documentData) {
         const imageSize = getDrawingSizeByCell(
             injector,
             {
@@ -52,8 +53,8 @@ export function resizeImageByCell(injector: Injector, location: ISheetLocationBa
             image.docTransform!.positionH.posOffset = 0;
             image.docTransform!.positionV.posOffset = 0;
 
-            cell.p.documentStyle.pageSize!.width = Infinity;
-            cell.p.documentStyle.pageSize!.height = Infinity;
+            documentData.documentStyle.pageSize!.width = Infinity;
+            documentData.documentStyle.pageSize!.height = Infinity;
             return true;
         }
     }
@@ -63,7 +64,6 @@ export function resizeImageByCell(injector: Injector, location: ISheetLocationBa
 
 export class SheetCellImageController extends Disposable {
     constructor(
-        @ICommandService private readonly _commandService: ICommandService,
         @Inject(SheetInterceptorService) private readonly _sheetInterceptorService: SheetInterceptorService,
         @Inject(Injector) private readonly _injector: Injector,
         @IDrawingManagerService private readonly _drawingManagerService: IDrawingManagerService,
@@ -86,18 +86,6 @@ export class SheetCellImageController extends Disposable {
                 this._drawingManagerService.initializeNotification(DOCS_NORMAL_EDITOR_UNIT_ID_KEY);
             }
         }));
-
-        this.disposeWithMe(this._commandService.onCommandExecuted((commandInfo) => {
-            if (commandInfo.id === ReplaceSnapshotCommand.id) {
-                const params = commandInfo.params as IReplaceSnapshotCommandParams;
-                const unitId = params.unitId;
-                if (unitId === DOCS_ZEN_EDITOR_UNIT_ID_KEY) {
-                    this._drawingManagerService.removeDrawingDataForUnit(DOCS_ZEN_EDITOR_UNIT_ID_KEY);
-                    this._docDrawingController.loadDrawingDataForUnit(DOCS_ZEN_EDITOR_UNIT_ID_KEY);
-                    this._drawingManagerService.initializeNotification(DOCS_ZEN_EDITOR_UNIT_ID_KEY);
-                }
-            }
-        }));
     }
 
     private _initCellContentInterceptor() {
@@ -108,7 +96,7 @@ export class SheetCellImageController extends Disposable {
                     effect: InterceptorEffectEnum.Style,
                     priority: InterceptCellContentPriority.CELL_IMAGE,
                     handler: (cell, pos, next) => {
-                        if (cell?.p && cell.p.drawingsOrder?.length) {
+                        if (cell && isCellImage(cell.p)) {
                             if (cell === pos.rawData) {
                                 cell = { ...pos.rawData };
                             }

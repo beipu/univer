@@ -18,18 +18,59 @@ import type { DependencyOverride } from '@univerjs/core';
 import type { MenuConfig } from '@univerjs/ui';
 
 export const DOCS_UI_PLUGIN_CONFIG_KEY = 'docs-ui.config';
+export const DOCS_UI_PLUGIN_NAME = 'DOC_UI_PLUGIN';
 
 export const configSymbol = Symbol(DOCS_UI_PLUGIN_CONFIG_KEY);
+
+export type DocFitMode = 'none' | 'fit-width';
+export type DocFitTarget = 'viewport' | 'container';
+export type DocFitAlign = 'center' | 'start';
+export type DocFitPaddingX = number | `${number}%`;
+
+export interface IDocFitToWidthOptions {
+    mode?: DocFitMode;
+    target?: DocFitTarget;
+    paddingX?: DocFitPaddingX;
+    minScale?: number;
+    maxScale?: number;
+    align?: DocFitAlign;
+}
 
 export interface IUniverDocsUIConfig {
     menu?: MenuConfig;
     container?: HTMLElement | string;
     toc?: boolean;
     footer?: boolean;
+    wordCount?: boolean;
+    placeholder?: boolean;
+    fitToWidth?: IDocFitToWidthOptions;
     override?: DependencyOverride;
 }
+
+export const DEFAULT_DOC_FIT_TO_WIDTH_OPTIONS: Required<Omit<IDocFitToWidthOptions, 'maxScale'>> & Pick<IDocFitToWidthOptions, 'maxScale'> = {
+    mode: 'none',
+    target: 'viewport',
+    paddingX: 20,
+    minScale: 1,
+    maxScale: undefined,
+    align: 'center',
+};
 
 export const defaultPluginConfig: IUniverDocsUIConfig = {
     toc: false,
     footer: true,
+    wordCount: true,
+    placeholder: true,
+    fitToWidth: DEFAULT_DOC_FIT_TO_WIDTH_OPTIONS,
+};
+
+export const defaultPluginMobileConfig: IUniverDocsUIConfig = {
+    ...defaultPluginConfig,
+    fitToWidth: {
+        ...DEFAULT_DOC_FIT_TO_WIDTH_OPTIONS,
+        mode: 'fit-width',
+        paddingX: 12,
+        minScale: 0,
+        maxScale: 1,
+    },
 };

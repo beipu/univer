@@ -15,28 +15,29 @@
  */
 
 import type { FormatType } from '@univerjs/sheets';
-import { ICommandService, LocaleService, Range } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
+import { ICommandService, LocaleService, Range, RegionService } from '@univerjs/core';
 import { Separator } from '@univerjs/design';
 import { SheetsSelectionsService } from '@univerjs/sheets';
 import {
+    getCurrencySymbolByLocale,
     getPatternPreview,
     getPatternType,
-    localeCurrencySymbolMap,
     SetNumfmtCommand,
     SheetsNumfmtCellContentController,
 } from '@univerjs/sheets-numfmt';
-import { ILayoutService, useDependency } from '@univerjs/ui';
+import { ILayoutService, useDependency, useObservable } from '@univerjs/ui';
 import { useMemo } from 'react';
 import { OpenNumfmtPanelOperator } from '../../commands/operations/open.numfmt.panel.operation';
-import { MENU_OPTIONS } from '../../menu/menu';
+import { MENU_OPTIONS } from '../../menu/number-format-options';
 
-export const MORE_NUMFMT_TYPE_KEY = 'sheet.numfmt.moreNumfmtType';
-export const OPTIONS_KEY = 'sheet.numfmt.moreNumfmtType.options';
+export const MORE_NUMFMT_TYPE_KEY = 'sheets-numfmt-ui.moreNumfmtType';
+export const OPTIONS_KEY = 'sheets-numfmt-ui.moreNumfmtType.options';
 
 export function MoreNumfmtType(props: { value?: string }) {
     const { value } = props;
     const localeService = useDependency(LocaleService);
-    const text = value ?? localeService.t('sheet.numfmt.general');
+    const text = value ?? localeService.t<LocaleKey>('sheets-numfmt-ui.general');
 
     return <span className="univer-text-sm">{text}</span>;
 };
@@ -44,8 +45,11 @@ export function MoreNumfmtType(props: { value?: string }) {
 export function Options() {
     const commandService = useDependency(ICommandService);
     const localeService = useDependency(LocaleService);
+    const regionService = useDependency(RegionService);
     const layoutService = useDependency(ILayoutService);
     const sheetsNumfmtCellContentController = useDependency(SheetsNumfmtCellContentController);
+    const direction = useObservable(localeService.direction$, localeService.getDirection());
+    const region = useObservable(regionService.currentRegion$, regionService.getCurrentRegion());
 
     const selectionManagerService = useDependency(SheetsSelectionsService);
     const setNumfmt = (pattern: string | null) => {
@@ -69,9 +73,9 @@ export function Options() {
     };
 
     const menuOptions = useMemo(() => {
-        const currencySymbol = localeCurrencySymbolMap.get(localeService.getCurrentLocale()) as string;
+        const currencySymbol = getCurrencySymbolByLocale(region);
         return MENU_OPTIONS(currencySymbol);
-    }, [localeService]);
+    }, [region]);
 
     const handleClick = (index: number) => {
         if (index === 0) {
@@ -89,7 +93,7 @@ export function Options() {
     const defaultValue = 1220;
 
     return (
-        <div className="univer-grid univer-gap-1 univer-p-1.5">
+        <div dir={direction} className="univer-grid univer-gap-1 univer-p-1.5">
             {menuOptions.map((item, index) => {
                 if (item === '|') {
                     return <Separator key={index} />;
@@ -106,7 +110,7 @@ export function Options() {
                         `}
                         onClick={() => handleClick(index)}
                     >
-                        <span>{localeService.t(item.label)}</span>
+                        <span>{localeService.t<LocaleKey>(item.label)}</span>
 
                         <span
                             className={`

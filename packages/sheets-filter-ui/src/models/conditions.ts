@@ -16,6 +16,7 @@
 
 import type { Nullable } from '@univerjs/core';
 import type { ICustomFilters, IFilterColumn } from '@univerjs/sheets-filter';
+import type { LocaleKey } from '../locale/types';
 import { BooleanNumber } from '@univerjs/core';
 import { CustomFilterOperator } from '@univerjs/sheets-filter';
 import { ExtendCustomFilterOperator, OperatorOrder } from './extended-operators';
@@ -42,7 +43,7 @@ export interface IFilterConditionItem {
     /**
      * Name of the filter condition. Should be an i18n key.
      */
-    label: string;
+    label: LocaleKey;
 
     and?: true;
 
@@ -77,7 +78,7 @@ export interface IFilterConditionItem {
 // eslint-disable-next-line ts/no-namespace
 export namespace FilterConditionItems {
     export const NONE: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.none',
+        label: 'sheets-filter-ui.conditions.none',
 
         operator: ExtendCustomFilterOperator.NONE,
         order: OperatorOrder.SECOND,
@@ -98,7 +99,7 @@ export namespace FilterConditionItems {
     // ------------------------------
 
     export const EMPTY: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.empty',
+        label: 'sheets-filter-ui.conditions.empty',
 
         operator: ExtendCustomFilterOperator.EMPTY,
         order: OperatorOrder.SECOND,
@@ -124,7 +125,7 @@ export namespace FilterConditionItems {
     };
 
     export const NOT_EMPTY: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.not-empty',
+        label: 'sheets-filter-ui.conditions.not-empty',
 
         operator: ExtendCustomFilterOperator.NOT_EMPTY,
         order: OperatorOrder.SECOND,
@@ -152,7 +153,7 @@ export namespace FilterConditionItems {
     // ------------------------------
 
     export const TEXT_CONTAINS: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.text-contains',
+        label: 'sheets-filter-ui.conditions.text-contains',
 
         operator: ExtendCustomFilterOperator.CONTAINS,
         order: OperatorOrder.FIRST,
@@ -188,7 +189,7 @@ export namespace FilterConditionItems {
     };
 
     export const DOES_NOT_CONTAIN: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.does-not-contain',
+        label: 'sheets-filter-ui.conditions.does-not-contain',
 
         operator: ExtendCustomFilterOperator.DOES_NOT_CONTAIN,
         order: OperatorOrder.FIRST,
@@ -222,7 +223,7 @@ export namespace FilterConditionItems {
     };
 
     export const STARTS_WITH: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.starts-with',
+        label: 'sheets-filter-ui.conditions.starts-with',
 
         operator: ExtendCustomFilterOperator.STARTS_WITH,
         order: OperatorOrder.FIRST,
@@ -252,7 +253,7 @@ export namespace FilterConditionItems {
     };
 
     export const ENDS_WITH: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.ends-with',
+        label: 'sheets-filter-ui.conditions.ends-with',
 
         operator: ExtendCustomFilterOperator.ENDS_WITH,
         order: OperatorOrder.FIRST,
@@ -282,7 +283,7 @@ export namespace FilterConditionItems {
     };
 
     export const EQUALS: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.equals',
+        label: 'sheets-filter-ui.conditions.equals',
 
         operator: ExtendCustomFilterOperator.EQUALS,
         order: OperatorOrder.FIRST,
@@ -318,7 +319,7 @@ export namespace FilterConditionItems {
     // #region number conditions
 
     export const GREATER_THAN: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.greater-than',
+        label: 'sheets-filter-ui.conditions.greater-than',
 
         operator: CustomFilterOperator.GREATER_THAN,
         numOfParameters: 1,
@@ -347,7 +348,7 @@ export namespace FilterConditionItems {
     };
 
     export const GREATER_THAN_OR_EQUAL: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.greater-than-or-equal',
+        label: 'sheets-filter-ui.conditions.greater-than-or-equal',
 
         operator: CustomFilterOperator.GREATER_THAN_OR_EQUAL,
         numOfParameters: 1,
@@ -377,7 +378,7 @@ export namespace FilterConditionItems {
     };
 
     export const LESS_THAN: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.less-than',
+        label: 'sheets-filter-ui.conditions.less-than',
 
         operator: CustomFilterOperator.LESS_THAN,
         numOfParameters: 1,
@@ -407,7 +408,7 @@ export namespace FilterConditionItems {
     };
 
     export const LESS_THAN_OR_EQUAL: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.less-than-or-equal',
+        label: 'sheets-filter-ui.conditions.less-than-or-equal',
 
         operator: CustomFilterOperator.LESS_THAN_OR_EQUAL,
         numOfParameters: 1,
@@ -437,7 +438,7 @@ export namespace FilterConditionItems {
     };
 
     export const EQUAL: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.equal',
+        label: 'sheets-filter-ui.conditions.equal',
 
         operator: CustomFilterOperator.EQUAL,
         numOfParameters: 1,
@@ -467,7 +468,7 @@ export namespace FilterConditionItems {
     };
 
     export const NOT_EQUAL: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.not-equal',
+        label: 'sheets-filter-ui.conditions.not-equal',
 
         operator: CustomFilterOperator.NOT_EQUALS,
         numOfParameters: 1,
@@ -499,7 +500,7 @@ export namespace FilterConditionItems {
     // #endregion
 
     export const BETWEEN: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.between',
+        label: 'sheets-filter-ui.conditions.between',
 
         operator: ExtendCustomFilterOperator.BETWEEN,
         order: OperatorOrder.SECOND,
@@ -573,7 +574,7 @@ export namespace FilterConditionItems {
     };
 
     export const NOT_BETWEEN: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.not-between',
+        label: 'sheets-filter-ui.conditions.not-between',
 
         operator: ExtendCustomFilterOperator.NOT_BETWEEN,
         order: OperatorOrder.SECOND,
@@ -645,7 +646,7 @@ export namespace FilterConditionItems {
      * This should be test last. If no other condition item can be mapped, then it should be mapped.
      */
     export const CUSTOM: IFilterConditionItem = {
-        label: 'sheets-filter.conditions.custom',
+        label: 'sheets-filter-ui.conditions.custom',
 
         operator: ExtendCustomFilterOperator.CUSTOM,
         order: OperatorOrder.SECOND,

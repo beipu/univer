@@ -16,20 +16,21 @@
 
 import type { IScale, ITextDecoration } from '@univerjs/core';
 import type { IDocumentSkeletonGlyph } from '../../../basics/i-document-skeleton-cached';
-
+import type { IBoundRectNoAngle } from '../../../basics/vector2';
 import type { UniverRenderingContext } from '../../../context';
-import { BaselineOffset, BooleanNumber, getColorStyle, TextDecoration } from '@univerjs/core';
+import type { IDrawInfo } from '../../extension';
+import { BaselineOffset, BooleanNumber, TextDecoration } from '@univerjs/core';
 import { COLOR_BLACK_RGB, DEFAULT_OFFSET_SPACING } from '../../../basics/const';
 import { calculateRectRotate } from '../../../basics/draw';
 import { degToRad, getScale } from '../../../basics/tools';
 import { Vector2 } from '../../../basics/vector2';
 import { DocumentsSpanAndLineExtensionRegistry } from '../../extension';
 import { docExtension } from '../doc-extension';
+import { getColorStyleForCanvas } from '../layout/style/color';
 
 const UNIQUE_KEY = 'DefaultDocsLineExtension';
 
 const DOC_EXTENSION_Z_INDEX = 40;
-
 export class Line extends docExtension {
     override uKey = UNIQUE_KEY;
 
@@ -37,7 +38,13 @@ export class Line extends docExtension {
 
     private _preBackgroundColor = '';
 
-    override draw(ctx: UniverRenderingContext, parentScale: IScale, glyph: IDocumentSkeletonGlyph) {
+    override draw(
+        ctx: UniverRenderingContext,
+        parentScale: IScale,
+        glyph: IDocumentSkeletonGlyph,
+        _diff?: IBoundRectNoAngle,
+        more?: IDrawInfo
+    ) {
         const line = glyph.parent?.parent;
         const { ts: textStyle, bBox, content } = glyph;
 
@@ -53,7 +60,7 @@ export class Line extends docExtension {
 
         if (underline) {
             const startY = asc + dsc;
-            this._drawLine(ctx, glyph, underline, startY, scale);
+            this._drawLine(ctx, glyph, underline, startY, scale, 1, more?.viewBound);
         }
 
         if (bottomBorderLine) {
@@ -98,7 +105,8 @@ export class Line extends docExtension {
         line: ITextDecoration,
         startY: number,
         _scale: number,
-        lineWidth = 1
+        lineWidth = 1,
+        viewBound?: IBoundRectNoAngle
     ) {
         let { s: show, cl: colorStyle, t: lineType, c = BooleanNumber.TRUE } = line;
 
@@ -117,6 +125,13 @@ export class Line extends docExtension {
         } = this.extensionOffset;
 
         const { left, width } = glyph;
+        const isAccounting = this._isAccounting(lineType);
+        if (isAccounting && !this._isFirstAccountingGlyph(glyph)) {
+            return;
+        }
+        const lineLeft = isAccounting ? (viewBound?.left ?? left) : left;
+        const lineRight = isAccounting ? (viewBound?.right ?? left + width) : left + width;
+        const lineAlignOffset = isAccounting ? Vector2.create(0, alignOffset.y) : alignOffset;
 
         const { centerAngle: centerAngleDeg = 0, vertexAngle: vertexAngleDeg = 0 } = renderConfig;
 
@@ -126,7 +141,7 @@ export class Line extends docExtension {
         // ctx.translateWithPrecision(FIX_ONE_PIXEL_BLUR_OFFSET, FIX_ONE_PIXEL_BLUR_OFFSET);
 
         const color =
-            (c === BooleanNumber.TRUE ? getColorStyle(glyph.ts?.cl) : getColorStyle(colorStyle)) || COLOR_BLACK_RGB;
+            (c === BooleanNumber.TRUE ? getColorStyleForCanvas(glyph.ts?.cl) : getColorStyleForCanvas(colorStyle)) || COLOR_BLACK_RGB;
         ctx.strokeStyle = color;
 
         this._setLineType(ctx, lineType ?? TextDecoration.SINGLE, lineWidth);
@@ -136,18 +151,18 @@ export class Line extends docExtension {
         const centerAngle = degToRad(centerAngleDeg);
         const vertexAngle = degToRad(vertexAngleDeg);
         const start = calculateRectRotate(
-            originTranslate.addByPoint(left, startY),
+            originTranslate.addByPoint(lineLeft, startY),
             Vector2.create(0, 0),
             centerAngle,
             vertexAngle,
-            alignOffset
+            lineAlignOffset
         );
         const end = calculateRectRotate(
-            originTranslate.addByPoint(left + width, startY),
+            originTranslate.addByPoint(lineRight, startY),
             Vector2.create(0, 0),
             centerAngle,
             vertexAngle,
-            alignOffset
+            lineAlignOffset
         );
 
         ctx.beginPath();
@@ -177,6 +192,8 @@ export class Line extends docExtension {
         switch (style) {
             case TextDecoration.SINGLE:
             case TextDecoration.DOUBLE:
+            case TextDecoration.SINGLE_ACCOUNTING:
+            case TextDecoration.DOUBLE_ACCOUNTING:
                 ctx.lineWidth = 1;
                 ctx.setLineDash([0]);
                 return;
@@ -242,7 +259,23 @@ export class Line extends docExtension {
     }
 
     private _isDouble(lineType?: TextDecoration): boolean {
-        return lineType === TextDecoration.DOUBLE || lineType === TextDecoration.WAVY_DOUBLE;
+        return lineType === TextDecoration.DOUBLE || lineType === TextDecoration.WAVY_DOUBLE || lineType === TextDecoration.DOUBLE_ACCOUNTING;
+    }
+
+    private _isAccounting(lineType?: TextDecoration): boolean {
+        return lineType === TextDecoration.SINGLE_ACCOUNTING || lineType === TextDecoration.DOUBLE_ACCOUNTING;
+    }
+
+    private _isFirstAccountingGlyph(glyph: IDocumentSkeletonGlyph): boolean {
+        const line = glyph.parent?.parent;
+        for (const divide of line?.divides ?? []) {
+            for (const candidate of divide.glyphGroup) {
+                if (this._isAccounting(candidate.ts?.ul?.t)) {
+                    return candidate === glyph;
+                }
+            }
+        }
+        return true;
     }
 }
 

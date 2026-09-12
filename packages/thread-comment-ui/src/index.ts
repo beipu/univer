@@ -16,11 +16,23 @@
 
 import './global.css';
 
-export { type ISetActiveCommentOperationParams, SetActiveCommentOperation } from './commands/operations/comment.operations';
+export { SetActiveCommentOperation } from './commands/operations/comment.operations';
+export type { ISetActiveCommentOperationParams } from './commands/operations/comment.operations';
 export type { IUniverThreadCommentUIConfig } from './config/config';
+export { UniverThreadCommentMobileUIPlugin } from './mobile-plugin';
 export { UniverThreadCommentUIPlugin } from './plugin';
-export { type ActiveCommentInfo, ThreadCommentPanelService } from './services/thread-comment-panel.service';
-export { ThreadCommentPanel } from './views/thread-comment-panel';
-export type { IThreadCommentPanelProps } from './views/thread-comment-panel';
-export { ThreadCommentTree, ThreadCommentTreeLocation } from './views/thread-comment-tree';
-export type { IThreadCommentTreeProps } from './views/thread-comment-tree';
+export { ThreadCommentCanvasOverlay } from './render-objects/thread-comment-canvas-overlay';
+export type {
+    IThreadCommentCanvasOutline,
+    IThreadCommentCanvasUnderline,
+} from './render-objects/thread-comment-canvas-overlay';
+export { ThreadCommentDraftService } from './services/thread-comment-draft.service';
+export type { IThreadCommentDraft } from './services/thread-comment-draft.service';
+export { ThreadCommentPanelService } from './services/thread-comment-panel.service';
+export type { ActiveCommentInfo } from './services/thread-comment-panel.service';
+export { MobileThreadCommentPanel } from './views/mobile/MobileThreadCommentPanel';
+export { MobileThreadCommentTree } from './views/mobile/MobileThreadCommentTree';
+export { ThreadCommentPanel } from './views/ThreadCommentPanel';
+export type { IThreadCommentPanelProps } from './views/ThreadCommentPanel';
+export { ThreadCommentTree, ThreadCommentTreeLocation } from './views/ThreadCommentTree';
+export type { IThreadCommentTreeProps } from './views/ThreadCommentTree';

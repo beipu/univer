@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: '表',
         selectRange: '表の範囲を選択',
         rename: '表の名前を変更',
+        renamePlaceholder: 'テーブル名を入力',
         updateRange: '表の範囲を更新',
         tableRangeWithMergeError: '表の範囲は結合セルと重複できません',
         tableRangeWithOtherTableError: '表の範囲は他の表と重複できません',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'フッター',
         firstLine: '先頭行',
         secondLine: '2行目',
-        columnPrefix: '列',
-        tablePrefix: '表',
         tableNameError: '表の名前は空白を含めることはできず、数字で始めることはできず、既存の表名と重複できません',
+        columnMenu: {
+            'insert-left': '左に 1 列挿入',
+            'insert-right': '右に 1 列挿入',
+            delete: '列を削除',
+        },
+
+        sort: {
+            'sort-asc': '昇順',
+            'sort-desc': '降順',
+        },
 
         insert: {
             main: '表を挿入',
@@ -131,12 +140,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'フィルタ',
             'by-values': '値でフィルタ',
+            'by-colors': '色でフィルタ',
             'by-conditions': '条件でフィルタ',
+            back: '戻る',
+            resize: 'サイズ変更',
+            'filter-by-cell-fill-color': 'セルの塗りつぶし色',
+            'filter-by-cell-text-color': 'セルの文字色',
+            'filter-by-color-none': 'この列には 1 色のみ含まれています',
             'clear-filter': 'フィルタをクリア',
             cancel: 'キャンセル',
             confirm: '確認',
             'search-placeholder': '検索語はスペースで区切る',
+            'input-values-placeholder': '値を入力',
             'select-all': 'すべて選択',
         },
     },

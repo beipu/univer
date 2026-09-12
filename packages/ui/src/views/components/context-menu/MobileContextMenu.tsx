@@ -14,32 +14,77 @@
  * limitations under the License.
  */
 
-import type { IMouseEvent } from '@univerjs/engine-render';
+import type { ComponentProps } from 'react';
+import type { LocaleKey } from '../../../locale/types';
+import type { ContextMenuEvent, IContextMenuTriggerContext } from '../../../services/contextmenu/contextmenu.service';
 import { ICommandService, LocaleService } from '@univerjs/core';
 import { ConfigContext } from '@univerjs/design';
-import { CloseIcon } from '@univerjs/icons';
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MobileMenu } from '../../../components/menu/mobile/MobileMenu';
 import { IContextMenuHostService } from '../../../services/contextmenu/contextmenu-host.service';
 import { IContextMenuService } from '../../../services/contextmenu/contextmenu.service';
 import { ILayoutService } from '../../../services/layout/layout.service';
+import { IMenuManagerService } from '../../../services/menu/menu-manager.service';
 import { ContextMenuPosition } from '../../../services/menu/types';
+import { IUIRuntimeScopeService } from '../../../services/runtime-scope/ui-runtime-scope.service';
 import { useDependency } from '../../../utils/di';
+import { MobileMenu } from '../../menu/mobile/MobileMenu';
+import { MobileMenuDrawer } from '../../menu/mobile/MobileMenuDrawer';
 
 const MOBILE_CONTEXT_MENU_HOST_ID = 'mobile-context-menu';
+const MOBILE_CONTEXT_MENU_POINTER_SIZE = 8;
+const MOBILE_CONTEXT_MENU_POINTER_EDGE_GAP = 12;
+
+export function resolveMobileCaretMenuPlacement(anchorX: number, containerLeft: number, containerWidth: number, menuWidth: number) {
+    const relativeAnchorX = anchorX - containerLeft;
+    const menuLeft = Math.min(
+        Math.max(relativeAnchorX - menuWidth / 2, 0),
+        Math.max(containerWidth - menuWidth, 0)
+    );
+    const pointerLeft = Math.min(
+        Math.max(relativeAnchorX - menuLeft - MOBILE_CONTEXT_MENU_POINTER_SIZE / 2, MOBILE_CONTEXT_MENU_POINTER_EDGE_GAP),
+        Math.max(menuWidth - MOBILE_CONTEXT_MENU_POINTER_EDGE_GAP - MOBILE_CONTEXT_MENU_POINTER_SIZE, MOBILE_CONTEXT_MENU_POINTER_EDGE_GAP)
+    );
+
+    return { menuLeft, pointerLeft };
+}
 
 export function MobileContextMenu() {
     const [visible, setVisible] = useState(false);
     const [menuType, setMenuType] = useState('');
+    const [anchor, setAnchor] = useState({ x: 0, y: 0 });
+    const floatingMenuRef = useRef<HTMLDivElement>(null);
+    const [menuContext, setMenuContext] = useState<IContextMenuTriggerContext | undefined>();
     const visibleRef = useRef(visible);
     const contextMenuHostService = useDependency(IContextMenuHostService);
     const contextMenuService = useDependency(IContextMenuService);
     const commandService = useDependency(ICommandService);
     const layoutService = useDependency(ILayoutService);
+    const menuManagerService = useDependency(IMenuManagerService);
+    const runtimeScopeService = useDependency(IUIRuntimeScopeService);
     const localeService = useDependency(LocaleService);
     const { mountContainer } = useContext(ConfigContext);
+    const isCaretAnchor = menuContext?.caretAnchor === true;
+    const isFloatingContextMenu = menuType === ContextMenuPosition.MAIN_AREA || isCaretAnchor;
+
     visibleRef.current = visible;
+
+    const handleContextMenu = useCallback((
+        event: ContextMenuEvent,
+        nextMenuType: string,
+        context?: IContextMenuTriggerContext
+    ) => {
+        contextMenuHostService.activateMenu(MOBILE_CONTEXT_MENU_HOST_ID);
+        setMenuType(nextMenuType);
+        setMenuContext(context);
+        setAnchor({ x: event.clientX, y: event.clientY });
+        setVisible(true);
+    }, [contextMenuHostService]);
+
+    const handleClose = useCallback(() => {
+        setVisible(false);
+        contextMenuHostService.deactivateMenu(MOBILE_CONTEXT_MENU_HOST_ID);
+    }, [contextMenuHostService]);
 
     useEffect(() => {
         const hostDisposable = contextMenuHostService.registerMenu(MOBILE_CONTEXT_MENU_HOST_ID, () => {
@@ -61,25 +106,67 @@ export function MobileContextMenu() {
             hostDisposable.dispose();
             contextMenuHostService.deactivateMenu(MOBILE_CONTEXT_MENU_HOST_ID);
         };
-    }, [contextMenuHostService, contextMenuService]);
+    }, [contextMenuHostService, contextMenuService, handleClose, handleContextMenu]);
 
-    function handleContextMenu(_event: IMouseEvent, nextMenuType: string) {
-        contextMenuHostService.activateMenu(MOBILE_CONTEXT_MENU_HOST_ID);
-        setMenuType(nextMenuType);
-        setVisible(true);
-    }
+    useEffect(() => {
+        if (!visible || !isFloatingContextMenu || !mountContainer) {
+            return undefined;
+        }
 
-    function handleClose() {
-        setVisible(false);
-        contextMenuHostService.deactivateMenu(MOBILE_CONTEXT_MENU_HOST_ID);
-    }
+        const ownerDocument = mountContainer.ownerDocument;
+        const handleOutsidePointerDown = (event: PointerEvent) => {
+            if (!(event.target instanceof Node) || !floatingMenuRef.current?.contains(event.target)) {
+                setVisible(false);
+                contextMenuHostService.deactivateMenu(MOBILE_CONTEXT_MENU_HOST_ID);
+            }
+        };
+        ownerDocument.addEventListener('pointerdown', handleOutsidePointerDown, true);
+        return () => ownerDocument.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+    }, [contextMenuHostService, isFloatingContextMenu, mountContainer, visible]);
+
+    useLayoutEffect(() => {
+        if (!visible || !isCaretAnchor) {
+            return undefined;
+        }
+
+        const menu = floatingMenuRef.current;
+        const container = menu?.parentElement;
+        if (!menu || !container) {
+            return undefined;
+        }
+
+        const updatePlacement = () => {
+            const containerRect = container.getBoundingClientRect();
+            const menuWidth = menu.getBoundingClientRect().width;
+            const { menuLeft, pointerLeft } = resolveMobileCaretMenuPlacement(
+                anchor.x,
+                containerRect.left,
+                containerRect.width,
+                menuWidth
+            );
+
+            menu.style.left = `${menuLeft}px`;
+            menu.style.setProperty('--univer-mobile-context-menu-pointer-left', `${pointerLeft}px`);
+        };
+
+        updatePlacement();
+        const resizeObserver = new ResizeObserver(updatePlacement);
+        resizeObserver.observe(container);
+        resizeObserver.observe(menu);
+
+        return () => {
+            resizeObserver.disconnect();
+            menu.style.removeProperty('left');
+            menu.style.removeProperty('--univer-mobile-context-menu-pointer-left');
+        };
+    }, [anchor.x, isCaretAnchor, visible]);
 
     const sheetTitle = useMemo(() => {
         switch (menuType) {
             case ContextMenuPosition.ROW_HEADER:
-                return localeService.t('row');
+                return localeService.t<LocaleKey>('ui.row');
             case ContextMenuPosition.COL_HEADER:
-                return localeService.t('column');
+                return localeService.t<LocaleKey>('ui.column');
             default:
                 return '';
         }
@@ -89,77 +176,93 @@ export function MobileContextMenu() {
         return null;
     }
 
-    return createPortal(
-        <div className="univer-fixed univer-inset-0 univer-z-[1080] univer-flex univer-items-end">
-            <button
-                type="button"
-                aria-label={localeService.t('rangeSelector.cancel')}
-                className="univer-absolute univer-inset-0 univer-bg-[rgba(15,23,42,0.32)] univer-backdrop-blur-[2px]"
-                onClick={handleClose}
-            />
-            <section
-                role="dialog"
-                aria-modal="true"
+    const activeScope = runtimeScopeService.get(menuContext?.unitId);
+    const activeCommandService = activeScope?.has(ICommandService)
+        ? activeScope.get<ICommandService>(ICommandService)
+        : commandService;
+    const activeLayoutService = activeScope?.has(ILayoutService)
+        ? activeScope.get<ILayoutService>(ILayoutService)
+        : layoutService;
+    const activeMenuManagerService = activeScope?.has(IMenuManagerService)
+        ? activeScope.get<IMenuManagerService>(IMenuManagerService)
+        : menuManagerService;
+    const handleOptionSelect = (params: Parameters<NonNullable<ComponentProps<typeof MobileMenu>['onOptionSelect']>>[0]) => {
+        const commandId = params.commandId ?? params.id ?? (typeof params.label === 'string' ? params.label : undefined);
+        const fallbackParams = typeof params.params === 'function' ? params.params() : params.params;
+        const optionParams = typeof params.value === 'undefined' ? fallbackParams : { value: params.value };
+        const commandParams = menuContext
+            ? { ...menuContext, ...optionParams }
+            : optionParams;
+
+        if (!commandId) {
+            return;
+        }
+
+        activeLayoutService.focus();
+        activeCommandService.executeCommand(commandId, commandParams);
+        handleClose();
+    };
+    if (isFloatingContextMenu) {
+        const viewportHeight = mountContainer.ownerDocument.defaultView?.innerHeight ?? 0;
+        const placeBelow = anchor.y < 72;
+        const top = placeBelow
+            ? anchor.y + 12
+            : Math.min(anchor.y - 56, Math.max(8, viewportHeight - 56));
+        const pointerLeft = `clamp(20px, ${anchor.x - 8}px, calc(100% - 20px))`;
+
+        return createPortal(
+            <div
                 className="
-                  univer-relative univer-z-[1] univer-mx-auto univer-flex univer-max-h-[80vh] univer-w-full
-                  univer-max-w-[560px] univer-flex-col univer-overflow-hidden univer-rounded-t-[28px] univer-bg-gray-50
-                  univer-shadow-[0_-16px_48px_rgba(15,23,42,0.18)]
+                  univer-pointer-events-none univer-fixed univer-inset-x-3 univer-z-[1080] univer-flex
+                  univer-justify-center
                 "
-                style={{
-                    paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)',
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
+                style={{ top }}
             >
-                <div className="univer-flex univer-flex-col univer-gap-3 univer-px-4 univer-pb-3 univer-pt-3">
-                    <div className="univer-mx-auto univer-h-1.5 univer-w-10 univer-rounded-full univer-bg-gray-300" />
-                    <div className="univer-flex univer-items-center univer-justify-between univer-gap-3">
-                        <div className="univer-min-w-0 univer-flex-1">
-                            {sheetTitle && (
-                                <div
-                                    className="univer-truncate univer-text-sm univer-font-semibold univer-text-gray-900"
-                                >
-                                    {sheetTitle}
-                                </div>
-                            )}
-                        </div>
-                        <button
-                            type="button"
-                            aria-label={localeService.t('rangeSelector.cancel')}
-                            className="
-                              univer-flex univer-size-8 univer-shrink-0 univer-appearance-none univer-items-center
-                              univer-justify-center univer-rounded-full univer-border-0 univer-bg-white univer-p-0
-                              univer-leading-none univer-text-gray-600 univer-shadow-sm univer-outline-none
-                              univer-ring-0 univer-transition-colors
-                              hover:univer-bg-gray-100
-                              active:univer-bg-gray-200
-                            "
-                            style={{ margin: 0 }}
-                            onClick={handleClose}
-                        >
-                            <CloseIcon className="univer-size-4 univer-text-current" />
-                        </button>
-                    </div>
-                </div>
-                {menuType && (
+                <div
+                    ref={floatingMenuRef}
+                    className={`
+                      univer-pointer-events-auto univer-min-w-0 univer-max-w-[560px]
+                      ${isCaretAnchor
+                            ? 'univer-absolute univer-left-0 univer-top-0 univer-w-fit'
+                            : 'univer-relative univer-flex-1'}
+                    `}
+                >
                     <MobileMenu
                         menuType={menuType}
-                        onOptionSelect={(params) => {
-                            const commandId = params.commandId ?? params.id ?? params.label as string | undefined;
-                            const fallbackParams = typeof params.params === 'function' ? params.params() : params.params;
-                            const commandParams = typeof params.value === 'undefined' ? fallbackParams : { value: params.value };
-
-                            if (!commandId) {
-                                return;
-                            }
-
-                            layoutService.focus();
-                            commandService.executeCommand(commandId, commandParams);
-                            handleClose();
+                        menuManagerService={activeMenuManagerService}
+                        presentation="context-bar"
+                        onOptionSelect={handleOptionSelect}
+                    />
+                    <div
+                        aria-hidden="true"
+                        className={placeBelow
+                            ? `
+                              univer-absolute -univer-top-1 univer-size-2 univer-rotate-45 univer-bg-gray-0
+                              dark:!univer-bg-gray-700
+                            `
+                            : `
+                              univer-absolute -univer-bottom-1 univer-size-2 univer-rotate-45 univer-bg-gray-0
+                              dark:!univer-bg-gray-700
+                            `}
+                        style={{
+                            left: isCaretAnchor
+                                ? 'var(--univer-mobile-context-menu-pointer-left, calc(50% - 4px))'
+                                : pointerLeft,
                         }}
                     />
-                )}
-            </section>
-        </div>,
-        mountContainer
+                </div>
+            </div>,
+            mountContainer
+        );
+    }
+    return (
+        <MobileMenuDrawer
+            visible
+            title={sheetTitle}
+            menuType={menuType}
+            menuManagerService={activeMenuManagerService}
+            onClose={handleClose}
+            onOptionSelect={handleOptionSelect}
+        />
     );
 }

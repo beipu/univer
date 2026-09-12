@@ -46,7 +46,7 @@ function createService() {
 describe('BrowserClipboardService', () => {
     beforeEach(() => {
         vi.mocked(supportClipboardAPI).mockReturnValue(true);
-        (globalThis as any).ClipboardItem = MockClipboardItem;
+        vi.stubGlobal('ClipboardItem', MockClipboardItem);
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
             value: {
@@ -61,6 +61,7 @@ describe('BrowserClipboardService', () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
     });
 
     it('should expose clipboard support from utility', () => {
@@ -96,6 +97,71 @@ describe('BrowserClipboardService', () => {
         await service.write('legacy', '<i>legacy</i>');
 
         expect(document.execCommand).toHaveBeenCalledWith('copy');
+    });
+
+    it('should fallback to legacy copy when ClipboardItem is unavailable', async () => {
+        vi.stubGlobal('ClipboardItem', undefined);
+        const { service } = createService();
+
+        await service.write('legacy', '<i>legacy</i>');
+
+        expect(document.execCommand).toHaveBeenCalledWith('copy');
+        expect(navigator.clipboard.write).not.toHaveBeenCalled();
+    });
+
+    it('should write raw sanitized html during legacy copy event', async () => {
+        vi.mocked(supportClipboardAPI).mockReturnValue(false);
+        const { service } = createService();
+        const clipboardData = {
+            setData: vi.fn(),
+        };
+
+        vi.mocked(document.execCommand).mockImplementation(() => {
+            const event = new Event('copy', { cancelable: true }) as ClipboardEvent;
+            Object.defineProperty(event, 'clipboardData', {
+                value: clipboardData,
+            });
+            document.dispatchEvent(event);
+            return true;
+        });
+
+        await service.write('plain', '<div onclick="alert(1)" style="color:red">rich</div>');
+
+        expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', 'plain');
+        expect(clipboardData.setData).toHaveBeenCalledWith('text/html', '<div style="color: red">rich</div>');
+        expect(document.body.lastElementChild?.textContent).not.toBe('rich');
+    });
+
+    it('should preserve Univer Excel metadata while sanitizing legacy html', async () => {
+        vi.mocked(supportClipboardAPI).mockReturnValue(false);
+        const { service } = createService();
+        const clipboardData = {
+            setData: vi.fn(),
+        };
+
+        vi.mocked(document.execCommand).mockImplementation(() => {
+            const event = new Event('copy', { cancelable: true }) as ClipboardEvent;
+            Object.defineProperty(event, 'clipboardData', {
+                value: clipboardData,
+            });
+            document.dispatchEvent(event);
+            return true;
+        });
+
+        await service.write(
+            'merged',
+            '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"><meta name="ProgId" content="Excel.Sheet"><meta name="Generator" content="Univer"><script>alert(1)</script></head><body><!--StartFragment--><table data-copy-id="copy-id"><tbody><tr><td rowspan="3" onclick="alert(1)">merged</td></tr></tbody></table><!--EndFragment--></body></html>'
+        );
+
+        const copiedHtml = clipboardData.setData.mock.calls.find(([type]) => type === 'text/html')?.[1];
+
+        expect(copiedHtml).toContain('xmlns:x="urn:schemas-microsoft-com:office:excel"');
+        expect(copiedHtml).toContain('<meta name="ProgId" content="Excel.Sheet">');
+        expect(copiedHtml).toContain('<!--StartFragment--><table data-copy-id="copy-id">');
+        expect(copiedHtml).toContain('<td rowspan="3">merged</td>');
+        expect(copiedHtml).toContain('</table><!--EndFragment-->');
+        expect(copiedHtml).not.toContain('<script');
+        expect(copiedHtml).not.toContain('onclick');
     });
 
     it('should sanitize html before legacy copy', async () => {
@@ -140,8 +206,8 @@ describe('BrowserClipboardService', () => {
         expect(logService.error).toHaveBeenCalledTimes(2);
         expect(notificationService.show).toHaveBeenCalledWith({
             type: 'warning',
-            title: 'clipboard.authentication.title',
-            content: 'clipboard.authentication.content',
+            title: 'ui.clipboard.authentication.title',
+            content: 'ui.clipboard.authentication.content',
         });
     });
 

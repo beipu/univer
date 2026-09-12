@@ -14,45 +14,40 @@
  * limitations under the License.
  */
 
-import { IUniverInstanceService, LocaleService } from '@univerjs/core';
+import type { DocumentDataModel } from '@univerjs/core';
+import type { LocaleKey } from '../../../locale/types';
+import type { IDocHeaderFooterOptionsProps } from './DocHeaderFooterOptions';
+import { IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
 import { DocSkeletonManagerService } from '@univerjs/docs';
 import { DocumentEditArea, IRenderManagerService } from '@univerjs/engine-render';
-import { useDependency } from '@univerjs/ui';
-import { useEffect, useState } from 'react';
+import { useDependency, useObservable } from '@univerjs/ui';
+import { filter, map } from 'rxjs';
 import { DocHeaderFooterOptions } from './DocHeaderFooterOptions';
 
-export const DocHeaderFooterPanel = () => {
+export const DocHeaderFooterPanel = (props: Pick<IDocHeaderFooterOptionsProps, 'ContentComponent'>) => {
     const localeService = useDependency(LocaleService);
     const renderManagerService = useDependency(IRenderManagerService);
     const univerInstanceService = useDependency(IUniverInstanceService);
-    const documentDataModel = univerInstanceService.getCurrentUniverDocInstance()!;
+    const documentDataModel = univerInstanceService.getCurrentUnitOfType<DocumentDataModel>(UniverInstanceType.UNIVER_DOC)!;
     const unitId = documentDataModel.getUnitId()!;
-    const docSkeletonManagerService = renderManagerService.getRenderById(unitId)?.with(DocSkeletonManagerService);
+    const docSkeletonManagerService = renderManagerService.getRenderUnitById(unitId)?.with(DocSkeletonManagerService);
 
     const viewModel = docSkeletonManagerService!.getViewModel();
-    const [isEditHeaderFooter, setIsEditHeaderFooter] = useState(true);
-
-    useEffect(() => {
-        const editArea = viewModel.getEditArea();
-        setIsEditHeaderFooter(editArea !== DocumentEditArea.BODY);
-
-        const subscription = viewModel.editAreaChange$.subscribe((editArea) => {
-            if (editArea == null) {
-                return;
-            }
-            setIsEditHeaderFooter(editArea !== DocumentEditArea.BODY);
-        });
-
-        return () => {
-            subscription.unsubscribe();
-        };
-    }, []);
+    const isEditHeaderFooter = useObservable(
+        () => viewModel.editAreaChange$.pipe(
+            filter((editArea) => editArea != null),
+            map((editArea) => editArea !== DocumentEditArea.BODY)
+        ),
+        viewModel.getEditArea() !== DocumentEditArea.BODY,
+        false,
+        [viewModel]
+    );
 
     return (
         <div className="univer-text-sm">
             {isEditHeaderFooter
-                ? <DocHeaderFooterOptions unitId={unitId} />
-                : <div className="univer-text-gray-400">{localeService.t('headerFooter.disableText')}</div>}
+                ? <DocHeaderFooterOptions {...props} unitId={unitId} />
+                : <div className="univer-text-gray-400">{localeService.t<LocaleKey>('docs-ui.headerFooter.disableText')}</div>}
         </div>
     );
 };

@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
+import { CustomDecorationType } from '@univerjs/core';
 import { SetTextSelectionsOperation } from '@univerjs/docs';
+import { DEFAULT_DOC_SUBUNIT_ID } from '@univerjs/docs-thread-comment';
 import { SetActiveCommentOperation } from '@univerjs/thread-comment-ui';
-
 import { Subject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { ShowCommentPanelOperation } from '../../commands/operations/show-comment-panel.operation';
-import { DEFAULT_DOC_SUBUNIT_ID } from '../../common/const';
 import { DocThreadCommentSelectionController } from '../doc-thread-comment-selection.controller';
 
 describe('DocThreadCommentSelectionController', () => {
@@ -32,7 +32,14 @@ describe('DocThreadCommentSelectionController', () => {
         };
 
         const doc = {
-            getBody: () => ({ customDecorations: [{ id: 'c1', startIndex: 0, endIndex: 5 }] }),
+            getBody: () => ({
+                customDecorations: [
+                    { id: 'outer', type: CustomDecorationType.COMMENT, startIndex: 0, endIndex: 10 },
+                    { id: 'older', type: CustomDecorationType.COMMENT, startIndex: 0, endIndex: 5 },
+                    { id: 'not-comment', type: CustomDecorationType.DELETED, startIndex: 0, endIndex: 5 },
+                    { id: 'newest', type: CustomDecorationType.COMMENT, startIndex: 0, endIndex: 5 },
+                ],
+            }),
         };
 
         const univerInstanceService = {
@@ -50,7 +57,7 @@ describe('DocThreadCommentSelectionController', () => {
         };
 
         const docThreadCommentService = { addingComment: null, endAdd: vi.fn() };
-        const renderManagerService = { getRenderById: vi.fn(() => null) };
+        const renderManagerService = { getRenderUnitById: vi.fn(() => null) };
         const threadCommentModel = { getComment: vi.fn(() => ({ resolved: false })) };
 
         const controller = new DocThreadCommentSelectionController(
@@ -71,7 +78,7 @@ describe('DocThreadCommentSelectionController', () => {
         });
 
         expect(executeCommand).toHaveBeenCalledWith(ShowCommentPanelOperation.id, {
-            activeComment: { unitId: 'doc-1', subUnitId: DEFAULT_DOC_SUBUNIT_ID, commentId: 'c1' },
+            activeComment: { unitId: 'doc-1', subUnitId: DEFAULT_DOC_SUBUNIT_ID, commentId: 'newest' },
         });
 
         controller.dispose();
@@ -85,7 +92,7 @@ describe('DocThreadCommentSelectionController', () => {
         };
 
         const doc = {
-            getBody: () => ({ customDecorations: [{ id: 'c1', startIndex: 0, endIndex: 5 }] }),
+            getBody: () => ({ customDecorations: [{ id: 'c1', type: CustomDecorationType.COMMENT, startIndex: 0, endIndex: 5 }] }),
         };
 
         const univerInstanceService = { getUnit: vi.fn(() => doc) };
@@ -101,7 +108,7 @@ describe('DocThreadCommentSelectionController', () => {
         };
 
         const docThreadCommentService = { addingComment: null, endAdd: vi.fn() };
-        const renderManagerService = { getRenderById: vi.fn(() => null) };
+        const renderManagerService = { getRenderUnitById: vi.fn(() => null) };
         const threadCommentModel = { getComment: vi.fn(() => ({ resolved: false })) };
 
         const controller = new DocThreadCommentSelectionController(
@@ -122,6 +129,62 @@ describe('DocThreadCommentSelectionController', () => {
         });
 
         expect(executeCommand).toHaveBeenCalledWith(SetActiveCommentOperation.id);
+
+        controller.dispose();
+    });
+
+    it('should keep the temporary adding comment active when selection changes before the comment is saved', () => {
+        const activeCommentId$ = new Subject<any>();
+        const threadCommentPanelService = {
+            activeCommentId: { unitId: 'doc-1', subUnitId: DEFAULT_DOC_SUBUNIT_ID, commentId: '' },
+            activeCommentId$,
+        };
+
+        const doc = {
+            getBody: () => ({ customDecorations: [] }),
+        };
+
+        const univerInstanceService = { getUnit: vi.fn(() => doc) };
+
+        let onExecutedHandler: any;
+        const executeCommand = vi.fn();
+        const commandService = {
+            onCommandExecuted: vi.fn((fn) => {
+                onExecutedHandler = fn;
+                return { dispose: vi.fn() };
+            }),
+            executeCommand,
+        };
+
+        const docThreadCommentService = {
+            addingComment: {
+                unitId: 'doc-1',
+                subUnitId: DEFAULT_DOC_SUBUNIT_ID,
+                id: '',
+            },
+            endAdd: vi.fn(),
+        };
+        const renderManagerService = { getRenderUnitById: vi.fn(() => null) };
+        const threadCommentModel = { getComment: vi.fn(() => null) };
+
+        const controller = new DocThreadCommentSelectionController(
+            threadCommentPanelService as any,
+            univerInstanceService as any,
+            commandService as any,
+            docThreadCommentService as any,
+            renderManagerService as any,
+            threadCommentModel as any
+        );
+
+        onExecutedHandler({
+            id: SetTextSelectionsOperation.id,
+            params: {
+                unitId: 'doc-1',
+                ranges: [{ startOffset: 10, endOffset: 10, collapsed: true }],
+            },
+        });
+
+        expect(executeCommand).not.toHaveBeenCalledWith(SetActiveCommentOperation.id);
 
         controller.dispose();
     });

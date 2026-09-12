@@ -15,8 +15,12 @@
  */
 
 import type { IDocumentSkeletonGlyph } from '../../../../../basics/i-document-skeleton-cached';
-import { describe, expect, it } from 'vitest';
-import { baseAdjustability, glyphShrinkLeft, glyphShrinkRight, isJustifiable, isSpace } from '../glyph';
+import { BooleanNumber, DataStreamTreeTokenType, DocumentFlavor } from '@univerjs/core';
+import { describe, expect, it, vi } from 'vitest';
+import { GlyphType } from '../../../../../basics/i-document-skeleton-cached';
+import { getDocumentCompatibilityPolicy } from '../../../document-compatibility';
+import { FontCache } from '../../shaping-engine/font-cache';
+import { baseAdjustability, createSkeletonBulletGlyph, createSkeletonLetterGlyph, glyphShrinkLeft, glyphShrinkRight, isJustifiable, isSpace } from '../glyph';
 
 describe('Glyph utils test cases', () => {
     describe('test baseAdjustability', () => {
@@ -131,6 +135,225 @@ describe('Glyph utils test cases', () => {
             expect(glyph.adjustability.shrinkability).toEqual([5, 10]);
             expect(glyph.width).toBe(15);
             expect(glyph.xOffset).toBe(-5);
+        });
+    });
+
+    describe('test bullet glyph style', () => {
+        it('uses explicit bullet style while inheriting omitted properties from the paragraph glyph', () => {
+            let measuredFont = '';
+            const measureSpy = vi.spyOn(FontCache, 'getTextSize').mockImplementation((_content, fontStyle) => {
+                measuredFont = fontStyle.fontString;
+                return {
+                    width: 12,
+                    ba: 18,
+                    bd: 4,
+                    aba: 18,
+                    abd: 4,
+                    sp: 0,
+                    sbr: 0,
+                    sbo: 0,
+                    spr: 0,
+                    spo: 0,
+                };
+            });
+            const paragraphGlyph = {
+                content: 'I',
+                raw: 'I',
+                ts: {
+                    ff: 'Arial',
+                    fs: 24,
+                    bl: BooleanNumber.TRUE,
+                    cl: { rgb: '#111111' },
+                },
+                fontStyle: {
+                    fontString: 'bold 24pt Arial',
+                    fontSize: 24,
+                    originFontSize: 24,
+                    fontFamily: 'Arial',
+                    fontCache: 'Arial-24-bold',
+                },
+                width: 12,
+                bBox: {
+                    width: 12,
+                    ba: 18,
+                    bd: 4,
+                    aba: 18,
+                    abd: 4,
+                    sp: 0,
+                    sbr: 0,
+                    sbo: 0,
+                    spr: 0,
+                    spo: 0,
+                },
+                xOffset: 0,
+                left: 0,
+                glyphType: GlyphType.LETTER,
+                streamType: DataStreamTreeTokenType.LETTER,
+                isJustifiable: false,
+                adjustability: {
+                    stretchability: [0, 0],
+                    shrinkability: [0, 0],
+                },
+                count: 1,
+            } as IDocumentSkeletonGlyph;
+
+            const bulletGlyph = createSkeletonBulletGlyph(
+                paragraphGlyph,
+                {
+                    listId: 'issue-1207-list',
+                    symbol: 'p',
+                    ts: {
+                        ff: 'Wingdings',
+                        cl: { rgb: '#FF0000' },
+                    },
+                    startIndexItem: 1,
+                },
+                10
+            );
+
+            expect(bulletGlyph.content).toBe('p');
+            expect(bulletGlyph.ts).toMatchObject({
+                ff: 'Wingdings',
+                fs: 24,
+                bl: BooleanNumber.TRUE,
+                cl: { rgb: '#FF0000' },
+            });
+            expect(bulletGlyph.fontStyle?.fontFamily).toBe('Wingdings');
+            expect(bulletGlyph.fontStyle?.originFontSize).toBe(24);
+            expect(measuredFont).toContain('Wingdings');
+            expect(measuredFont).toContain('24pt');
+            measureSpy.mockRestore();
+        });
+
+        it('inherits the paragraph font size when centering the custom checkbox shape', () => {
+            const measureSpy = vi.spyOn(FontCache, 'getTextSize').mockReturnValue({
+                width: 16,
+                ba: 18,
+                bd: 2,
+                aba: 18,
+                abd: 2,
+                sp: 0,
+                sbr: 0,
+                sbo: 0,
+                spr: 0,
+                spo: 0,
+            });
+
+            const bulletGlyph = createSkeletonBulletGlyph(
+                {
+                    ts: { fs: 20 },
+                    bBox: { ba: 18, bd: 2 },
+                } as IDocumentSkeletonGlyph,
+                {
+                    listId: 'check-list',
+                    symbol: '\u2610',
+                    ts: {},
+                    startIndexItem: 1,
+                },
+                10
+            );
+
+            expect(bulletGlyph.ts?.fs).toBe(20);
+            expect(bulletGlyph.width).toBe(30);
+            expect(bulletGlyph.bBox).toMatchObject({
+                width: 24,
+                ba: 20,
+                bd: 4,
+                aba: 20,
+                abd: 4,
+            });
+            expect(bulletGlyph.bBox.ba + bulletGlyph.bBox.bd).toBe(24);
+            expect(bulletGlyph.bBox.aba + bulletGlyph.bBox.abd).toBe(24);
+            expect((bulletGlyph.bBox.bd - bulletGlyph.bBox.ba) / 2).toBe(-8);
+            expect((bulletGlyph.bBox.abd - bulletGlyph.bBox.aba) / 2).toBe(-8);
+            expect(bulletGlyph.width).toBeGreaterThanOrEqual(bulletGlyph.bBox.width);
+            measureSpy.mockRestore();
+        });
+    });
+
+    describe('test font compatibility policy', () => {
+        it('should apply traditional font metric width rules to letter glyphs only when enabled', () => {
+            vi.stubGlobal('document', {
+                createElement: () => ({
+                    getContext: () => ({
+                        font: '',
+                        textBaseline: 'alphabetic',
+                        measureText: () => ({
+                            width: 16,
+                            fontBoundingBoxAscent: 30,
+                            fontBoundingBoxDescent: 9,
+                            actualBoundingBoxAscent: 30,
+                            actualBoundingBoxDescent: 9,
+                        }),
+                    }),
+                }),
+            });
+            const config = {
+                fontStyle: {
+                    fontString: 'normal bold 24pt "Calibri", Arial',
+                    fontSize: 24,
+                    originFontSize: 24,
+                    fontFamily: '"Calibri", Arial',
+                    fontCache: 'normal bold 24pt "Calibri"',
+                },
+                textStyle: {},
+                charSpace: 0,
+                snapToGrid: 0,
+            } as any;
+
+            const traditionalGlyph = createSkeletonLetterGlyph('5', {
+                ...config,
+                documentCompatibilityPolicy: getDocumentCompatibilityPolicy(DocumentFlavor.TRADITIONAL),
+            });
+            const modernGlyph = createSkeletonLetterGlyph('5', {
+                ...config,
+                documentCompatibilityPolicy: getDocumentCompatibilityPolicy(DocumentFlavor.MODERN),
+            });
+
+            expect(traditionalGlyph.width).toBeCloseTo(14.72);
+            expect(modernGlyph.width).toBe(16);
+        });
+
+        it('should calibrate SimSun CJK width only for traditional documents', () => {
+            vi.stubGlobal('document', {
+                createElement: () => ({
+                    getContext: () => ({
+                        font: '',
+                        textBaseline: 'alphabetic',
+                        measureText: () => ({
+                            width: 16,
+                            fontBoundingBoxAscent: 15,
+                            fontBoundingBoxDescent: 4,
+                            actualBoundingBoxAscent: 15,
+                            actualBoundingBoxDescent: 4,
+                        }),
+                    }),
+                }),
+            });
+            const config = {
+                fontStyle: {
+                    fontString: 'normal normal 12pt "Times New Roman", 宋体',
+                    fontSize: 12,
+                    originFontSize: 12,
+                    fontFamily: '"Times New Roman", 宋体',
+                    fontCache: 'normal normal 12pt "Times New Roman", 宋体',
+                },
+                textStyle: {},
+                charSpace: 0,
+                snapToGrid: 0,
+            } as any;
+
+            const traditionalGlyph = createSkeletonLetterGlyph('文', {
+                ...config,
+                documentCompatibilityPolicy: getDocumentCompatibilityPolicy(DocumentFlavor.TRADITIONAL),
+            });
+            const modernGlyph = createSkeletonLetterGlyph('文', {
+                ...config,
+                documentCompatibilityPolicy: getDocumentCompatibilityPolicy(DocumentFlavor.MODERN),
+            });
+
+            expect(traditionalGlyph.width).toBeCloseTo(15.52);
+            expect(modernGlyph.width).toBe(16);
         });
     });
 });

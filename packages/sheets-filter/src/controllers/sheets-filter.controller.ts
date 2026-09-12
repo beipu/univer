@@ -14,15 +14,83 @@
  * limitations under the License.
  */
 
-import type { ICellData, ICommandInfo, IMutationInfo, IObjectArrayPrimitiveType, IRange, Nullable, Workbook } from '@univerjs/core';
-import type { EffectRefRangeParams, IAddWorksheetMergeMutationParams, ICopySheetCommandParams, IInsertColCommandParams, IInsertRowCommandParams, IInsertRowMutationParams, IMoveColsCommandParams, IMoveRangeCommandParams, IMoveRowsCommandParams, IRemoveColMutationParams, IRemoveRowsMutationParams, IRemoveSheetCommandParams, ISetRangeValuesMutationParams, ISetWorksheetActiveOperationParams, ISheetCommandSharedParams } from '@univerjs/sheets';
-import type { ISetSheetsFilterCriteriaMutationParams, ISetSheetsFilterRangeMutationParams } from '../commands/mutations/sheets-filter.mutation';
+import type {
+    ICellData,
+    ICommandInfo,
+    IMutationInfo,
+    IObjectArrayPrimitiveType,
+    IRange,
+    Nullable,
+    Workbook,
+} from '@univerjs/core';
+import type {
+    EffectRefRangeParams,
+    IAddWorksheetMergeMutationParams,
+    ICopySheetCommandParams,
+    IInsertColCommandParams,
+    IInsertRowCommandParams,
+    IInsertRowMutationParams,
+    IMoveColsCommandParams,
+    IMoveRangeCommandParams,
+    IMoveRowsCommandParams,
+    IRemoveColMutationParams,
+    IRemoveRowsMutationParams,
+    IRemoveSheetCommandParams,
+    ISetRangeValuesMutationParams,
+    ISetWorksheetActiveOperationParams,
+    ISheetCommandSharedParams,
+} from '@univerjs/sheets';
+import type {
+    ISetSheetsFilterCriteriaMutationParams,
+    ISetSheetsFilterRangeMutationParams,
+} from '../commands/mutations/sheets-filter.mutation';
 import type { FilterColumn } from '../models/filter-model';
-
-import { Disposable, DisposableCollection, ICommandService, Inject, IUniverInstanceService, moveMatrixArray, Optional, Rectangle } from '@univerjs/core';
+import {
+    Disposable,
+    DisposableCollection,
+    ICommandService,
+    Inject,
+    IUniverInstanceService,
+    moveMatrixArray,
+    Optional,
+    Rectangle,
+    UniverInstanceType,
+} from '@univerjs/core';
 import { DataSyncPrimaryController } from '@univerjs/rpc';
-import { CopySheetCommand, EffectRefRangId, expandToContinuousRange, getSheetCommandTarget, InsertColCommand, InsertRowCommand, InsertRowMutation, INTERCEPTOR_POINT, MoveRangeCommand, MoveRowsCommand, RefRangeService, RemoveColCommand, RemoveRowCommand, RemoveRowMutation, RemoveSheetCommand, SetRangeValuesMutation, SetWorksheetActiveOperation, SheetInterceptorService, ZebraCrossingCacheController } from '@univerjs/sheets';
-import { ReCalcSheetsFilterMutation, RemoveSheetsFilterMutation, SetSheetsFilterCriteriaMutation, SetSheetsFilterRangeMutation } from '../commands/mutations/sheets-filter.mutation';
+import {
+    CopySheetCommand,
+    EffectRefRangId,
+    expandToContinuousRange,
+    getSheetCommandTarget,
+    InsertColCommand,
+    InsertRowCommand,
+    InsertRowMutation,
+    INTERCEPTOR_POINT,
+    MoveRangeCommand,
+    MoveRowsCommand,
+    RefRangeService,
+    RemoveColCommand,
+    RemoveRowCommand,
+    RemoveRowMutation,
+    RemoveSheetCommand,
+    SetRangeValuesMutation,
+    SetWorksheetActiveOperation,
+    SheetInterceptorService,
+    ZebraCrossingCacheController,
+} from '@univerjs/sheets';
+import {
+    ClearSheetsFilterCriteriaCommand,
+    ReCalcSheetsFilterCommand,
+    RemoveSheetFilterCommand,
+    SetSheetFilterRangeCommand,
+    SetSheetsFilterCriteriaCommand,
+} from '../commands/commands/sheets-filter.command';
+import {
+    ReCalcSheetsFilterMutation,
+    RemoveSheetsFilterMutation,
+    SetSheetsFilterCriteriaMutation,
+    SetSheetsFilterRangeMutation,
+} from '../commands/mutations/sheets-filter.mutation';
 import { SheetsFilterService } from '../services/sheet-filter.service';
 import { mergeSetFilterCriteria } from '../utils';
 
@@ -63,6 +131,16 @@ export class SheetsFilterController extends Disposable {
 
     private _initCommands(): void {
         [
+            SetSheetFilterRangeCommand,
+            RemoveSheetFilterCommand,
+            SetSheetsFilterCriteriaCommand,
+            ClearSheetsFilterCriteriaCommand,
+            ReCalcSheetsFilterCommand,
+        ].forEach((command) => {
+            this.disposeWithMe(this._commandService.registerCommand(command));
+        });
+
+        [
             SetSheetsFilterCriteriaMutation,
             SetSheetsFilterRangeMutation,
             ReCalcSheetsFilterMutation,
@@ -101,7 +179,7 @@ export class SheetsFilterController extends Disposable {
 
         this.disposeWithMe(this._sheetsFilterService.loadedUnitId$.subscribe((unitId) => {
             if (unitId) {
-                const workbook = this._univerInstanceService.getUniverSheetInstance(unitId);
+                const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
                 const sheet = workbook?.getActiveSheet();
                 if (sheet) {
                     this._registerRefRange(unitId, sheet.getSheetId());
@@ -112,7 +190,7 @@ export class SheetsFilterController extends Disposable {
 
     private _registerRefRange(unitId: string, subUnitId: string): void {
         this._disposableCollection.dispose();
-        const workbook = this._univerInstanceService.getUniverSheetInstance(unitId);
+        const workbook = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET);
         const workSheet = workbook?.getSheetBySheetId(subUnitId);
         if (!workbook || !workSheet) return;
         const range = this._sheetsFilterService.getFilterModel(unitId, subUnitId)?.getRange();
@@ -401,18 +479,13 @@ export class SheetsFilterController extends Disposable {
                 undos.push({ id: SetSheetsFilterCriteriaMutation.id, params: setCriteriaMutationParams });
             });
         } else {
-            const worksheet = this._univerInstanceService.getUniverSheetInstance(unitId)?.getSheetBySheetId(subUnitId);
+            const worksheet = this._univerInstanceService.getUnit<Workbook>(unitId, UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId(subUnitId);
             if (!worksheet) {
                 return this._handleNull();
             }
-            const hiddenRows = [];
-            for (let r = removeStartRow; r <= removeEndRow; r++) {
-                if (worksheet.getRowFiltered(r)) {
-                    hiddenRows.push(r);
-                }
-            }
+            const hiddenRowCount = this._getFilteredRowCount(worksheet, removeStartRow, removeEndRow);
             const afterStartRow = Math.min(startRow, removeStartRow);
-            const afterEndRow = afterStartRow + (endRow - startRow) - count + hiddenRows.length;
+            const afterEndRow = afterStartRow + (endRow - startRow) - count + hiddenRowCount;
             const setFilterRangeMutationParams: ISetSheetsFilterRangeMutationParams = {
                 unitId,
                 subUnitId,
@@ -429,6 +502,16 @@ export class SheetsFilterController extends Disposable {
             undos: mergeSetFilterCriteria(undos),
             redos: mergeSetFilterCriteria(redos),
         };
+    }
+
+    private _getFilteredRowCount(worksheet: { getRowFiltered(row: number): boolean }, startRow: number, endRow: number): number {
+        let count = 0;
+        for (let row = startRow; row <= endRow; row++) {
+            if (worksheet.getRowFiltered(row)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // eslint-disable-next-line max-lines-per-function

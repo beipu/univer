@@ -15,18 +15,15 @@
  */
 
 import type { IDrawingParam } from '@univerjs/core';
+import type { LocaleKey } from '../../locale/types';
 import { LocaleService } from '@univerjs/core';
 import { clsx } from '@univerjs/design';
 import { IDrawingManagerService } from '@univerjs/drawing';
 import { IRenderManagerService } from '@univerjs/engine-render';
-import { useDependency } from '@univerjs/ui';
-import { useEffect, useState } from 'react';
+import { ComponentManager, useDependency, useObservable } from '@univerjs/ui';
+import { filter, map, merge } from 'rxjs';
 import { getUpdateParams } from '../../utils/get-update-params';
-import { DrawingAlign } from './DrawingAlign';
-import { DrawingArrange } from './DrawingArrange';
-import { DrawingGroup } from './DrawingGroup';
-import { DrawingTransform } from './DrawingTransform';
-import { ImageCropper } from './ImageCropper';
+import { DRAWING_ALIGN_COMPONENT, DRAWING_ARRANGE_COMPONENT, DRAWING_GROUP_COMPONENT, DRAWING_TRANSFORM_COMPONENT, IMAGE_CROPPER_COMPONENT } from './component-name';
 
 export interface IDrawingCommonPanelProps {
     drawings: IDrawingParam[];
@@ -35,9 +32,46 @@ export interface IDrawingCommonPanelProps {
     hasAlign?: boolean;
     hasCropper?: boolean;
     hasGroup?: boolean;
+    onCropStart?: () => void;
+}
+
+function getPanelShowState(drawings: IDrawingParam[]) {
+    if (drawings.length === 0) {
+        return {
+            arrangeShow: false,
+            transformShow: false,
+            alignShow: false,
+            cropperShow: false,
+            nullShow: true,
+        };
+    }
+
+    if (drawings.length === 1) {
+        return {
+            arrangeShow: true,
+            transformShow: true,
+            alignShow: false,
+            cropperShow: true,
+            nullShow: false,
+        };
+    }
+
+    return {
+        arrangeShow: true,
+        transformShow: false,
+        alignShow: true,
+        cropperShow: false,
+        nullShow: false,
+    };
 }
 
 export const DrawingCommonPanel = (props: IDrawingCommonPanelProps) => {
+    const componentManager = useDependency(ComponentManager);
+    const DrawingArrange = componentManager.get(DRAWING_ARRANGE_COMPONENT);
+    const DrawingAlign = componentManager.get(DRAWING_ALIGN_COMPONENT);
+    const DrawingGroup = componentManager.get(DRAWING_GROUP_COMPONENT);
+    const DrawingTransform = componentManager.get(DRAWING_TRANSFORM_COMPONENT);
+    const ImageCropper = componentManager.get(IMAGE_CROPPER_COMPONENT);
     const drawingManagerService = useDependency(IDrawingManagerService);
     const renderManagerService = useDependency(IRenderManagerService);
     const localeService = useDependency(LocaleService);
@@ -45,91 +79,36 @@ export const DrawingCommonPanel = (props: IDrawingCommonPanelProps) => {
     const { drawings, hasArrange = true, hasTransform = true, hasAlign = true, hasCropper = true, hasGroup = true } = props;
 
     const drawingParam = drawings[0];
-
-    if (drawingParam == null) {
-        return;
-    }
-
-    const { unitId } = drawingParam;
-
-    const renderObject = renderManagerService.getRenderById(unitId);
+    const renderObject = drawingParam ? renderManagerService.getRenderUnitById(drawingParam.unitId) : undefined;
     const scene = renderObject?.scene;
-    if (scene == null) {
-        return;
+    const transformer = scene?.getTransformerByCreate();
+
+    const panelState = useObservable(
+        () => merge(
+            drawingManagerService.focus$.pipe(map(getPanelShowState)),
+            ...(transformer
+                ? [
+                    transformer.clearControl$.pipe(
+                        filter((changeSelf) => changeSelf === true),
+                        map(() => getPanelShowState([]))
+                    ),
+                    transformer.changeStart$.pipe(
+                        map((state) => getPanelShowState(
+                            getUpdateParams(state.objects, drawingManagerService).filter((drawing): drawing is IDrawingParam => drawing != null)
+                        ))
+                    ),
+                ]
+                : [])
+        ),
+        getPanelShowState(drawings),
+        false,
+        [drawingManagerService, transformer]
+    );
+    const { arrangeShow, transformShow, alignShow, cropperShow, nullShow } = panelState;
+
+    if (!drawingParam || !scene || !transformer) {
+        return null;
     }
-    const transformer = scene.getTransformerByCreate();
-
-    const [arrangeShow, setArrangeShow] = useState(true);
-    const [transformShow, setTransformShow] = useState(true);
-    const [alignShow, setAlignShow] = useState(false);
-    const [cropperShow, setCropperShow] = useState(true);
-    const [nullShow, setNullShow] = useState(false);
-    // const [groupShow, setGroupShow] = useState(false);
-
-    useEffect(() => {
-        const clearControlSub = transformer.clearControl$.subscribe((changeSelf) => {
-            if (changeSelf === true) {
-                setArrangeShow(false);
-                setTransformShow(false);
-                setAlignShow(false);
-                setCropperShow(false);
-                setNullShow(true);
-            }
-        });
-
-        const changeStartSub = transformer.changeStart$.subscribe((state) => {
-            const { objects } = state;
-            const params = getUpdateParams(objects, drawingManagerService);
-
-            if (params.length === 0) {
-                setArrangeShow(false);
-                setTransformShow(false);
-                setAlignShow(false);
-                setCropperShow(false);
-                setNullShow(true);
-            } else if (params.length === 1) {
-                setArrangeShow(true);
-                setTransformShow(true);
-                setAlignShow(false);
-                setCropperShow(true);
-                setNullShow(false);
-            } else {
-                setArrangeShow(true);
-                setTransformShow(false);
-                setAlignShow(true);
-                setCropperShow(false);
-                setNullShow(false);
-            }
-        });
-
-        const focusSub = drawingManagerService.focus$.subscribe((drawings) => {
-            if (drawings.length === 0) {
-                setArrangeShow(false);
-                setTransformShow(false);
-                setAlignShow(false);
-                setCropperShow(false);
-                setNullShow(true);
-            } else if (drawings.length === 1) {
-                setArrangeShow(true);
-                setTransformShow(true);
-                setAlignShow(false);
-                setCropperShow(true);
-                setNullShow(false);
-            } else {
-                setArrangeShow(true);
-                setTransformShow(false);
-                setAlignShow(true);
-                setCropperShow(false);
-                setNullShow(false);
-            }
-        });
-
-        return () => {
-            changeStartSub.unsubscribe();
-            clearControlSub.unsubscribe();
-            focusSub.unsubscribe();
-        };
-    }, []);
 
     return (
         <>
@@ -140,7 +119,7 @@ export const DrawingCommonPanel = (props: IDrawingCommonPanelProps) => {
             >
                 <div className="univer-flex univer-h-full univer-items-center univer-justify-center">
                     <span>
-                        {localeService.t('image-panel.null')}
+                        {localeService.t<LocaleKey>('drawing-ui.image-panel.null')}
                     </span>
                 </div>
             </div>
@@ -148,7 +127,7 @@ export const DrawingCommonPanel = (props: IDrawingCommonPanelProps) => {
             <DrawingArrange arrangeShow={hasArrange === true ? arrangeShow : false} drawings={drawings} />
             <DrawingTransform transformShow={hasTransform === true ? transformShow : false} drawings={drawings} />
             <DrawingAlign alignShow={hasAlign === true ? alignShow : false} drawings={drawings} />
-            <ImageCropper cropperShow={hasCropper === true ? cropperShow : false} drawings={drawings} />
+            <ImageCropper cropperShow={hasCropper === true ? cropperShow : false} drawings={drawings} onCropStart={props.onCropStart} />
             <DrawingGroup hasGroup={hasGroup} drawings={drawings} />
         </>
     );

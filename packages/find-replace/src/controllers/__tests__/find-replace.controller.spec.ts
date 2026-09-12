@@ -14,51 +14,20 @@
  * limitations under the License.
  */
 
-import { Subject } from 'rxjs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { getFindReplaceDialogDefaultPosition } from '../find-replace.controller';
 
-import { FindReplaceController } from '../find-replace.controller';
+const ORIGINAL_INNER_WIDTH = window.innerWidth;
 
-describe('FindReplaceController', () => {
-    it('should open dialog when revealed and close when focus changes', () => {
-        const focused$ = new Subject<any>();
-        const univerInstanceService = {
-            focused$,
-            getUniverSheetInstance: vi.fn(() => null),
-        };
+afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: ORIGINAL_INNER_WIDTH });
+});
 
-        const menuManagerService = { mergeMenu: vi.fn() };
-        const shortcutService = { registerShortcut: vi.fn(() => ({ dispose: vi.fn() })) };
-        const commandService = { registerCommand: vi.fn(() => ({ dispose: vi.fn() })) };
-        const stateUpdates$ = new Subject<any>();
-        const findReplaceService = {
-            stateUpdates$,
-            terminate: vi.fn(),
-        };
-        const dialogService = { open: vi.fn(), close: vi.fn() };
-        const layoutService = { focus: vi.fn() };
-        const localeService = { t: (k: string) => k };
-        const componentManager = { register: vi.fn(() => ({ dispose: vi.fn() })) };
+describe('getFindReplaceDialogDefaultPosition', () => {
+    it('anchors the dialog to the matching physical edge for each UI direction', () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
 
-        const controller = new FindReplaceController(
-            univerInstanceService as any,
-            menuManagerService as any,
-            shortcutService as any,
-            commandService as any,
-            findReplaceService as any,
-            dialogService as any,
-            layoutService as any,
-            localeService as any,
-            componentManager as any
-        );
-
-        stateUpdates$.next({ revealed: true });
-        expect(dialogService.open).toHaveBeenCalled();
-
-        focused$.next(null);
-        expect(dialogService.close).toHaveBeenCalled();
-        expect(findReplaceService.terminate).toHaveBeenCalled();
-
-        controller.dispose();
+        expect(getFindReplaceDialogDefaultPosition('ltr')).toEqual({ x: 630, y: 64 });
+        expect(getFindReplaceDialogDefaultPosition('rtl')).toEqual({ x: 20, y: 64 });
     });
 });

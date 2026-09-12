@@ -1,9 +1,9 @@
 {
     "name": "@univerjs/docs",
-    "version": "0.21.1",
+    "version": "1.0.0-rc.0",
     "private": false,
-    "description": "UniverSheet normal base-docs",
-    "author": "DreamNum <developer@univer.ai>",
+    "description": "Core document model and rich-text operations for Univer Docs.",
+    "author": "DreamNum Co., Ltd. <developer@univer.ai>",
     "license": "Apache-2.0",
     "funding": {
         "type": "opencollective",
@@ -18,11 +18,16 @@
         "url": "https://github.com/dream-num/univer/issues"
     },
     "keywords": [
-        "univer"
+        "univer",
+        "docs",
+        "document",
+        "rich-text",
+        "plugin"
     ],
     "exports": {
         ".": "./src/index.ts",
-        "./*": "./src/*"
+        "./*": "./src/*",
+        "./facade": "./src/facade/index.ts"
     },
     "main": "./src/index.ts",
     "types": "./lib/types/index.d.ts",
@@ -40,6 +45,16 @@
                 "import": "./lib/es/*",
                 "require": "./lib/cjs/*",
                 "types": "./lib/types/index.d.ts"
+            },
+            "./facade": {
+                "import": "./lib/es/facade.js",
+                "require": "./lib/cjs/facade.js",
+                "types": "./lib/types/facade/index.d.ts"
+            },
+            "./lib/facade": {
+                "import": "./lib/es/facade.js",
+                "require": "./lib/cjs/facade.js",
+                "types": "./lib/types/facade/index.d.ts"
             },
             "./lib/*": "./lib/*"
         }
@@ -64,12 +79,14 @@
     },
     "dependencies": {
         "@univerjs/core": "workspace:*",
-        "@univerjs/engine-render": "workspace:*"
+        "@univerjs/engine-render": "workspace:*",
+        "@univerjs/protocol": "workspace:*",
+        "@univerjs/rpc": "workspace:*"
     },
     "devDependencies": {
         "@univerjs-infra/shared": "workspace:*",
         "rxjs": "^7.8.2",
-        "typescript": "^6.0.2",
-        "vitest": "^4.1.4"
+        "typescript": "^6.0.3",
+        "vitest": "^5.0.0"
     }
 }

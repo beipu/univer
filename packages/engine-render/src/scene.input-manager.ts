@@ -18,7 +18,7 @@ import type { Nullable } from '@univerjs/core';
 import type { PointerEvent } from 'react';
 import type { Subscription } from 'rxjs';
 import type { BaseObject } from './base-object';
-import type { IDragEvent, IEvent, IKeyboardEvent, IMouseEvent, IPointerEvent, IWheelEvent } from './basics/i-events';
+import type { IDragEvent, IEvent, IMouseEvent, IPointerEvent, IWheelEvent } from './basics/i-events';
 import type { ISceneInputControlOptions, Scene } from './scene';
 import { Disposable, toDisposable } from '@univerjs/core';
 import { RENDER_CLASS_TYPE } from './basics/const';
@@ -35,6 +35,9 @@ export class InputManager extends Disposable {
     /** Time in milliseconds with two consecutive clicks will be considered as a double or triple click */
     static DoubleClickDelay = 500; // in milliseconds
 
+    /** The allowed distance between two consecutive touch taps. */
+    static TouchDoubleClickMovementThreshold = 10; // in pixels
+
     static TripleClickDelay = 300; // in milliseconds
 
     /** If you need to check double click without raising a single click at first click, enable this flag */
@@ -50,6 +53,8 @@ export class InputManager extends Disposable {
 
     private _currentMouseEnterPicked: Nullable<BaseObject | Scene>;
     private _startingPosition = new Vector2(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+    private _pointerDownPosition: Nullable<Vector2>;
+    private _pointerDragged = false;
     private _delayedTimeout: NodeJS.Timeout | number = -1;
     private _delayedTripeTimeout: NodeJS.Timeout | number = -1;
     private _doubleClickOccurred = 0;
@@ -82,8 +87,6 @@ export class InputManager extends Disposable {
         this._onPointerEnter = null as unknown as (evt: IPointerEvent) => void;
         this._onPointerLeave = null as unknown as (evt: IPointerEvent) => void;
         this._onMouseWheel = null as unknown as (evt: IWheelEvent) => void;
-        this._onKeyDown = null as unknown as (evt: IKeyboardEvent) => void;
-        this._onKeyUp = null as unknown as (evt: IKeyboardEvent) => void;
         this._onDragEnter = null as unknown as (evt: IDragEvent) => void;
         this._onDragLeave = null as unknown as (evt: IDragEvent) => void;
         this._onDragOver = null as unknown as (evt: IDragEvent) => void;
@@ -123,7 +126,7 @@ export class InputManager extends Disposable {
             (evt as unknown as PointerEvent).pointerId = 0;
         }
 
-        const currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        const currentObject = this._getObjectAtEvent(evt);
         const isStop = currentObject?.triggerClick(evt);
 
         if (!isStop && this._shouldDispatchEventToScene(currentObject)) {
@@ -136,7 +139,7 @@ export class InputManager extends Disposable {
             (evt as unknown as PointerEvent).pointerId = 0;
         }
 
-        const currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        const currentObject = this._getObjectAtEvent(evt);
         const isStop = currentObject?.triggerDblclick(evt);
 
         if (!isStop && this._shouldDispatchEventToScene(currentObject)) {
@@ -150,11 +153,12 @@ export class InputManager extends Disposable {
             evt.pointerId = 0;
         }
 
-        this._currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        this._currentObject = this._getObjectAtEvent(evt);
         this.mouseLeaveEnterHandler(evt);
     }
 
     _onPointerLeave(evt: IPointerEvent) {
+        this._resetClickSequence();
         // preserve compatibility with Safari when pointerId is not present
         if (evt.pointerId === undefined) {
             evt.pointerId = 0;
@@ -169,7 +173,10 @@ export class InputManager extends Disposable {
         if ((evt as IPointerEvent).pointerId === undefined) {
             (evt as unknown as PointerEvent).pointerId = 0;
         }
-        const currentObject = this._currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        if (this._pointerDownPosition && this._isPointerSwiping(evt.clientX, evt.clientY, this._pointerDownPosition)) {
+            this._pointerDragged = true;
+        }
+        const currentObject = this._currentObject = this._getObjectAtEvent(evt);
 
         const isStop = (currentObject || this.capturedObject)?.triggerPointerMove(evt);
 
@@ -187,7 +194,13 @@ export class InputManager extends Disposable {
             (evt as unknown as PointerEvent).pointerId = 0;
         }
 
-        const currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        this._pointerDownPosition = new Vector2(evt.clientX, evt.clientY);
+        this._pointerDragged = false;
+        if (evt.button !== 0) {
+            this._resetClickSequence();
+        }
+
+        const currentObject = this._getObjectAtEvent(evt);
         const isStop = currentObject?.triggerPointerDown(evt);
 
         if (!isStop && this._shouldDispatchEventToScene(currentObject)) {
@@ -201,25 +214,35 @@ export class InputManager extends Disposable {
             evt.pointerId = 0;
         }
 
-        const currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        const isClick = evt.button === 0 && this._pointerDownPosition != null && !this._pointerDragged &&
+            !this._isPointerSwiping(evt.clientX, evt.clientY, this._pointerDownPosition);
+        this._pointerDownPosition = null;
+
+        const currentObject = this._getObjectAtEvent(evt);
         const isStop = currentObject?.triggerPointerUp(evt);
 
         if (!isStop && this._shouldDispatchEventToScene(currentObject)) {
             this._scene.onPointerUp$.emitEvent(evt);
         }
 
-        this._prePointerDoubleOrTripleClick(evt);
+        if (isClick) {
+            this._prePointerDoubleOrTripleClick(evt);
+        } else {
+            this._resetClickSequence();
+        }
     }
 
     _onPointerCancel(evt: IPointerEvent) {
+        this._pointerDownPosition = null;
+        this._resetClickSequence();
         this._scene.onPointerCancel$.emitEvent(evt);
-        const currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        const currentObject = this._getObjectAtEvent(evt);
         currentObject?.triggerPointerCancel(evt);
     }
 
     _onPointerOut(evt: IPointerEvent) {
         this._scene.onPointerOut$.emitEvent(evt);
-        const currentObject = this._getObjectAtPos(evt.offsetX, evt.offsetY);
+        const currentObject = this._getObjectAtEvent(evt);
         currentObject?.triggerPointerOut(evt);
     }
 
@@ -234,16 +257,6 @@ export class InputManager extends Disposable {
         if (!isStop && this._shouldDispatchEventToScene(currentObject)) {
             this._scene.onMouseWheel$.emitEvent(evt);
         }
-    }
-
-    _onKeyDown(evt: IKeyboardEvent) {
-        // currently nobody using this. use `fromEvent('keydown')` from rx.js instead.
-        this._scene.onKeyDown$.emitEvent(evt);
-    }
-
-    _onKeyUp(evt: IKeyboardEvent) {
-        // currently nobody using this. use `fromEvent('keyup')` from rx.js instead.
-        this._scene.onKeyUp$.emitEvent(evt);
     }
 
     _onDragEnter(evt: IDragEvent) {
@@ -291,20 +304,9 @@ export class InputManager extends Disposable {
         const engine = this._scene.getEngine();
         if (!engine) return;
 
-        // eslint-disable-next-line complexity, max-lines-per-function
+        // eslint-disable-next-line complexity
         this._onInput$ = engine.onInputChanged$.subscribeEvent((eventData: IEvent) => {
             const evt: IEvent = eventData;
-            if (eventData.deviceType === DeviceType.Keyboard) {
-                switch (eventData.type) {
-                    case 'keydown':
-                        this._onKeyDown(evt as IKeyboardEvent);
-                        break;
-                    case 'keyup':
-                        this._onKeyUp(evt as IKeyboardEvent);
-                        break;
-                }
-            }
-
             // Pointer Events
             if (eventData.deviceType === DeviceType.Mouse || eventData.deviceType === DeviceType.Touch) {
                 switch (eventData.type) {
@@ -387,6 +389,8 @@ export class InputManager extends Disposable {
      * Detaches all event handlers
      */
     detachControl() {
+        this._pointerDownPosition = null;
+        this._resetClickSequence();
         if (!this._alreadyAttached) {
             return;
         }
@@ -406,8 +410,31 @@ export class InputManager extends Disposable {
      * @param offsetX
      * @param offsetY
      */
-    private _getObjectAtPos(offsetX: number, offsetY: number) {
-        return this._scene?.pick(Vector2.FromArray([offsetX, offsetY]));
+    private _getObjectAtPos(offsetX: number, offsetY: number, deviceType?: DeviceType) {
+        return this._scene?.pick(Vector2.FromArray([offsetX, offsetY]), deviceType);
+    }
+
+    private _getObjectAtEvent(evt: IMouseEvent) {
+        if (evt.deviceType !== DeviceType.Touch) {
+            return this._getObjectAtPos(evt.offsetX, evt.offsetY, evt.deviceType);
+        }
+
+        const engine = this._scene.getEngine();
+        const canvas = engine?.getCanvasElement();
+        if (!engine || !canvas || !Number.isFinite(evt.clientX) || !Number.isFinite(evt.clientY)) {
+            return this._getObjectAtPos(evt.offsetX, evt.offsetY, evt.deviceType);
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+            return this._getObjectAtPos(evt.offsetX, evt.offsetY, evt.deviceType);
+        }
+
+        return this._getObjectAtPos(
+            (evt.clientX - rect.left) * engine.width / rect.width,
+            (evt.clientY - rect.top) * engine.height / rect.height,
+            evt.deviceType
+        );
     }
 
     /**
@@ -468,22 +495,31 @@ export class InputManager extends Disposable {
      * @hidden
      * @returns Boolean if delta for pointer exceeds drag movement threshold
      */
-    private _isPointerSwiping(pointerX: number, pointerY: number): boolean {
+    private _isPointerSwiping(
+        pointerX: number,
+        pointerY: number,
+        origin = this._startingPosition,
+        threshold = InputManager.DragMovementThreshold
+    ): boolean {
         return (
-            Math.abs(this._startingPosition.x - pointerX) > InputManager.DragMovementThreshold ||
-            Math.abs(this._startingPosition.y - pointerY) > InputManager.DragMovementThreshold
+            Math.abs(origin.x - pointerX) > threshold ||
+            Math.abs(origin.y - pointerY) > threshold
         );
     }
 
     private _prePointerDoubleOrTripleClick(evt: IPointerEvent) {
         const { clientX, clientY } = evt;
+        const movementThreshold = evt.deviceType === DeviceType.Touch
+            ? InputManager.TouchDoubleClickMovementThreshold
+            : InputManager.DragMovementThreshold;
 
-        const isMoveThreshold = this._isPointerSwiping(clientX, clientY);
+        const isMoveThreshold = this._isPointerSwiping(clientX, clientY, this._startingPosition, movementThreshold);
 
         if (isMoveThreshold) {
-            this._resetDoubleClickParam();
+            this._resetClickSequence();
         }
 
+        clearTimeout(this._delayedTimeout);
         this._delayedTimeout = setTimeout(() => {
             this._resetDoubleClickParam();
         }, InputManager.DoubleClickDelay);
@@ -491,13 +527,13 @@ export class InputManager extends Disposable {
         this._doubleClickOccurred += 1;
 
         if (this._tripleClickState) {
-            this._scene?.pick(Vector2.FromArray([evt.offsetX, evt.offsetY]))?.triggerTripleClick(evt);
+            this._getObjectAtEvent(evt)?.triggerTripleClick(evt);
 
             this._scene.onTripleClick$.emitEvent(evt);
         }
 
         if (this._doubleClickOccurred === 2) {
-            this._scene?.pick(Vector2.FromArray([evt.offsetX, evt.offsetY]))?.triggerDblclick(evt);
+            this._getObjectAtEvent(evt)?.triggerDblclick(evt);
 
             this._scene.onDblclick$.emitEvent(evt);
             this._resetDoubleClickParam();
@@ -517,6 +553,12 @@ export class InputManager extends Disposable {
     private _resetDoubleClickParam() {
         this._doubleClickOccurred = 0;
         clearTimeout(this._delayedTimeout);
+    }
+
+    private _resetClickSequence() {
+        this._resetDoubleClickParam();
+        this._tripleClickState = false;
+        clearTimeout(this._delayedTripeTimeout);
     }
 
     get capturedObject() {

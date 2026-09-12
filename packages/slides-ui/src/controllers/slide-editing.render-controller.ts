@@ -35,12 +35,12 @@ import type {
 import type { SlideDataModel } from '@univerjs/slides';
 import type { IEditorBridgeServiceVisibleParam } from '../services/slide-editor-bridge.service';
 import {
+    createParagraphId,
     DEFAULT_EMPTY_DOCUMENT_VALUE,
     Direction,
     Disposable,
     DisposableCollection,
     EDITOR_ACTIVATED,
-    FOCUSING_EDITOR_BUT_HIDDEN,
     FOCUSING_EDITOR_STANDALONE,
     FOCUSING_UNIVER_EDITOR_STANDALONE_SINGLE_MODE,
     HorizontalAlign,
@@ -60,7 +60,16 @@ import {
     DocSkeletonManagerService,
     RichTextEditingMutation,
 } from '@univerjs/docs';
-import { VIEWPORT_KEY as DOC_VIEWPORT_KEY, DOCS_COMPONENT_MAIN_LAYER_INDEX, DOCS_VIEW_KEY, DocSelectionRenderService, IEditorService, MoveCursorOperation, MoveSelectionOperation } from '@univerjs/docs-ui';
+import {
+    DOCS_COMPONENT_MAIN_LAYER_INDEX,
+    DOCS_VIEW_KEY,
+    DocSelectionRenderService,
+    IEditorService,
+    MoveCursorOperation,
+    MoveSelectionOperation,
+    ReplaceSnapshotCommand,
+    VIEWPORT_KEY,
+} from '@univerjs/docs-ui';
 import {
     convertTextRotation,
     DeviceInputEventType,
@@ -192,11 +201,11 @@ export class SlideEditingRenderController extends Disposable implements IRenderM
     }
 
     private _getEditorSkeleton(editorId: string) {
-        return this._renderManagerService.getRenderById(editorId)?.with(DocSkeletonManagerService).getSkeleton();
+        return this._renderManagerService.getRenderUnitById(editorId)?.with(DocSkeletonManagerService).getSkeleton();
     }
 
     private _getEditorViewModel(editorId: string) {
-        return this._renderManagerService.getRenderById(editorId)?.with(DocSkeletonManagerService).getViewModel();
+        return this._renderManagerService.getRenderUnitById(editorId)?.with(DocSkeletonManagerService).getViewModel();
     }
 
     private _initialCursorSync(d: DisposableCollection) {
@@ -240,9 +249,18 @@ export class SlideEditingRenderController extends Disposable implements IRenderM
                 documentModel!.updateDocumentDataPageSize((endX - startX) / scaleX);
             }
 
-            this._instanceSrv.changeDoc(editorUnitId, documentModel!);
-            this._contextService.setContextValue(FOCUSING_EDITOR_BUT_HIDDEN, true);
-            this._textSelectionManagerService.replaceTextRanges([{
+            const snapshot = documentModel!.getSnapshot();
+            const editorDocument = this._instanceSrv.getUnit(editorUnitId, UniverInstanceType.UNIVER_DOC);
+            if (editorDocument == null) {
+                this._instanceSrv.createUnit(UniverInstanceType.UNIVER_DOC, snapshot);
+            } else {
+                this._commandService.syncExecuteCommand(ReplaceSnapshotCommand.id, {
+                    unitId: editorUnitId,
+                    snapshot,
+                });
+            }
+            this._instanceSrv.setCurrentUnitForType(editorUnitId);
+            this._textSelectionManagerService.replaceDocRanges([{
                 startOffset: 0,
                 endOffset: 0,
             }]);
@@ -430,7 +448,7 @@ export class SlideEditingRenderController extends Disposable implements IRenderM
 
         const { document: documentComponent, scene: editorScene, engine: docEngine } = editorObject;
 
-        const viewportMain = editorScene.getViewport(DOC_VIEWPORT_KEY.VIEW_MAIN);
+        const viewportMain = editorScene.getViewport(VIEWPORT_KEY.VIEW_MAIN);
 
         const clientHeight =
             document.body.clientHeight -
@@ -600,18 +618,18 @@ export class SlideEditingRenderController extends Disposable implements IRenderM
         // TODO: @JOCS, Get the position close to the cursor after clicking on the cell.
         const cursor = documentDataModel.getBody()!.dataStream.length - 2 || 0;
 
-        scene.getViewport(DOC_VIEWPORT_KEY.VIEW_MAIN)?.scrollToViewportPos({
+        scene.getViewport(VIEWPORT_KEY.VIEW_MAIN)?.scrollToViewportPos({
             viewportScrollX: Number.POSITIVE_INFINITY,
         });
 
-        this._textSelectionManagerService.replaceTextRanges([
+        this._textSelectionManagerService.replaceDocRanges([
             {
                 startOffset: cursor,
                 endOffset: cursor,
             },
         ]);
 
-        this._renderManagerService.getRenderById(unitId)?.scene.resetCursor();
+        this._renderManagerService.getRenderUnitById(unitId)?.scene.resetCursor();
     }
 
     private _resetBodyStyle(body: IDocumentBody, removeStyle = false) {
@@ -633,6 +651,7 @@ export class SlideEditingRenderController extends Disposable implements IRenderM
                 body.paragraphs = [
                     {
                         startIndex: 0,
+                        paragraphId: createParagraphId(new Set()),
                     },
                 ];
             }
@@ -863,7 +882,7 @@ export function getEditorObject(
         return;
     }
 
-    const currentRender = renderManagerService.getRenderById(unitId);
+    const currentRender = renderManagerService.getRenderUnitById(unitId);
 
     if (currentRender == null) {
         return;

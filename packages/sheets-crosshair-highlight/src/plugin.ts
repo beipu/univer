@@ -16,16 +16,21 @@
 
 import type { Dependency } from '@univerjs/core';
 import type { IUniverSheetsCrosshairHighlightConfig } from './config/config';
-import { IConfigService, Inject, Injector, merge, Plugin, UniverInstanceType } from '@univerjs/core';
-import { IRenderManagerService } from '@univerjs/engine-render';
+import { DependentOn, IConfigService, Inject, Injector, merge, Plugin, UniverInstanceType } from '@univerjs/core';
+import { IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
+import { UniverSheetsUIPlugin } from '@univerjs/sheets-ui';
 import pkg from '../package.json';
 import { defaultPluginConfig, SHEETS_CROSSHAIR_HIGHLIGHT_PLUGIN_CONFIG_KEY } from './config/config';
+import { SHEETS_CROSSHAIR_HIGHLIGHT_PLUGIN_NAME } from './const';
+import { ComponentsController } from './controllers/components.controller';
 import { SheetsCrosshairHighlightController } from './controllers/crosshair.controller';
 import { SheetsCrosshairHighlightService } from './services/crosshair.service';
 import { SheetCrosshairHighlightRenderController } from './views/widgets/crosshair-highlight.render-controller';
 
+@DependentOn(UniverRenderEnginePlugin, UniverSheetsPlugin, UniverSheetsUIPlugin)
 export class UniverSheetsCrosshairHighlightPlugin extends Plugin {
-    static override pluginName: string = 'SHEET_CROSSHAIR_HIGHLIGHT_PLUGIN';
+    static override pluginName: string = SHEETS_CROSSHAIR_HIGHLIGHT_PLUGIN_NAME;
     static override packageName = pkg.name;
     static override version = pkg.version;
     static override type = UniverInstanceType.UNIVER_SHEET;
@@ -49,6 +54,7 @@ export class UniverSheetsCrosshairHighlightPlugin extends Plugin {
 
     override onStarting(): void {
         ([
+            [ComponentsController],
             [SheetsCrosshairHighlightService],
             [SheetsCrosshairHighlightController],
         ] as Dependency[]).forEach((d) => this._injector.add(d));
@@ -58,6 +64,7 @@ export class UniverSheetsCrosshairHighlightPlugin extends Plugin {
         ([
             [SheetCrosshairHighlightRenderController],
         ] as Dependency[]).forEach((d) => this._injector.add(d));
+        this._injector.get(ComponentsController);
         this._injector.get(SheetsCrosshairHighlightController);
         this._renderManagerService.registerRenderModule(UniverInstanceType.UNIVER_SHEET, [SheetCrosshairHighlightRenderController] as Dependency);
     }

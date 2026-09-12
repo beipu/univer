@@ -15,6 +15,7 @@
  */
 
 import type { IChannel, IMessageProtocol } from '../rpc.service';
+import { awaitTime } from '@univerjs/core';
 import { Observable, Subject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { ChannelClient, ChannelServer, fromModule, toModule } from '../rpc.service';
@@ -30,12 +31,6 @@ const CALL_FAILURE = 202;
 const SUBSCRIBE_NEXT = 300;
 const SUBSCRIBE_ERROR = 301;
 const SUBSCRIBE_COMPLETE = 302;
-
-function flushPromises() {
-    return new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 0);
-    });
-}
 
 function getType(value: unknown): number | undefined {
     if (typeof value !== 'object' || value === null) {
@@ -128,7 +123,7 @@ describe('rpc.service edge cases', () => {
         lazySubscription.unsubscribe();
 
         protocol.emit({ seq: -1, type: INITIALIZE });
-        await flushPromises();
+        await awaitTime(0);
 
         const callRequest = protocol.sent.find((msg) => getType(msg) === CALL);
         expect(callRequest).toBeDefined();
@@ -156,7 +151,7 @@ describe('rpc.service edge cases', () => {
             })
         ).toThrow('[ChannelClient]: unknown response type!');
         callPending.delete(getSeq(unknownCallRequest) as number);
-        void unknownCallPromise.catch(() => undefined);
+        unknownCallPromise.catch(() => undefined);
 
         const values: number[] = [];
         const stream = channel.subscribe<number>('stream$').subscribe((value) => values.push(value));
@@ -180,10 +175,23 @@ describe('rpc.service edge cases', () => {
         protocol.emit({ seq: subscribeSeq, type: SUBSCRIBE_COMPLETE });
         stream.unsubscribe();
 
-        (client as unknown as { _disposed: boolean })._disposed = true;
+        const pendingCall = channel.call('pending');
+        const subscriptionError = vi.fn();
+        channel.subscribe('pending$').subscribe({ error: subscriptionError });
+        client.dispose();
+
+        await expect(pendingCall).rejects.toThrow('[ChannelClient]: client is disposed!');
+        expect(subscriptionError).toHaveBeenCalledWith(expect.objectContaining({
+            message: '[ChannelClient]: client is disposed!',
+        }));
         await expect(channel.call('disposed')).rejects.toThrow('[ChannelClient]: client is disposed!');
         expect(() => channel.subscribe('disposed$')).toThrow('[ChannelClient]: client is disposed!');
         client.dispose();
+
+        const uninitializedClient = new ChannelClient(new TestMessageProtocol() as IMessageProtocol);
+        const waitingCall = uninitializedClient.getChannel('waiting').call('pending');
+        uninitializedClient.dispose();
+        await expect(waitingCall).rejects.toThrow('[ChannelClient]: client is disposed!');
     });
 
     it('ChannelServer should handle request branches, call/subscribe failures and unsubscription', async () => {
@@ -198,7 +206,7 @@ describe('rpc.service edge cases', () => {
         protocol.emit({ type: 999, seq: 1, channelName: '', method: '' });
 
         protocol.emit({ type: CALL, seq: 10, channelName: 'missing', method: 'm' });
-        await flushPromises();
+        await awaitTime(0);
         expect(protocol.sent).toContainEqual({
             seq: 10,
             type: CALL_FAILURE,
@@ -213,7 +221,7 @@ describe('rpc.service edge cases', () => {
             subscribe: () => new Observable(),
         } as IChannel);
         protocol.emit({ type: CALL, seq: 11, channelName: 'bad-call', method: 'm', args: [] });
-        await flushPromises();
+        await awaitTime(0);
         expect(protocol.sent).toContainEqual({
             seq: 11,
             type: CALL_FAILURE,
@@ -225,7 +233,7 @@ describe('rpc.service edge cases', () => {
             subscribe: () => new Observable(),
         } as IChannel);
         protocol.emit({ type: CALL, seq: 12, channelName: 'no-args', method: 'm' });
-        await flushPromises();
+        await awaitTime(0);
         expect(protocol.sent).toContainEqual({
             seq: 12,
             type: CALL_SUCCESS,
@@ -265,6 +273,15 @@ describe('rpc.service edge cases', () => {
         protocol.emit({ type: UNSUBSCRIBE, seq: 30, channelName: 'stream', method: 'stream$' });
         expect(unsubscribed).toBe(true);
 
+        let disposedSubscription = false;
+        server.registerChannel('dispose-stream', {
+            call: async () => true,
+            subscribe: () => new Observable<string>(() => () => {
+                disposedSubscription = true;
+            }),
+        } as IChannel);
+        protocol.emit({ type: SUBSCRIBE, seq: 31, channelName: 'dispose-stream', method: 'stream$' });
         server.dispose();
+        expect(disposedSubscription).toBe(true);
     });
 });

@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'Bảng',
         selectRange: 'Chọn phạm vi bảng',
         rename: 'Đổi tên bảng',
+        renamePlaceholder: 'Nhập tên bảng',
         updateRange: 'Cập nhật phạm vi bảng',
         tableRangeWithMergeError: 'Phạm vi bảng không thể chồng lấp với các ô đã được hợp nhất',
         tableRangeWithOtherTableError: 'Phạm vi bảng không thể chồng lấp với các bảng khác',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'Chân trang',
         firstLine: 'Dòng đầu tiên',
         secondLine: 'Dòng thứ hai',
-        columnPrefix: 'Cột',
-        tablePrefix: 'Bảng',
         tableNameError: 'Tên bảng không thể chứa khoảng trắng, không được bắt đầu bằng số và không được trùng với tên bảng đã có',
+        columnMenu: {
+            'insert-left': 'Chèn 1 cột bảng bên trái',
+            'insert-right': 'Chèn 1 cột bảng bên phải',
+            delete: 'Xóa cột bảng',
+        },
+
+        sort: {
+            'sort-asc': 'Tăng dần',
+            'sort-desc': 'Giảm dần',
+        },
 
         insert: {
             main: 'Chèn bảng',
@@ -84,7 +93,7 @@ const locale: typeof enUS = {
                 notBetween: 'Không trong khoảng',
                 above: 'Lớn hơn',
                 below: 'Nhỏ hơn',
-                topN: 'Top {0}',
+                topN: 'Trên cùng {0}',
             },
         },
         date: {
@@ -133,12 +142,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'Bộ lọc',
             'by-values': 'Theo giá trị',
+            'by-colors': 'Theo màu',
             'by-conditions': 'Theo điều kiện',
+            back: 'Quay lại',
+            resize: 'Thay đổi kích thước',
+            'filter-by-cell-fill-color': 'Màu nền ô',
+            'filter-by-cell-text-color': 'Màu chữ ô',
+            'filter-by-color-none': 'Cột này chỉ chứa một màu',
             'clear-filter': 'Xóa lọc',
             cancel: 'Hủy bỏ',
             confirm: 'Xác nhận',
             'search-placeholder': 'Sử dụng khoảng trắng để tách các từ khóa',
+            'input-values-placeholder': 'Vui lòng nhập',
             'select-all': 'Chọn tất cả',
         },
     },

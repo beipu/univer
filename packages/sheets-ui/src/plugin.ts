@@ -17,22 +17,37 @@
 import type { Dependency, Workbook } from '@univerjs/core';
 import type { IUniverUIConfig } from '@univerjs/ui';
 import type { IUniverSheetsUIConfig } from './config/config';
-import { DependentOn, IConfigService, Inject, Injector, IUniverInstanceService, merge, mergeOverrideWithDependencies, Plugin, registerDependencies, touchDependencies, UniverInstanceType } from '@univerjs/core';
-import { IRenderManagerService } from '@univerjs/engine-render';
+import {
+    DependentOn,
+    IConfigService,
+    Inject,
+    Injector,
+    IUniverInstanceService,
+    merge,
+    mergeOverrideWithDependencies,
+    Plugin,
+    registerDependencies,
+    touchDependencies,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { UniverDocsPlugin } from '@univerjs/docs';
+import { UniverDocsUIPlugin } from '@univerjs/docs-ui';
+import { UniverFormulaEnginePlugin } from '@univerjs/engine-formula';
+import { IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render';
 import { IRefSelectionsService, RefSelectionsService, UniverSheetsPlugin } from '@univerjs/sheets';
-import { ComponentManager, UI_PLUGIN_CONFIG_KEY } from '@univerjs/ui';
+import { UI_PLUGIN_CONFIG_KEY } from '@univerjs/ui';
 import { filter } from 'rxjs/operators';
 import pkg from '../package.json';
 import { defaultPluginConfig, SHEETS_UI_PLUGIN_CONFIG_KEY } from './config/config';
-import { UNIVER_SHEET_PERMISSION_USER_PART } from './consts/permission';
-import { AutoFillUIController } from './controllers/auto-fill-ui.controller';
+import { AutoFillRenderController, AutoFillUIController } from './controllers/auto-fill-ui.controller';
 import { AutoHeightController } from './controllers/auto-height.controller';
 import { AutoWidthController } from './controllers/auto-width.controller';
-import { CellAlertRenderController } from './controllers/cell-alert.controller';
 import { CellCustomRenderController } from './controllers/cell-custom-render.controller';
 import { CellPopupEditorController } from './controllers/cell-popup-editor.controller';
 import { SheetCheckboxController } from './controllers/checkbox.controller';
+import { SheetClipboardUIController } from './controllers/clipboard/clipboard-ui.controller';
 import { SheetClipboardController } from './controllers/clipboard/clipboard.controller';
+import { ComponentsController } from './controllers/components.controller';
 import { SheetsDefinedNameController } from './controllers/defined-name/defined-name.controller';
 import { DragRenderController } from './controllers/drag-render.controller';
 import { EditorDataSyncController } from './controllers/editor/data-sync.controller';
@@ -46,10 +61,19 @@ import { MarkSelectionRenderController } from './controllers/mark-selection.cont
 import { MoveRangeRenderController } from './controllers/move-range.controller';
 import { SheetPermissionCheckUIController } from './controllers/permission/sheet-permission-check-ui.controller';
 import { SheetPermissionInitUIController } from './controllers/permission/sheet-permission-init-ui.controller';
-import { SheetPermissionInterceptorCanvasRenderController } from './controllers/permission/sheet-permission-interceptor-canvas-render.controller';
-import { SheetPermissionInterceptorClipboardController } from './controllers/permission/sheet-permission-interceptor-clipboard.controller';
-import { SheetPermissionInterceptorFormulaRenderController } from './controllers/permission/sheet-permission-interceptor-formula-render.controller';
-import { SheetPermissionRenderController, SheetPermissionRenderManagerController, WorksheetProtectionRenderController } from './controllers/permission/sheet-permission-render.controller';
+import {
+    SheetPermissionInterceptorCanvasRenderController,
+} from './controllers/permission/sheet-permission-interceptor-canvas-render.controller';
+import {
+    SheetPermissionInterceptorClipboardController,
+} from './controllers/permission/sheet-permission-interceptor-clipboard.controller';
+import {
+    SheetPermissionInterceptorFormulaRenderController,
+} from './controllers/permission/sheet-permission-interceptor-formula-render.controller';
+import {
+    SheetPermissionRenderController,
+    WorksheetProtectionRenderController,
+} from './controllers/permission/sheet-permission-render.controller';
 import { ClipboardRenderController } from './controllers/render-controllers/clipboard.render-controller';
 import { SheetContextMenuRenderController } from './controllers/render-controllers/contextmenu.render-controller';
 import { EditorBridgeRenderController } from './controllers/render-controllers/editor-bridge.render-controller';
@@ -64,12 +88,15 @@ import { SheetRenderController } from './controllers/render-controllers/sheet.re
 import { SheetSkeletonRenderController } from './controllers/render-controllers/skeleton.render-controller';
 import { SheetsZoomRenderController } from './controllers/render-controllers/zoom.render-controller';
 import { RepeatLastActionController } from './controllers/repeat-last-action.controller';
-import { SheetUIController } from './controllers/sheet-ui.controller';
 import { StatusBarController } from './controllers/status-bar.controller';
+import { SheetUIController } from './controllers/ui.controller';
 import { AutoHeightService } from './services/auto-height.service';
 import { SheetCanvasPopManagerService } from './services/canvas-pop-manager.service';
 import { CellAlertManagerService } from './services/cell-alert-manager.service';
-import { ISheetCellDropdownManagerService, SheetCellDropdownManagerService } from './services/cell-dropdown-manager.service';
+import {
+    ISheetCellDropdownManagerService,
+    SheetCellDropdownManagerService,
+} from './services/cell-dropdown-manager.service';
 import { CellPopupManagerService } from './services/cell-popup-manager.service';
 import { ISheetClipboardService, SheetClipboardService } from './services/clipboard/clipboard.service';
 import { DragManagerService } from './services/drag-manager.service';
@@ -81,6 +108,7 @@ import {
     IFormulaEditorManagerService,
 } from './services/editor/formula-editor-manager.service';
 import { FormatPainterService, IFormatPainterService } from './services/format-painter/format-painter.service';
+import { HeaderUnhideRangeService } from './services/header-unhide-range.service';
 import { HoverManagerService } from './services/hover-manager.service';
 import { IMarkSelectionService, MarkSelectionService } from './services/mark-selection/mark-selection.service';
 import { SheetPermissionPanelModel } from './services/permission/sheet-permission-panel.model';
@@ -98,7 +126,13 @@ import { SheetsRenderService } from './services/sheets-render.service';
 import { ShortcutExperienceService } from './services/shortcut-experience.service';
 import { IStatusBarService, StatusBarService } from './services/status-bar.service';
 
-@DependentOn(UniverSheetsPlugin)
+@DependentOn(
+    UniverDocsPlugin,
+    UniverFormulaEnginePlugin,
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverDocsUIPlugin
+)
 export class UniverSheetsUIPlugin extends Plugin {
     static override pluginName = 'SHEET_UI_PLUGIN';
     static override packageName = pkg.name;
@@ -111,8 +145,7 @@ export class UniverSheetsUIPlugin extends Plugin {
         @Inject(Injector) override readonly _injector: Injector,
         @IRenderManagerService private readonly _renderManagerService: IRenderManagerService,
         @IConfigService private readonly _configService: IConfigService,
-        @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
-        @Inject(ComponentManager) private readonly _componentManager: ComponentManager
+        @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService
     ) {
         super();
 
@@ -123,20 +156,6 @@ export class UniverSheetsUIPlugin extends Plugin {
             this._config
         );
 
-        if (rest.protectedRangeUserSelector) {
-            const { component, framework } = rest.protectedRangeUserSelector;
-
-            this.disposeWithMe(
-                this._componentManager.register(
-                    UNIVER_SHEET_PERMISSION_USER_PART,
-                    component,
-                    {
-                        framework,
-                    }
-                )
-            );
-        }
-
         if (menu) {
             this._configService.setConfig('menu', menu, { merge: true });
         }
@@ -145,6 +164,8 @@ export class UniverSheetsUIPlugin extends Plugin {
     }
 
     override onStarting(): void {
+        this._injector.add([ComponentsController]);
+        this._injector.get(ComponentsController);
         registerDependencies(this._injector, mergeOverrideWithDependencies([
             [ShortcutExperienceService],
             [IEditorBridgeService, { useClass: EditorBridgeService }],
@@ -159,6 +180,7 @@ export class UniverSheetsUIPlugin extends Plugin {
             [IStatusBarService, { useClass: StatusBarService }],
             [IMarkSelectionService, { useClass: MarkSelectionService }],
             [HoverManagerService],
+            [HeaderUnhideRangeService],
             [DragManagerService],
             [SheetCanvasPopManagerService],
             [CellPopupManagerService],
@@ -166,7 +188,6 @@ export class UniverSheetsUIPlugin extends Plugin {
             [SelectAllService],
             [ISheetCellDropdownManagerService, { useClass: SheetCellDropdownManagerService }],
             [SheetCellEditorResizeService],
-
             // controllers
             [AutoHeightController],
             [AutoWidthController],
@@ -189,8 +210,11 @@ export class UniverSheetsUIPlugin extends Plugin {
             [SheetPermissionRenderManagerService],
             [SheetPermissionInterceptorClipboardController],
             [SheetPermissionCheckUIController],
-            [SheetPermissionRenderManagerController],
         ] as Dependency[], this._config.override));
+
+        // A sheet renderer can be created before Ready when another sheet-type plugin
+        // eagerly resolves SheetsRenderService during Starting.
+        this._registerRenderBasics();
     }
 
     override onReady(): void {
@@ -200,9 +224,8 @@ export class UniverSheetsUIPlugin extends Plugin {
 
         registerDependencies(this._injector, [
             [SheetClipboardController],
+            [SheetClipboardUIController],
         ]);
-
-        this._registerRenderBasics();
 
         touchDependencies(this._injector, [
             [SheetUIController],
@@ -216,9 +239,10 @@ export class UniverSheetsUIPlugin extends Plugin {
         this._registerRenderModules();
 
         touchDependencies(this._injector, [
-            [SheetPermissionRenderManagerController],
             [SheetPermissionPanelModel],
+            [SheetPermissionInterceptorClipboardController],
             [SheetClipboardController],
+            [SheetClipboardUIController],
             [FormulaEditorController],
             [SheetsDefinedNameController],
             [StatusBarController],
@@ -235,7 +259,6 @@ export class UniverSheetsUIPlugin extends Plugin {
         touchDependencies(this._injector, [
             [FormatPainterController],
             [AutoFillUIController],
-            [SheetPermissionInterceptorClipboardController],
         ]);
     }
 
@@ -266,7 +289,6 @@ export class UniverSheetsUIPlugin extends Plugin {
 
             [FormatPainterRenderController],
             [ClipboardRenderController],
-            [CellAlertRenderController],
             [CellPopupEditorController],
             [ForceStringAlertRenderController],
             [MarkSelectionRenderController],
@@ -276,6 +298,7 @@ export class UniverSheetsUIPlugin extends Plugin {
             [CellCustomRenderController],
             [SheetContextMenuRenderController],
             [MoveRangeRenderController],
+            [AutoFillRenderController],
 
             // editor
             [EditorBridgeRenderController],
@@ -303,6 +326,14 @@ export class UniverSheetsUIPlugin extends Plugin {
         const univerInstanceService = this._univerInstanceService;
         this.disposeWithMe(univerInstanceService.getCurrentTypeOfUnit$<Workbook>(UniverInstanceType.UNIVER_SHEET)
             .pipe(filter((v) => !!v))
-            .subscribe((workbook) => univerInstanceService.focusUnit(workbook!.getUnitId())));
+            .subscribe((workbook) => {
+                const unitId = workbook!.getUnitId();
+                const createOptions = univerInstanceService.getUnitCreateOptions(unitId);
+                if (createOptions?.makeCurrent === false) {
+                    return;
+                }
+
+                univerInstanceService.focusUnit(unitId);
+            }));
     }
 }

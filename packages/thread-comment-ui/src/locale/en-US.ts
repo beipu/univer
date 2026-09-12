@@ -15,11 +15,11 @@
  */
 
 const locale = {
-    threadCommentUI: {
+    'thread-comment-ui': {
+        mobile: { back: 'Back' },
         panel: {
             title: 'Comment Management',
             empty: 'No comments yet',
-            filterEmpty: 'No match result',
             reset: 'Reset Filter',
             addComment: 'Add Comment',
             solved: 'Solved',
@@ -33,6 +33,7 @@ const locale = {
         item: {
             edit: 'Edit',
             delete: 'Delete This Comment',
+            more: 'More',
         },
         filter: {
             sheet: {

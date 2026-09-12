@@ -16,25 +16,27 @@
 
 import type { IDisposable } from '@univerjs/core';
 import type { IConditionFormattingRule } from '@univerjs/sheets-conditional-formatting';
-import { Disposable, generateRandomId, Inject, Injector, IUniverInstanceService, LocaleService, UniverInstanceType } from '@univerjs/core';
-import { ComponentManager, ISidebarService } from '@univerjs/ui';
-import { ConditionFormattingPanel } from '../components/panel';
-
-const CF_PANEL_KEY = 'sheet.conditional.formatting.panel';
+import type { LocaleKey } from '../locale/types';
+import {
+    Disposable,
+    generateRandomId,
+    Inject,
+    IUniverInstanceService,
+    LocaleService,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { ISidebarService } from '@univerjs/ui';
+import { CF_PANEL_KEY } from '../const';
 
 export class ConditionalFormattingPanelController extends Disposable {
     private _sidebarDisposable: IDisposable | null = null;
 
     constructor(
         @IUniverInstanceService private readonly _univerInstanceService: IUniverInstanceService,
-        @Inject(Injector) private _injector: Injector,
-        @Inject(ComponentManager) private _componentManager: ComponentManager,
         @Inject(ISidebarService) private _sidebarService: ISidebarService,
         @Inject(LocaleService) private _localeService: LocaleService
     ) {
         super();
-
-        this._initPanel();
 
         this.disposeWithMe(
             this._univerInstanceService.getCurrentTypeOfUnit$(UniverInstanceType.UNIVER_SHEET).subscribe((sheet) => {
@@ -55,7 +57,7 @@ export class ConditionalFormattingPanelController extends Disposable {
     openPanel(rule?: IConditionFormattingRule) {
         const props = {
             id: CF_PANEL_KEY,
-            header: { title: this._localeService.t('sheet.cf.title') },
+            header: { title: this._localeService.t<LocaleKey>('sheets-conditional-formatting-ui.title') },
             children: {
                 label: CF_PANEL_KEY,
                 rule,
@@ -65,11 +67,5 @@ export class ConditionalFormattingPanelController extends Disposable {
         };
 
         this._sidebarDisposable = this._sidebarService.open(props);
-    }
-
-    private _initPanel() {
-        this.disposeWithMe(
-            this._componentManager.register(CF_PANEL_KEY, ConditionFormattingPanel)
-        );
     }
 }

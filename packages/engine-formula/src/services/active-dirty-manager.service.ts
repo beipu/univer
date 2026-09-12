@@ -14,17 +14,25 @@
  * limitations under the License.
  */
 
-import type { ICommandInfo, IUnitRange, Nullable } from '@univerjs/core';
-import type { IDirtyUnitFeatureMap, IDirtyUnitOtherFormulaMap, IDirtyUnitSheetDefinedNameMap, IDirtyUnitSheetNameMap } from '../basics/common';
+import type { ICommandInfo, IExecutionOptions, IUnitRange, Nullable } from '@univerjs/core';
+import type {
+    IDirtyUnitDefinedNameMap,
+    IDirtyUnitFeatureMap,
+    IDirtyUnitOtherFormulaMap,
+    IDirtyUnitSheetNameMap,
+    IDirtyUnitSuperTableMap,
+} from '../basics/common';
 import { createIdentifier, Disposable } from '@univerjs/core';
 
 export interface IDirtyConversionManagerParams {
     commandId: string;
+    shouldTrigger?: (command: ICommandInfo, options?: IExecutionOptions) => boolean;
     getDirtyData: (command: ICommandInfo) => {
         forceCalculation?: boolean;
         dirtyRanges?: IUnitRange[];
         dirtyNameMap?: IDirtyUnitSheetNameMap;
-        dirtyDefinedNameMap?: IDirtyUnitSheetDefinedNameMap;
+        dirtyDefinedNameMap?: IDirtyUnitDefinedNameMap;
+        dirtySuperTableMap?: IDirtyUnitSuperTableMap;
         dirtyUnitFeatureMap?: IDirtyUnitFeatureMap;
         dirtyUnitOtherFormulaMap?: IDirtyUnitOtherFormulaMap;
         clearDependencyTreeCache?: IDirtyUnitSheetNameMap;
@@ -77,6 +85,6 @@ export class ActiveDirtyManagerService extends Disposable implements IActiveDirt
     }
 }
 
-export const IActiveDirtyManagerService = createIdentifier<ActiveDirtyManagerService>(
+export const IActiveDirtyManagerService = createIdentifier<IActiveDirtyManagerService>(
     'univer.formula.active-dirty-manager.service'
 );

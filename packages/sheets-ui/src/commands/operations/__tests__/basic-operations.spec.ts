@@ -63,7 +63,7 @@ describe('sheets-ui basic operations', () => {
         };
 
         const renderManagerService = {
-            getRenderById: vi.fn()
+            getRenderUnitById: vi.fn()
                 .mockReturnValueOnce(renderUnit)
                 .mockReturnValueOnce(renderUnit),
         };
@@ -88,11 +88,11 @@ describe('sheets-ui basic operations', () => {
     });
 
     it('SetScrollOperation should return false for empty params or missing render unit', () => {
-        const accessor = createAccessor([[IRenderManagerService, { getRenderById: vi.fn() }]]);
+        const accessor = createAccessor([[IRenderManagerService, { getRenderUnitById: vi.fn() }]]);
         expect(SetScrollOperation.handler(accessor, undefined as any)).toBe(false);
 
         const renderManagerService = {
-            getRenderById: vi.fn()
+            getRenderUnitById: vi.fn()
                 .mockReturnValueOnce({ with: () => ({ emitRawScrollParam: vi.fn() }) })
                 .mockReturnValueOnce(null),
         };
@@ -103,7 +103,7 @@ describe('sheets-ui basic operations', () => {
     it('SetZoomRatioOperation should delegate to zoom controller', () => {
         const updateZoom = vi.fn(() => true);
         const renderManagerService = {
-            getRenderById: vi.fn(() => ({ with: () => ({ updateZoom }) })),
+            getRenderUnitById: vi.fn(() => ({ with: () => ({ updateZoom }) })),
         };
         const accessor = createAccessor([[IRenderManagerService, renderManagerService]]);
 
@@ -114,15 +114,16 @@ describe('sheets-ui basic operations', () => {
         })).toBe(true);
         expect(updateZoom).toHaveBeenCalledWith('s1', 1.25);
 
-        const accessor2 = createAccessor([[IRenderManagerService, { getRenderById: () => null }]]);
+        const accessor2 = createAccessor([[IRenderManagerService, { getRenderUnitById: () => null }]]);
         expect(SetZoomRatioOperation.handler(accessor2, { unitId: 'u1', subUnitId: 's1', zoomRatio: 1 } as any)).toBe(false);
     });
 
     it('ScrollToRangeOperation should guard params and call scroll controller', () => {
         const scrollToRange = vi.fn(() => true);
+        const getRenderUnitById = vi.fn(() => ({ with: () => ({ scrollToRange }) }));
         const accessor = createAccessor([
-            [IUniverInstanceService, { getCurrentUnitForType: () => ({ getUnitId: () => 'u1' }) }],
-            [IRenderManagerService, { getRenderById: () => ({ with: () => ({ scrollToRange }) }) }],
+            [IUniverInstanceService, { getCurrentUnitOfType: () => ({ getUnitId: () => 'u1' }) }],
+            [IRenderManagerService, { getRenderUnitById }],
         ]);
 
         expect(ScrollToRangeOperation.handler(accessor, undefined as any)).toBe(false);
@@ -138,5 +139,20 @@ describe('sheets-ui basic operations', () => {
             true,
             false
         );
+        expect(getRenderUnitById).toHaveBeenCalledWith('u1');
+
+        expect(ScrollToRangeOperation.handler(accessor, {
+            unitId: 'embedded-u1',
+            range: { startRow: 2, endRow: 3, startColumn: 2, endColumn: 3 },
+        } as any)).toBe(true);
+        expect(getRenderUnitById).toHaveBeenLastCalledWith('embedded-u1');
+
+        const missingRenderAccessor = createAccessor([
+            [IUniverInstanceService, { getCurrentUnitOfType: () => ({ getUnitId: () => 'missing' }) }],
+            [IRenderManagerService, { getRenderUnitById: () => null }],
+        ]);
+        expect(ScrollToRangeOperation.handler(missingRenderAccessor, {
+            range: { startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 },
+        } as any)).toBe(false);
     });
 });

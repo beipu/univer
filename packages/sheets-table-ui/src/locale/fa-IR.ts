@@ -17,10 +17,11 @@
 import type enUS from './en-US';
 
 const locale: typeof enUS = {
-    'sheets-table': {
+    'sheets-table-ui': {
         title: 'جدول',
         selectRange: 'انتخاب محدوده جدول',
         rename: 'تغییر نام جدول',
+        renamePlaceholder: 'نام جدول را وارد کنید',
         updateRange: 'به‌روزرسانی محدوده جدول',
         tableRangeWithMergeError: 'محدوده جدول نمی‌تواند با سلول‌های ادغام‌شده همپوشانی داشته باشد',
         tableRangeWithOtherTableError: 'محدوده جدول نمی‌تواند با جداول دیگر همپوشانی داشته باشد',
@@ -38,9 +39,17 @@ const locale: typeof enUS = {
         footer: 'پاورقی',
         firstLine: 'خط اول',
         secondLine: 'خط دوم',
-        columnPrefix: 'ستون',
-        tablePrefix: 'جدول',
-        tableNameError: 'لا يمكن أن يحتوي اسم الجدول على مسافات، ولا يمكن أن يبدأ برقم، ولا يمكن أن يتكرر مع أسماء الجداول الموجودة',
+        tableNameError: 'نام جدول نمی‌تواند شامل فاصله باشد، نمی‌تواند با عدد شروع شود و نمی‌تواند با نام جدول‌های موجود تکراری باشد',
+        columnMenu: {
+            'insert-left': 'درج ۱ ستون جدول در سمت چپ',
+            'insert-right': 'درج ۱ ستون جدول در سمت راست',
+            delete: 'حذف ستون جدول',
+        },
+
+        sort: {
+            'sort-asc': 'صعودی',
+            'sort-desc': 'نزولی',
+        },
 
         insert: {
             main: 'درج جدول',
@@ -133,12 +142,20 @@ const locale: typeof enUS = {
             },
         },
         filter: {
+            title: 'فیلتر',
             'by-values': 'بر اساس مقادیر',
+            'by-colors': 'بر اساس رنگ‌ها',
             'by-conditions': 'بر اساس شرایط',
+            back: 'بازگشت',
+            resize: 'تغییر اندازه',
+            'filter-by-cell-fill-color': 'رنگ پس‌زمینه سلول',
+            'filter-by-cell-text-color': 'رنگ متن سلول',
+            'filter-by-color-none': 'این ستون فقط یک رنگ دارد',
             'clear-filter': 'پاک کردن فیلتر',
             cancel: 'انصراف',
             confirm: 'تایید',
             'search-placeholder': 'برای جداسازی کلیدواژه‌ها از فاصله استفاده کنید',
+            'input-values-placeholder': 'ورود مقادیر',
             'select-all': 'انتخاب همه',
         },
     },

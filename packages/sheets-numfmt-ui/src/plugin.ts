@@ -16,20 +16,37 @@
 
 import type { Dependency } from '@univerjs/core';
 import type { IUniverSheetsNumfmtUIConfig } from './config/config';
-import { DependentOn, IConfigService, Inject, Injector, merge, Plugin, registerDependencies, touchDependencies, UniverInstanceType } from '@univerjs/core';
-import { IRenderManagerService } from '@univerjs/engine-render';
+import {
+    DependentOn,
+    IConfigService,
+    Inject,
+    Injector,
+    merge,
+    Plugin,
+    registerDependencies,
+    touchDependencies,
+    UniverInstanceType,
+} from '@univerjs/core';
+import { IRenderManagerService, UniverRenderEnginePlugin } from '@univerjs/engine-render';
+import { UniverSheetsPlugin } from '@univerjs/sheets';
 import { UniverSheetsNumfmtPlugin } from '@univerjs/sheets-numfmt';
 import { UniverSheetsUIPlugin } from '@univerjs/sheets-ui';
 import pkg from '../package.json';
-import { defaultPluginConfig } from './config/config';
+import { defaultPluginConfig, SHEETS_NUMFMT_UI_PLUGIN_CONFIG_KEY } from './config/config';
+import { ComponentsController } from './controllers/components.controller';
 import { NumfmtAlertRenderController } from './controllers/numfmt-alert-render.controller';
-import { NumfmtRepeatLastActionController } from './controllers/numfmt-repeat-last-action-controller';
-import { SheetNumfmtUIController } from './controllers/numfmt.controller';
+import { NumfmtRepeatLastActionController } from './controllers/numfmt-repeat-last-action.controller';
 import { NumfmtEditorController } from './controllers/numfmt.editor.controller';
+import { SheetNumfmtUIController } from './controllers/ui.controller';
 import { UserHabitController } from './controllers/user-habit.controller';
 import { NumfmtMenuController } from './menu/numfmt.menu.controller';
 
-@DependentOn(UniverSheetsUIPlugin, UniverSheetsNumfmtPlugin)
+@DependentOn(
+    UniverRenderEnginePlugin,
+    UniverSheetsPlugin,
+    UniverSheetsNumfmtPlugin,
+    UniverSheetsUIPlugin
+)
 export class UniverSheetsNumfmtUIPlugin extends Plugin {
     static override pluginName = 'SHEET_NUMFMT_UI_PLUGIN';
     static override packageName = pkg.name;
@@ -54,10 +71,12 @@ export class UniverSheetsNumfmtUIPlugin extends Plugin {
             this._configService.setConfig('menu', menu, { merge: true });
         }
 
-        this._configService.setConfig('sheets-numfmt-ui.config', rest);
+        this._configService.setConfig(SHEETS_NUMFMT_UI_PLUGIN_CONFIG_KEY, rest);
     }
 
     override onStarting(): void {
+        this._injector.add([ComponentsController]);
+        this._injector.get(ComponentsController);
         registerDependencies(this._injector, [
             [SheetNumfmtUIController],
             [NumfmtEditorController],

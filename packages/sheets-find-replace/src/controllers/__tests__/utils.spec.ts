@@ -26,6 +26,7 @@ import {
     isBehindPositionWithColumnPriority,
     isBehindPositionWithRowPriority,
     isSamePosition,
+    isSelectionSingleCell,
 } from '../utils';
 
 describe('Test sheet find replace utils', () => {
@@ -199,6 +200,18 @@ describe('Test sheet find replace utils', () => {
             )
         ).toBeFalsy();
     });
+
+    it('Should "isSelectionSingleCell" treat a full merged range as one cell', () => {
+        const mergedRange = { startRow: 1, endRow: 2, startColumn: 1, endColumn: 2 };
+        const worksheet = {
+            getMergedCell: () => mergedRange,
+        } as any;
+
+        expect(isSelectionSingleCell({ range: mergedRange } as any, worksheet)).toBe(true);
+        expect(isSelectionSingleCell({
+            range: { startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 },
+        } as any, worksheet)).toBe(false);
+    });
 });
 
 describe('test "hitCell" method', () => {
@@ -225,6 +238,7 @@ describe('test "hitCell" method', () => {
                     findDirection: FindDirection.COLUMN,
                     findScope: FindScope.SUBUNIT,
                     matchesTheWholeCell: false,
+                    matchesTheWholeWord: false,
                     replaceRevealed: false,
                 };
 
@@ -247,6 +261,7 @@ describe('test "hitCell" method', () => {
                 findDirection: FindDirection.COLUMN,
                 findScope: FindScope.SUBUNIT,
                 matchesTheWholeCell: false,
+                matchesTheWholeWord: false,
                 replaceRevealed: false,
             };
 

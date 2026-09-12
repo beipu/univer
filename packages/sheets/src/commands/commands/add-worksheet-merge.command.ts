@@ -14,8 +14,21 @@
  * limitations under the License.
  */
 
-import type { IAccessor, ICellData, ICommand, IMutationInfo, Injector, IRange, Nullable, Worksheet } from '@univerjs/core';
-import type { IAddWorksheetMergeMutationParams, IRemoveWorksheetMergeMutationParams } from '../../basics/interfaces/mutation-interface';
+import type {
+    IAccessor,
+    ICellData,
+    ICommand,
+    IMutationInfo,
+    Injector,
+    IRange,
+    Nullable,
+    Worksheet,
+} from '@univerjs/core';
+import type {
+    IAddWorksheetMergeMutationParams,
+    IRemoveWorksheetMergeMutationParams,
+} from '../../basics/interfaces/mutation-interface';
+import type { LocaleKey } from '../../locale/types';
 import type { ISetRangeValuesMutationParams } from '../mutations/set-range-values.mutation';
 import type { ISheetCommandSharedParams } from '../utils/interface';
 import {
@@ -36,9 +49,15 @@ import { getAddMergeMutationRangeByType } from '../../controllers/merge-cell.con
 import { SheetsSelectionsService } from '../../services/selections/selection.service';
 import { SheetInterceptorService } from '../../services/sheet-interceptor/sheet-interceptor.service';
 import { AddMergeUndoMutationFactory, AddWorksheetMergeMutation } from '../mutations/add-worksheet-merge.mutation';
-import { RemoveMergeUndoMutationFactory, RemoveWorksheetMergeMutation } from '../mutations/remove-worksheet-merge.mutation';
+import {
+    RemoveMergeUndoMutationFactory,
+    RemoveWorksheetMergeMutation,
+} from '../mutations/remove-worksheet-merge.mutation';
 import { SetRangeValuesMutation, SetRangeValuesUndoMutationFactory } from '../mutations/set-range-values.mutation';
-import { AddMergeRedoSelectionsOperationFactory, AddMergeUndoSelectionsOperationFactory } from '../utils/handle-merge-operation';
+import {
+    AddMergeRedoSelectionsOperationFactory,
+    AddMergeUndoSelectionsOperationFactory,
+} from '../utils/handle-merge-operation';
 import { RemoveWorksheetMergeCommand } from './remove-worksheet-merge.command';
 import { getSheetCommandTarget } from './utils/target-util';
 
@@ -107,7 +126,7 @@ export function getClearContentMutationParamsForRanges(
         const redoMutationParams: ISetRangeValuesMutationParams = {
             unitId,
             subUnitId,
-            cellValue: redoMatrix.getData(),
+            cellValue: redoMatrix.clone(),
         };
         const undoMutationParams: ISetRangeValuesMutationParams = SetRangeValuesUndoMutationFactory(
             accessor,
@@ -179,13 +198,13 @@ export const AddWorksheetMergeCommand: ICommand = {
             const result = await confirmService.confirm({
                 id: 'merge.confirm.add-worksheet-merge',
                 title: {
-                    title: 'merge.confirm.warning',
+                    title: 'sheets.merge.confirm.warning',
                 },
                 children: {
-                    title: 'merge.confirm.title',
+                    title: 'sheets.merge.confirm.title',
                 },
-                cancelText: localeService.t('merge.confirm.cancel'),
-                confirmText: localeService.t('merge.confirm.confirm'),
+                cancelText: localeService.t<LocaleKey>('sheets.merge.confirm.cancel'),
+                confirmText: localeService.t<LocaleKey>('sheets.merge.confirm.confirm'),
             });
 
             if (!result) return false;

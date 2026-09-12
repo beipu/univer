@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-import type { FC } from 'react';
+import type { LocaleKey } from '../../locale/types';
 import type { IBusinessComponentProps } from './interface';
 import { LocaleService } from '@univerjs/core';
 import { InputNumber, Select } from '@univerjs/design';
 import { getCurrencyType, getDecimalFromPattern, setPatternDecimal } from '@univerjs/sheets-numfmt';
 import { useDependency } from '@univerjs/ui';
-import { useContext, useMemo, useState } from 'react';
+import { useContext, useLayoutEffect, useMemo, useState } from 'react';
 import { UserHabitCurrencyContext } from '../../controllers/user-habit.controller';
 
 export const isAccountingPanel = (pattern: string) => {
@@ -28,8 +28,8 @@ export const isAccountingPanel = (pattern: string) => {
     return !!type && pattern.startsWith('_(');
 };
 
-export const AccountingPanel: FC<IBusinessComponentProps> = (props) => {
-    const { defaultPattern, action, onChange } = props;
+export function AccountingPanel(props: IBusinessComponentProps) {
+    const { defaultPattern, onActionChange, onChange } = props;
 
     const [decimal, setDecimal] = useState(() => getDecimalFromPattern(defaultPattern || '', 2));
     const userHabitCurrency = useContext(UserHabitCurrencyContext);
@@ -37,9 +37,10 @@ export const AccountingPanel: FC<IBusinessComponentProps> = (props) => {
     const options = useMemo(() => userHabitCurrency.map((key) => ({ label: key, value: key })), []);
 
     const localeService = useDependency(LocaleService);
-    const t = localeService.t;
 
-    action.current = () => setPatternDecimal(`_("${suffix}"* #,##0${decimal > 0 ? '.0' : ''}_)`, decimal);
+    useLayoutEffect(() => {
+        onActionChange(() => setPatternDecimal(`_("${suffix}"* #,##0${decimal > 0 ? '.0' : ''}_)`, decimal));
+    }, [decimal, onActionChange, suffix]);
 
     const handleSelect = (v: string) => {
         setSuffix(v);
@@ -56,7 +57,9 @@ export const AccountingPanel: FC<IBusinessComponentProps> = (props) => {
         <div>
             <div className="univer-mt-4 univer-flex univer-justify-between">
                 <div className="option">
-                    <div className="univer-text-sm univer-text-gray-400">{t('sheet.numfmt.decimalLength')}</div>
+                    <div className="univer-text-sm univer-text-gray-400">
+                        {localeService.t<LocaleKey>('sheets-numfmt-ui.decimalLength')}
+                    </div>
 
                     <div className="univer-mt-2 univer-w-32">
                         <InputNumber
@@ -70,7 +73,9 @@ export const AccountingPanel: FC<IBusinessComponentProps> = (props) => {
                     </div>
                 </div>
                 <div className="option">
-                    <div className="univer-text-sm univer-text-gray-400">{t('sheet.numfmt.currencyType')}</div>
+                    <div className="univer-text-sm univer-text-gray-400">
+                        {localeService.t<LocaleKey>('sheets-numfmt-ui.currencyType')}
+                    </div>
 
                     <div className="univer-mt-2 univer-w-36">
                         <Select
@@ -82,7 +87,9 @@ export const AccountingPanel: FC<IBusinessComponentProps> = (props) => {
                 </div>
             </div>
 
-            <div className="univer-mt-4 univer-text-sm univer-text-gray-400">{t('sheet.numfmt.accountingDes')}</div>
+            <div className="univer-mt-4 univer-text-sm univer-text-gray-400">
+                {localeService.t<LocaleKey>('sheets-numfmt-ui.accountingDes')}
+            </div>
         </div>
     );
 };

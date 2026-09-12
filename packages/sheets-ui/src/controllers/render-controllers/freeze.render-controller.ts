@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ICommandInfo, IFreeze, IRange, IWorksheetData, Nullable, Workbook } from '@univerjs/core';
+import type { ICommandInfo, IFreeze, IRange, Nullable, Workbook } from '@univerjs/core';
 import type { IMouseEvent, IPointerEvent, IRenderContext, IRenderModule, Viewport } from '@univerjs/engine-render';
 import type {
     IInsertColCommandParams,
@@ -101,6 +101,8 @@ export const FREEZE_COLUMN_MAIN_NAME = '__SpreadsheetFreezeColumnMainName__';
 export const FREEZE_COLUMN_HEADER_NAME = '__SpreadsheetFreezeColumnHeaderName__';
 
 const FREEZE_SIZE_NORMAL = 2;
+
+const FREEZE_SIZE_BOUNDARY_RATIO = 1.5;
 
 const AUXILIARY_CLICK_HIDDEN_OBJECT_TRANSPARENCY = 0.01;
 
@@ -222,7 +224,7 @@ export class HeaderFreezeRenderController extends Disposable implements IRenderM
 
         if (freezeDirectionType === FREEZE_DIRECTION_TYPE.ROW) {
             if (freezeRow === -1 || freezeRow === 0) {
-                freezeSize = freezeSize * 2;
+                freezeSize = freezeSize * FREEZE_SIZE_BOUNDARY_RATIO;
             }
 
             const freezeOffset = freezeSize;
@@ -253,7 +255,7 @@ export class HeaderFreezeRenderController extends Disposable implements IRenderM
             scene.addObjects([this._rowFreezeHeaderRect, this._rowFreezeMainRect], SHEET_COMPONENT_HEADER_LAYER_INDEX);
         } else {
             if (freezeColumn === -1 || freezeColumn === 0) {
-                freezeSize = freezeSize * 2;
+                freezeSize = freezeSize * FREEZE_SIZE_BOUNDARY_RATIO;
             }
 
             const FREEZE_OFFSET = freezeSize;
@@ -1625,16 +1627,11 @@ export class HeaderFreezeRenderController extends Disposable implements IRenderM
     }
 
     private _getFreeze() {
-        const config: IWorksheetData | undefined = this._sheetSkeletonManagerService
+        return this._sheetSkeletonManagerService
             .getCurrentParam()
             ?.skeleton
-            .getWorksheetConfig();
-
-        if (config == null) {
-            return;
-        }
-
-        return config.freeze;
+            .worksheet
+            .getFreeze();
     }
 
     private _getSheetObject() {

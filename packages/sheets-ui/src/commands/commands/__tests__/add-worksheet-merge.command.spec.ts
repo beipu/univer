@@ -148,7 +148,7 @@ describe('Test add worksheet merge commands', () => {
 
                 function getMerge(): IRange[] | undefined {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getConfig()
                         .mergeData;
@@ -195,7 +195,7 @@ describe('Test add worksheet merge commands', () => {
 
                 function getMerge(): IRange[] | undefined {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getConfig()
                         .mergeData;
@@ -240,7 +240,7 @@ describe('Test add worksheet merge commands', () => {
 
                 function getMerge(): IRange[] | undefined {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getConfig()
                         .mergeData;
@@ -273,7 +273,7 @@ describe('Test add worksheet merge commands', () => {
 
                 function getMerge(): IRange[] | undefined {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getConfig()
                         .mergeData;
@@ -328,7 +328,7 @@ describe('Test add worksheet merge commands', () => {
 
                 function getMerge(): IRange[] | undefined {
                     return get(IUniverInstanceService)
-                        .getUniverSheetInstance('test')
+                        .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                         ?.getSheetBySheetId('sheet1')
                         ?.getConfig()
                         .mergeData;
@@ -359,7 +359,7 @@ describe('Test add worksheet merge commands', () => {
         it('test clear util', () => {
             const commandService = get(ICommandService);
             const univerInstanceService = get(IUniverInstanceService);
-            const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+            const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
             const worksheet = workbook.getActiveSheet();
             if (!worksheet) throw new Error('No active sheet found');
 
@@ -400,15 +400,13 @@ describe('Test add worksheet merge commands', () => {
                                         },
                                     ],
                                     paragraphs: [
-                                        {
-                                            startIndex: 6,
-                                            paragraphStyle: {
-                                                horizontalAlign: 0,
-                                            },
-                                        },
+                                        { paragraphId: 'para_sheets_ui_fixture_1', startIndex: 6, paragraphStyle: {
+                                            horizontalAlign: 0,
+                                        } },
                                     ],
                                     sectionBreaks: [
                                         {
+                                            sectionId: 'section_fixture_1106',
                                             startIndex: 7,
                                         },
                                     ],
@@ -446,7 +444,7 @@ describe('Test add worksheet merge commands', () => {
 
         it('test merge range first cell is blank, second cell is percent number format', async () => {
             const univerInstanceService = get(IUniverInstanceService);
-            const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+            const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
             const worksheet = workbook.getActiveSheet();
             if (!worksheet) throw new Error('No active sheet found');
 
@@ -510,7 +508,7 @@ describe('Test add worksheet merge commands', () => {
             ]);
             const commandService = get(ICommandService);
             const univerInstanceService = get(IUniverInstanceService);
-            const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+            const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
             const worksheet = workbook.getActiveSheet();
             if (!worksheet) throw new Error('No active sheet found');
             const mergeData = worksheet.getConfig().mergeData;
@@ -606,7 +604,7 @@ describe('Test add worksheet merge commands', () => {
             ]);
             const commandService = get(ICommandService);
             const univerInstanceService = get(IUniverInstanceService);
-            const workbook = univerInstanceService.getCurrentUnitForType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
+            const workbook = univerInstanceService.getCurrentUnitOfType<Workbook>(UniverInstanceType.UNIVER_SHEET)!;
             const worksheet = workbook.getActiveSheet();
             if (!worksheet) throw new Error('No active sheet found');
             const mergeData = worksheet.getConfig().mergeData;

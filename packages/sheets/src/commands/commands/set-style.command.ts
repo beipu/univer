@@ -28,7 +28,6 @@ import type {
     WrapStrategy,
 } from '@univerjs/core';
 import type { ISetRangeValuesMutationParams } from '../mutations/set-range-values.mutation';
-
 import type { ISheetCommandSharedParams } from '../utils/interface';
 import {
     BooleanNumber,
@@ -63,7 +62,7 @@ export interface ISetStyleCommandParams<T> extends ISetStyleCommonParams {
     style: IStyleTypeValue<T>;
 }
 
-export const AFFECT_LAYOUT_STYLES = ['ff', 'fs', 'tr', 'tb'];
+export const AFFECT_LAYOUT_STYLES = ['ff', 'fs', 'stf', 'tr', 'tb'];
 
 /**
  * The command to set cell style.
@@ -561,6 +560,40 @@ export const SetTextWrapCommand: ICommand<ISetTextWrapCommandParams> = {
         };
 
         return commandService.syncExecuteCommand(SetStyleCommand.id, setStyleParams);
+    },
+};
+
+export interface ISetShrinkToFitCommandParams extends ISetStyleCommonParams {
+    value?: BooleanNumber;
+}
+
+export const SetShrinkToFitCommand: ICommand<ISetShrinkToFitCommandParams> = {
+    type: CommandType.COMMAND,
+    id: 'sheet.command.set-shrink-to-fit',
+    handler: (accessor, params) => {
+        let value = params?.value;
+        if (value === undefined) {
+            const selection = accessor.get(SheetsSelectionsService).getCurrentLastSelection();
+            const target = getSheetCommandTarget(accessor.get(IUniverInstanceService));
+            if (!selection?.primary || !target) {
+                return false;
+            }
+
+            const { actualRow, actualColumn } = selection.primary;
+            value = target.worksheet.getComposedCellStyle(actualRow, actualColumn)?.stf === BooleanNumber.TRUE
+                ? BooleanNumber.FALSE
+                : BooleanNumber.TRUE;
+        }
+
+        return accessor.get(ICommandService).syncExecuteCommand(SetStyleCommand.id, {
+            unitId: params?.unitId,
+            subUnitId: params?.subUnitId,
+            range: params?.range,
+            style: {
+                type: 'stf',
+                value,
+            },
+        } as ISetStyleCommandParams<BooleanNumber>);
     },
 };
 

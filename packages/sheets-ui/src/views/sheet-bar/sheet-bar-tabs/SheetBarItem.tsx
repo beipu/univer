@@ -15,7 +15,7 @@
  */
 
 import type { BooleanNumber } from '@univerjs/core';
-import type { CSSProperties, KeyboardEventHandler, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEventHandler, MouseEventHandler, ReactNode } from 'react';
 import { ColorKit, ThemeService } from '@univerjs/core';
 import { clsx } from '@univerjs/design';
 import { useDependency } from '@univerjs/ui';
@@ -32,17 +32,18 @@ export interface IBaseSheetBarProps {
     menuOverlay?: ReactNode;
     className?: string;
     onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+    onClick?: MouseEventHandler<HTMLDivElement>;
     tabIndex?: number;
 }
 
 export function SheetBarItem(props: IBaseSheetBarProps) {
-    const { sheetId, label, color, selected, className, onKeyDown, tabIndex } = props;
+    const { sheetId, label, color, selected, className, onKeyDown, onClick, tabIndex } = props;
 
     const themeService = useDependency(ThemeService);
 
     const getTextColor = (color: string) => {
         const darkTextColor = themeService.getColorFromTheme('gray.900');
-        const lightTextColor = themeService.getColorFromTheme('white');
+        const lightTextColor = themeService.getColorFromTheme('gray.0');
         return new ColorKit(color).isDark() ? lightTextColor : darkTextColor;
     };
 
@@ -58,13 +59,14 @@ export function SheetBarItem(props: IBaseSheetBarProps) {
             aria-selected={currentSelected}
             tabIndex={tabIndex ?? (currentSelected ? 0 : -1)}
             onKeyDown={onKeyDown}
+            onClick={onClick}
             className={clsx(`
               univer-mx-1 univer-box-border univer-flex univer-flex-grow univer-cursor-pointer univer-select-none
               univer-flex-row univer-items-center univer-rounded univer-text-xs univer-transition-[colors,box-shadow]
               focus-visible:univer-ring-2 focus-visible:univer-ring-primary-500
             `, {
-                'dark:!univer-text-white': !color || (color && !textColor),
-                'univer-justify-center univer-bg-white univer-font-bold univer-text-primary-700 univer-shadow': currentSelected,
+                'dark:!univer-text-gray-0': !color || (color && !textColor),
+                'univer-justify-center univer-bg-gray-0 univer-font-bold univer-text-primary-700 univer-shadow': currentSelected,
                 'dark:!univer-bg-gray-700': currentSelected && !color,
                 'univer-font-medium univer-text-gray-900 hover:univer-bg-gray-100': !currentSelected,
                 'dark:hover:!univer-bg-gray-700': !currentSelected && !color,

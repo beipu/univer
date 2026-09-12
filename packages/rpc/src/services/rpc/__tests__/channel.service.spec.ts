@@ -15,16 +15,11 @@
  */
 
 import type { IMessageProtocol } from '../rpc.service';
+import { awaitTime, Injector } from '@univerjs/core';
 import { Observable, Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
 import { ChannelService } from '../channel.service';
 import { fromModule } from '../rpc.service';
-
-function flushPromises() {
-    return new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 0);
-    });
-}
 
 describe('ChannelService', () => {
     it('should register channel, request channel, and dispose', async () => {
@@ -36,7 +31,8 @@ describe('ChannelService', () => {
             onMessage: message$.asObservable(),
         };
 
-        const service = new ChannelService(protocol);
+        const injector = new Injector();
+        const service = injector.createInstance(ChannelService, protocol);
 
         service.registerChannel('math', fromModule({
             add(a: number, b: number) {
@@ -55,7 +51,7 @@ describe('ChannelService', () => {
 
         const values: number[] = [];
         channel.subscribe<number>('values$').subscribe((value) => values.push(value));
-        await flushPromises();
+        await awaitTime(0);
         expect(values).toEqual([1]);
 
         service.dispose();

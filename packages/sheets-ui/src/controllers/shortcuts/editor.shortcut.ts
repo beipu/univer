@@ -15,7 +15,14 @@
  */
 
 import type { IShortcutItem } from '@univerjs/ui';
-import { BreakLineCommand, DeleteLeftCommand, DeleteRightCommand } from '@univerjs/docs-ui';
+import { Direction } from '@univerjs/core';
+import {
+    BreakLineCommand,
+    DeleteLeftCommand,
+    DeleteRightCommand,
+    MoveCursorOperation,
+    MoveSelectionOperation,
+} from '@univerjs/docs-ui';
 import { DeviceInputEventType } from '@univerjs/engine-render';
 import { KeyCode, MetaKeys } from '@univerjs/ui';
 import { RepeatLastActionCommand } from '../../commands/commands/repeat-last-action.command';
@@ -70,14 +77,32 @@ export function generateArrowSelectionShortCutItem() {
         });
     }
 
+    // Sheet editors own focus, so Doc-only line navigation shortcuts do not apply here.
+    for (const [binding, macArrow, direction] of [
+        [KeyCode.HOME, KeyCode.ARROW_LEFT, Direction.LEFT],
+        [KeyCode.END, KeyCode.ARROW_RIGHT, Direction.RIGHT],
+    ]) {
+        for (const extend of [false, true]) {
+            const shift = extend ? MetaKeys.SHIFT : 0;
+            shortcutList.push({
+                id: extend ? MoveSelectionOperation.id : MoveCursorOperation.id,
+                binding: binding | shift,
+                mac: macArrow | MetaKeys.CTRL_COMMAND | shift,
+                preconditions: whenEditorDidNotInputFormulaActivated,
+                staticParameters: { direction, granularity: 'line' },
+            });
+        }
+    }
+
     return shortcutList;
 }
 
 export const StartEditWithF2Shortcut: IShortcutItem = {
     id: SetCellEditVisibleWithF2Operation.id,
     binding: KeyCode.F2,
-    description: 'shortcut.sheet.start-editing',
+    description: 'sheets-ui.shortcut.sheet.start-editing',
     group: '4_sheet-edit',
+    groupTitle: 'sheets-ui.shortcut.sheet-edit',
     preconditions: whenSheetEditorFocused,
     staticParameters: {
         visible: true,
@@ -89,21 +114,35 @@ export const StartEditWithF2Shortcut: IShortcutItem = {
 export const RepeatLastActionShortcut: IShortcutItem = {
     id: RepeatLastActionCommand.id,
     binding: KeyCode.F4,
-    description: 'shortcut.sheet.repeat-last-action',
+    description: 'sheets-ui.shortcut.sheet.repeat-last-action',
     group: '4_sheet-edit',
+    groupTitle: 'sheets-ui.shortcut.sheet-edit',
     preconditions: whenSheetEditorFocused,
 };
 
 export const EditorCursorEnterShortcut: IShortcutItem = {
     id: SetCellEditVisibleOperation.id,
     binding: KeyCode.ENTER,
-    description: 'shortcut.sheet.toggle-editing',
+    description: 'sheets-ui.shortcut.sheet.toggle-editing',
     group: '4_sheet-edit',
+    groupTitle: 'sheets-ui.shortcut.sheet-edit',
     preconditions: (contextService) => whenEditorDidNotInputFormulaActivated(contextService),
     staticParameters: {
         visible: false,
         eventType: DeviceInputEventType.Keyboard,
         keycode: KeyCode.ENTER,
+    },
+};
+
+export const EditorCursorShiftEnterShortcut: IShortcutItem = {
+    id: SetCellEditVisibleOperation.id,
+    binding: KeyCode.ENTER | MetaKeys.SHIFT,
+    preconditions: (contextService) => whenEditorDidNotInputFormulaActivated(contextService),
+    staticParameters: {
+        visible: false,
+        eventType: DeviceInputEventType.Keyboard,
+        keycode: KeyCode.ENTER,
+        isShift: true,
     },
 };
 
@@ -118,11 +157,24 @@ export const EditorCursorTabShortcut: IShortcutItem = {
     },
 };
 
+export const EditorCursorShiftTabShortcut: IShortcutItem = {
+    id: SetCellEditVisibleOperation.id,
+    binding: KeyCode.TAB | MetaKeys.SHIFT,
+    preconditions: (contextService) => whenEditorDidNotInputFormulaActivated(contextService),
+    staticParameters: {
+        visible: false,
+        eventType: DeviceInputEventType.Keyboard,
+        keycode: KeyCode.TAB,
+        isShift: true,
+    },
+};
+
 export const EditorCursorEscShortcut: IShortcutItem = {
     id: SetCellEditVisibleOperation.id,
     binding: KeyCode.ESC,
-    description: 'shortcut.sheet.abort-editing',
+    description: 'sheets-ui.shortcut.sheet.abort-editing',
     group: '4_sheet-edit',
+    groupTitle: 'sheets-ui.shortcut.sheet-edit',
     preconditions: (contextService) => whenEditorDidNotInputFormulaActivated(contextService),
     staticParameters: {
         visible: false,
@@ -145,8 +197,9 @@ export const EditorCursorCtrlEnterShortcut: IShortcutItem = {
 
 export const EditorBreakLineShortcut: IShortcutItem = {
     id: BreakLineCommand.id,
-    description: 'shortcut.sheet.break-line',
+    description: 'sheets-ui.shortcut.sheet.break-line',
     group: '4_sheet-edit',
+    groupTitle: 'sheets-ui.shortcut.sheet-edit',
     preconditions: (contextService) => whenSheetEditorActivated(contextService),
     binding: KeyCode.ENTER | MetaKeys.ALT,
 };
@@ -174,8 +227,9 @@ export const ShiftEditorDeleteLeftShortcut: IShortcutItem = {
 
 export const EditorDeleteLeftShortcutInActive: IShortcutItem = {
     id: SetCellEditVisibleOperation.id,
-    description: 'shortcut.sheet.delete-and-start-editing',
+    description: 'sheets-ui.shortcut.sheet.delete-and-start-editing',
     group: '4_sheet-edit',
+    groupTitle: 'sheets-ui.shortcut.sheet-edit',
     preconditions: (contextService) => whenSheetEditorFocused(contextService) && !whenFormulaEditorFocused(contextService),
     binding: KeyCode.BACKSPACE,
     staticParameters: {

@@ -65,17 +65,9 @@ export interface ISheetSelectionRenderService {
         RANGE_FILL_PERMISSION_CHECK: IInterceptor<boolean, { x: number; y: number; skeleton: SpreadsheetSkeleton; scene: Scene }>;
     }>;
 
-    /** @deprecated This should not be provided by the selection render service. */
-    getViewPort(): Viewport; // AutoFill
-
     getSkeleton(): SpreadsheetSkeleton;
 
     getSelectionControls(): SelectionControl[];
-
-    /**
-     * @deprecated Please use `getCellWithCoordByOffset` instead.
-     */
-    getSelectionCellByPosition(x: number, y: number): ICellWithCoord;
 
     getCellWithCoordByOffset(x: number, y: number, skeleton?: SpreadsheetSkeleton): Nullable<ICellWithCoord>; // drawing
 
@@ -201,6 +193,24 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
         this._initMoving();
     }
 
+    override dispose(): void {
+        if (this._disposed) {
+            return;
+        }
+
+        this._clearUpdatingListeners();
+        this._reset();
+        this._escapeShortcutDisposable?.dispose();
+        this._escapeShortcutDisposable = null;
+
+        this._controlFillConfig$.complete();
+        this._selectionMoveEnd$.complete();
+        this._selectionMoving$.complete();
+        this._selectionMoveStart$.complete();
+
+        super.dispose();
+    }
+
     /**
      * If true, the selector will respond to the range of merged cells and automatically extend the selected range. If false, it will ignore the merged cells.
      */
@@ -229,22 +239,24 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
     //     this._setSelectionStyle(genNormalSelectionStyle(this._themeService));
     // }
 
-    /** @deprecated This should not be provided by the selection render service. */
-    getViewPort(): Viewport {
-        return this._activeViewport!;
-    }
-
     setSingleSelectionEnabled(enabled: boolean = false): void {
         this._singleSelectionEnabled = enabled;
     }
 
     newSelectionControl(scene: Scene, skeleton: SpreadsheetSkeleton, selection: ISelectionWithStyle): SelectionControl {
         const zIndex = this.getSelectionControls().length;
-        const { rowHeaderWidth, columnHeaderHeight } = skeleton;
+        const {
+            rowHeaderWidth,
+            rowHeaderWidthAndMarginLeft,
+            columnHeaderHeight,
+            columnHeaderHeightAndMarginTop,
+        } = skeleton;
         const control = new SelectionControl(scene, zIndex, this._selectionTheme, {
             highlightHeader: this._highlightHeader,
             rowHeaderWidth,
             columnHeaderHeight,
+            rowHeaderOffsetX: Math.max(0, rowHeaderWidthAndMarginLeft - rowHeaderWidth),
+            columnHeaderOffsetY: Math.max(0, columnHeaderHeightAndMarginTop - columnHeaderHeight),
         });
         this._selectionControls.push(control);
         const selectionWithCoord = attachSelectionWithCoord(selection, skeleton);
@@ -376,7 +388,7 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
     }
 
     protected _getFreeze(): Nullable<IFreeze> {
-        const freeze = this._sheetSkeletonManagerService.getCurrentParam()?.skeleton.getWorksheetConfig().freeze;
+        const freeze = this._sheetSkeletonManagerService.getCurrentParam()?.skeleton.worksheet.getFreeze();
         return freeze;
     }
 
@@ -495,6 +507,11 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
         // #region onPointerMove$
         // eslint-disable-next-line max-lines-per-function, complexity
         this._scenePointerMoveSub = scene.onPointerMove$.subscribeEvent((moveEvt: IPointerEvent | IMouseEvent) => {
+            if (moveEvt.buttons === 0) {
+                this.endSelection();
+                return;
+            }
+
             const { offsetX: moveOffsetX, offsetY: moveOffsetY } = moveEvt;
 
             const { x: newMoveOffsetX, y: newMoveOffsetY } = scene.getCoordRelativeToViewport(Vector2.FromArray([moveOffsetX, moveOffsetY]));
@@ -597,7 +614,7 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
                     const shouldResetX = startXY.x !== endXY.x && isCrossingX && xCrossTime % 2 === 1;
                     const shouldResetY = startXY.y !== endXY.y && isCrossingY && yCrossTime % 2 === 1;
 
-                    if (shouldResetX || shouldResetY) {
+                    if (rangeType !== RANGE_TYPE.NORMAL && (shouldResetX || shouldResetY)) {
                         viewportMain.scrollToBarPos({
                             x: shouldResetX ? startXY.x : undefined,
                             y: shouldResetY ? startXY.y : undefined,
@@ -641,13 +658,6 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
         // #endregion
     }
 
-    /**
-     * @deprecated Please use `getCellWithCoordByOffset` instead.
-     */
-    getSelectionCellByPosition(x: number, y: number): ICellWithCoord {
-        return this.getCellWithCoordByOffset(x, y);
-    }
-
     getCellWithCoordByOffset(x: number, y: number, skeletonParam?: SpreadsheetSkeleton): ICellWithCoord {
         const scene = this._scene;
         const skeleton = skeletonParam ?? this._skeleton;
@@ -684,8 +694,8 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
         const targetViewport = this._getViewportByCell(currSelectionRange.endRow, currSelectionRange.endColumn) ?? viewportMain;
 
         const scrollXY = scene.getScrollXYInfoByViewport(
-            Vector2.FromArray([this._startViewportPosX, this._startViewportPosY]),
-            targetViewport
+            Vector2.FromArray([offsetX, offsetY]),
+            rangeType === RANGE_TYPE.NORMAL ? undefined : targetViewport
         );
 
         const { scaleX, scaleY } = scene.getAncestorScale();
@@ -845,11 +855,12 @@ export class BaseSelectionRenderService extends Disposable implements ISheetSele
 
     protected _checkClearPreviousControls(evt: IPointerEvent | IMouseEvent): void {
         const curControls = this.getSelectionControls();
-        if (curControls.length === 0) return;
+        if (curControls.length === 0) {
+            return;
+        }
 
-        // In addition to pressing the ctrl or shift key, we must clear the previous selection.
         if (
-            (!evt.ctrlKey && !evt.shiftKey && !this._remainLastEnabled) ||
+            (!evt.ctrlKey && !evt.metaKey && !evt.shiftKey && !this._remainLastEnabled) ||
             (this._singleSelectionEnabled && !evt.shiftKey)
         ) {
             this._clearAllSelectionControls();
@@ -925,12 +936,6 @@ export function getTopLeftSelectionOfCurrSheet(skeleton: SpreadsheetSkeleton): I
         endColumn: 0,
     });
 }
-
-/**
- * @deprecated use `getTopLeftSelectionOfCurrSheet` instead
- */
-const getTopLeftSelection = getTopLeftSelectionOfCurrSheet;
-export { getTopLeftSelection };
 
 export function genSelectionByRange(skeleton: SpreadsheetSkeleton, range: IRange): ISelectionWithStyle {
     const topLeftCell = skeleton.worksheet.getCellInfoInMergeData(range.startRow, range.startColumn);

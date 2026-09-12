@@ -17,7 +17,6 @@
 import type { Nullable } from '@univerjs/core';
 import type { Observable } from 'rxjs';
 import type { ISuperTable } from '../basics/common';
-
 import { createIdentifier, Disposable } from '@univerjs/core';
 import { Subject } from 'rxjs';
 import { TableOptionType } from '../basics/common';
@@ -103,7 +102,7 @@ export class SuperTableService extends Disposable implements ISuperTableService 
     hasTable(unitId: string, tableName: string): boolean {
         const unitIdMap = this._tableMap.get(unitId);
         if (unitIdMap) {
-            return unitIdMap.keys().some((name) => name.toLowerCase() === tableName.toLowerCase());
+            return Array.from(unitIdMap.keys()).some((name) => name.toLowerCase() === tableName.toLowerCase());
         }
 
         return false;

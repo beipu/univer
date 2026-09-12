@@ -25,7 +25,7 @@ import type {
     ITableOptions,
     ITableRange,
 } from '@univerjs/sheets-table';
-import { cellToRange, customNameCharacterCheck, ILogService, LocaleService, Rectangle } from '@univerjs/core';
+import { cellToRange, customNameCharacterCheck, LocaleService, Rectangle } from '@univerjs/core';
 import { RangeThemeStyle } from '@univerjs/sheets';
 import {
     AddSheetTableCommand,
@@ -47,11 +47,12 @@ export interface IFWorksheetTableMixin {
      * @param {ITableRange} rangeInfo The table range information
      * @param {string} [tableId] The table id
      * @param {ITableOptions} [options] The table options
-     * @returns {Promise<boolean>} Whether the table was added successfully
+     * @returns {Promise<boolean> | boolean} `false` for an invalid table name; otherwise, a promise resolving to whether the command succeeded.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -94,7 +95,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -132,7 +134,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const tableInfo = fWorkbook.getTableInfo('id-1');
      * console.log('debugger tableInfo', tableInfo);
      *
@@ -152,7 +155,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -183,11 +187,12 @@ export interface IFWorksheetTableMixin {
      * Set the name of a table
      * @param {string} tableId The table id
      * @param {string} tableName The new table name
-     * @returns {Promise<boolean>} Whether the table name was set successfully
+     * @returns {Promise<boolean> | boolean} `false` for an invalid table name; otherwise, a promise resolving to whether the command succeeded.
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -219,7 +224,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      * const tables = fWorksheet.getSubTableInfos();
      * console.log('debugger tables', tables);
      * ```
@@ -234,7 +240,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -278,7 +285,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * const cellB2 = fWorksheet.getRange('B2');
      * const row = cellB2.getRow();
@@ -308,7 +316,8 @@ export interface IFWorksheetTableMixin {
      * @example
      * ```typescript
      * const fWorkbook = univerAPI.getActiveWorkbook();
-     * const fWorksheet = fWorkbook.getActiveSheet();
+     * const fWorksheet = fWorkbook.getSheetByName('Sheet1');
+     * if (!fWorksheet) return;
      *
      * // Insert a table in the range B2:F11
      * const fRange = fWorksheet.getRange('B2:F11');
@@ -360,8 +369,6 @@ export class FWorksheetTableMixin extends FWorksheet implements IFWorksheetTable
         }
         const isValidName = customNameCharacterCheck(tableName, sheetNameSet);
         if (!isValidName) {
-            const logService = this._injector.get(ILogService);
-            logService.warn(localeService.t('sheets-table.tableNameError'));
             return false;
         }
         const addTableParams: IAddSheetTableCommandParams = {
@@ -408,8 +415,6 @@ export class FWorksheetTableMixin extends FWorksheet implements IFWorksheetTable
     override setTableName(tableId: string, tableName: string): Promise<boolean> | boolean {
         const workbook = this.getWorkbook();
 
-        const localeService = this._injector.get(LocaleService);
-
         const sheetNameSet = new Set<string>();
         if (workbook) {
             workbook.getSheets().forEach((sheet) => {
@@ -418,8 +423,6 @@ export class FWorksheetTableMixin extends FWorksheet implements IFWorksheetTable
         }
         const isValidName = customNameCharacterCheck(tableName, sheetNameSet);
         if (!isValidName) {
-            const logService = this._injector.get(ILogService);
-            logService.warn(localeService.t('sheets-table.tableNameError'));
             return false;
         }
 
@@ -471,6 +474,5 @@ export class FWorksheetTableMixin extends FWorksheet implements IFWorksheetTable
 
 FWorksheet.extend(FWorksheetTableMixin);
 declare module '@univerjs/sheets/facade' {
-    // eslint-disable-next-line ts/naming-convention
     interface FWorksheet extends IFWorksheetTableMixin { }
 }

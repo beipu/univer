@@ -14,8 +14,15 @@
  * limitations under the License.
  */
 
-import type { ICellData, Injector, IStyleData, Nullable, Univer } from '@univerjs/core';
-import { ICommandService, IUniverInstanceService, LocaleType, RANGE_TYPE } from '@univerjs/core';
+import type { ICellData, Injector, IStyleData, Nullable, Univer, Workbook } from '@univerjs/core';
+import {
+    HorizontalAlign,
+    ICommandService,
+    IUniverInstanceService,
+    LocaleType,
+    RANGE_TYPE,
+    UniverInstanceType,
+} from '@univerjs/core';
 import {
     AddWorksheetMergeMutation,
     MoveRangeMutation,
@@ -96,7 +103,7 @@ describe('Test clipboard', () => {
             endColumn: number
         ): Array<Array<Nullable<ICellData>>> | undefined =>
             get(IUniverInstanceService)
-                .getUniverSheetInstance('test')
+                .getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)
                 ?.getSheetBySheetId('sheet1')
                 ?.getRange(startRow, startColumn, endRow, endColumn)
                 .getValues();
@@ -108,7 +115,7 @@ describe('Test clipboard', () => {
             endColumn: number
         ): Array<Array<Nullable<IStyleData>>> | undefined => {
             const values = getValues(startRow, startColumn, endRow, endColumn);
-            const styles = get(IUniverInstanceService).getUniverSheetInstance('test')?.getStyles();
+            const styles = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getStyles();
             if (values && styles) {
                 return values.map((row) => row.map((cell) => styles.getStyleByCell(cell)));
             }
@@ -141,7 +148,7 @@ describe('Test clipboard', () => {
             });
         });
         it('test style with paste cell style', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(googleSample);
             expect(res).toBeTruthy();
@@ -149,49 +156,15 @@ describe('Test clipboard', () => {
             expect(getValues(2, 2, 2, 2)?.[0]?.[0]?.v).toEqual('Univer');
             expect(getStyles(2, 2, 2, 2)?.[0]?.[0]).toStrictEqual({
                 bl: 1,
-                // cl: {
-                //     rgb: '#000',
-                // },
                 ff: 'Arial',
                 fs: 10,
-                ht: 0,
                 it: 1,
-                ol: {
-                    // cl: {
-                    //     rgb: '#000',
-                    // },
-                    s: 0,
-                },
-                pd: {
-                    b: 2,
-                    l: 2,
-                    r: 2,
-                    t: 0,
-                },
-                st: {
-                    // cl: {
-                    //     rgb: '#000',
-                    // },
-                    s: 0,
-                },
-                tb: 0,
-                td: 0,
-                tr: {
-                    a: 0,
-                    v: 0,
-                },
-                ul: {
-                    // cl: {
-                    //     rgb: '#000',
-                    // },
-                    s: 0,
-                },
                 vt: 3,
             });
         });
 
         it('test style with paste rich text style', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(googleSample);
             expect(res).toBeTruthy();
@@ -199,13 +172,15 @@ describe('Test clipboard', () => {
             const cellStyle = getStyles(2, 3, 2, 3)?.[0]?.[0];
             expect(cellStyle?.vt).toBe(3);
             expect(cellStyle?.bg).toStrictEqual({ rgb: 'rgb(255,0,0)' });
-            const richTextStyle = getValues(2, 3, 2, 3)?.[0]?.[0]?.p;
+            const richTextCell = getValues(2, 3, 2, 3)?.[0]?.[0];
+            const layout = worksheet.getCellDocumentModel(richTextCell, cellStyle, { isDeepClone: true });
+            expect(layout?.documentModel?.getBody()?.paragraphs?.[0]?.paragraphStyle?.horizontalAlign)
+                .toBe(HorizontalAlign.UNSPECIFIED);
+            const richTextStyle = richTextCell?.p;
             expect(richTextStyle?.body?.dataStream).toBe('univer\r\n');
             expect(richTextStyle?.body?.paragraphs).toStrictEqual([
                 {
-                    paragraphStyle: {
-                        horizontalAlign: 0,
-                    },
+                    paragraphId: expect.stringMatching(/^para_/),
                     startIndex: 6,
                 },
             ]);
@@ -232,7 +207,7 @@ describe('Test clipboard', () => {
         });
 
         it('test numfmt with paste', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(googleSample);
             expect(res).toBeTruthy();
@@ -241,7 +216,7 @@ describe('Test clipboard', () => {
         });
 
         it('test merge style with paste', async () => {
-            const worksheet = get(IUniverInstanceService).getUniverSheetInstance('test')?.getSheetBySheetId('sheet1');
+            const worksheet = get(IUniverInstanceService).getUnit<Workbook>('test', UniverInstanceType.UNIVER_SHEET)?.getSheetBySheetId('sheet1');
             if (!worksheet) return false;
             const res = await sheetClipboardService.legacyPaste(googleSample);
             expect(res).toBeTruthy();
